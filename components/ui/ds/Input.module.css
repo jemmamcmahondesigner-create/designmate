@@ -1,0 +1,157 @@
+/**
+ * Input.module.css - DesignMate DS
+ * Extracted from Figma DLS node 22:1382
+ *
+ * IMPORTANT: No backslash escaping on forward slashes in CSS.
+ * Raw hex fallbacks used throughout for parser safety.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.label {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.required {
+  color: #2e1c1c;
+  margin-left: 1px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background-color: #ffffff;
+  border: 1px solid #e4ddd3;
+  border-radius: 6px;
+  padding-left: 8px;
+  padding-right: 8px;
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+  position: relative;
+}
+
+.field:hover:not(.fieldDisabled):not(.fieldError) {
+  border-color: #c9c0b4;
+}
+
+.field:focus-within:not(.fieldDisabled) {
+  border-color: #6b1e2e;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(107, 30, 46, 0.12);
+}
+
+.fieldError {
+  border-color: #e07070;
+}
+
+.fieldError:focus-within {
+  border-color: #e07070;
+  box-shadow: 0 0 0 3px rgba(224, 112, 112, 0.12);
+}
+
+.fieldDisabled {
+  background-color: #f3efe9;
+  border-color: #e4ddd3;
+  cursor: not-allowed;
+}
+
+/* Sizes */
+
+.size-sm {
+  height: 32px;
+  min-width: 160px;
+}
+
+.size-md {
+  height: 38px;
+  min-width: 200px;
+}
+
+.size-lg {
+  height: 44px;
+  min-width: 240px;
+}
+
+/* Native input */
+
+.input {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  flex: 1 0 0;
+  min-width: 0;
+  width: 100%;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.input:focus,
+.input:focus-visible,
+.input:focus-within {
+  outline: none;
+  box-shadow: none;
+}
+
+.input::placeholder {
+  color: #998c82;
+  font-weight: 400;
+}
+
+.input:disabled {
+  color: #c9c0b4;
+  cursor: not-allowed;
+}
+
+.input:-webkit-autofill,
+.input:-webkit-autofill:hover,
+.input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0px 1000px #ffffff inset;
+  -webkit-text-fill-color: #2e1c1c;
+}
+
+/* Below-field text */
+
+.helperText {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #6b5e55;
+  white-space: nowrap;
+}
+
+.errorText {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #8b2020;
+  white-space: nowrap;
+}

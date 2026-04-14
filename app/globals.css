@@ -1,6 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+button, input, textarea, select {
+  font-family: inherit;
+}
+
+:root {
+  --surface-card-default: #ffffff;
+  --surface-page: #faf8f6;
+  --text-heading: #6b1e2e;
+  --text-primary: #2e1c1c;
+  --text-secondary: #6b5e55;
+  --text-tertiary: #998c82;
+  --text-disabled: #c9c0b4;
+  --text-inverse: #ffffff;
+  --border-subtle: #ede8e0;
+  --border-default: #e4ddd3;
+  --brand-primary: #6b1e2e;
+  --neutral-0: #ffffff;
+  --neutral-100: #f3efe9;
+  --neutral-200: #e4ddd3;
+  --border-width-input-default: 1px;
+  --border-strong: #c9c0b4;
+  --surface-card-recessed: #f3efe9;
+  --feedback-error-border: #e07070;
+  --feedback-error-bg: #fceaea;
+  --feedback-error-text: #8b2020;
+  --component-padding-sm: 8px;
+  --radius-component-button-sm: 6px;
+  --radius-component-button-md: 6px;
+  --radius-component-input: 6px;
+  --radius-sm: 4px;
+  --scale-1: 4px;
+  --scale-1-5: 6px;
+  --scale-2: 8px;
+  --scale-2-5: 10px;
+  --scale-3: 12px;
+  --scale-4: 16px;
+  --scale-5: 20px;
+  --scale-6: 24px;
+}
 
 html,
 body {
@@ -8,6 +49,41 @@ body {
 }
 
 body {
-  @apply bg-white text-zinc-900 antialiased;
+  @apply antialiased;
+  color: #2e1c1c;
+  background-color: #faf8f6;
+  font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
+[data-radix-popper-content-wrapper] {
+  z-index: 50 !important;
+}
+
+.radix-dropdown-content,
+[role="menu"] {
+  background-color: #ffffff;
+  border: 1px solid #e4ddd3;
+  border-radius: 8px;
+  box-shadow: 0px 4px 16px rgba(41, 33, 28, 0.12);
+  padding: 4px;
+  min-width: 160px;
+}
+
+[role="menuitem"] {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  color: #2e1c1c;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+[role="menuitem"]:hover {
+  background-color: #f3efe9;
+}
+
+[role="menuitem"].destructive {
+  color: #8b2020;
+  background-color: #fceaea;
+}

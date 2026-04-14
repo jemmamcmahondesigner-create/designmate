@@ -1,0 +1,176 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-decoration: none;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  position: relative;
+}
+.root:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+}
+.root:disabled,
+.root[aria-disabled='true'] {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.label {
+  flex-shrink: 0;
+}
+.iconOnly {
+  padding: 10px 8px;
+}
+.iconOnly .label {
+  display: none;
+}
+.size-sm {
+  padding: 6px 12px;
+  font-size: 13px;
+  letter-spacing: 0.26px;
+  border-radius: 6px;
+  min-height: 32px;
+}
+.size-md {
+  padding: 8px 16px;
+  font-size: 14px;
+  letter-spacing: 0;
+  border-radius: 6px;
+  min-height: 37px;
+}
+.size-lg {
+  padding: 10px 20px;
+  font-size: 14px;
+  letter-spacing: 0;
+  border-radius: 6px;
+  min-height: 44px;
+}
+.variant-primary {
+  background-color: #6b1e2e;
+  border-color: #6b1e2e;
+  color: #ffffff;
+}
+.variant-primary:hover:not(:disabled):not([aria-disabled='true']) {
+  background-color: #5a1926;
+  border-color: #5a1926;
+}
+.variant-primary:active:not(:disabled):not([aria-disabled='true']) {
+  background-color: #4a1520;
+}
+.variant-primary:disabled,
+.variant-primary[aria-disabled='true'] {
+  background-color: #e4ddd3;
+  border-color: #e4ddd3;
+  color: #c9c0b4;
+}
+.variant-secondary {
+  background-color: #ffffff;
+  border-color: #e4ddd3;
+  color: #2e1c1c;
+}
+.variant-secondary:hover:not(:disabled):not([aria-disabled='true']) {
+  background-color: #f3efe9;
+  border-color: #c9c0b4;
+}
+.variant-secondary:active:not(:disabled):not([aria-disabled='true']) {
+  background-color: #e4ddd3;
+}
+.variant-secondary:disabled,
+.variant-secondary[aria-disabled='true'] {
+  background-color: #ffffff;
+  border-color: #e4ddd3;
+  color: #c9c0b4;
+}
+.variant-ghost {
+  background-color: transparent;
+  border-color: transparent;
+  color: #6b1e2e;
+}
+.variant-ghost:hover:not(:disabled):not([aria-disabled='true']) {
+  background-color: #f5eaec;
+}
+.variant-ghost:active:not(:disabled):not([aria-disabled='true']) {
+  background-color: #e8d0d4;
+}
+.variant-ghost:disabled,
+.variant-ghost[aria-disabled='true'] {
+  color: #c9c0b4;
+}
+.variant-accent {
+  background-color: #f5c842;
+  border-color: #f5c842;
+  color: #2e1c1c;
+}
+.variant-accent:hover:not(:disabled):not([aria-disabled='true']) {
+  background-color: #d4ac39;
+  border-color: #d4ac39;
+}
+.variant-accent:active:not(:disabled):not([aria-disabled='true']) {
+  background-color: #b99432;
+}
+.variant-accent:disabled,
+.variant-accent[aria-disabled='true'] {
+  background-color: #e4ddd3;
+  border-color: #e4ddd3;
+  color: #c9c0b4;
+}
+.variant-destructive {
+  background-color: #fceaea;
+  border-color: #e07070;
+  color: #8b2020;
+}
+.variant-destructive:hover:not(:disabled):not([aria-disabled='true']) {
+  background-color: #f5d0d0;
+}
+.variant-destructive:active:not(:disabled):not([aria-disabled='true']) {
+  background-color: #edbcbc;
+}
+.variant-destructive:disabled,
+.variant-destructive[aria-disabled='true'] {
+  background-color: #f3efe9;
+  border-color: #e4ddd3;
+  color: #c9c0b4;
+}
+.variant-primary-on-dark {
+  background-color: #ffffff;
+  border-color: #ffffff;
+  color: #6b1e2e;
+}
+.variant-primary-on-dark:hover:not(:disabled):not([aria-disabled='true']) {
+  background-color: #f3efe9;
+}
+.variant-primary-on-dark:disabled,
+.variant-primary-on-dark[aria-disabled='true'] {
+  opacity: 0.5;
+}
+.variant-ghost-on-dark {
+  background-color: transparent;
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+}
+.variant-ghost-on-dark:hover:not(:disabled):not([aria-disabled='true']) {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+.variant-ghost-on-dark:disabled,
+.variant-ghost-on-dark[aria-disabled='true'] {
+  opacity: 0.4;
+}
