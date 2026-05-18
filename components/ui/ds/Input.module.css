@@ -127,6 +127,36 @@
   cursor: not-allowed;
 }
 
+.trailingAction {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #6b5e55;
+  border-radius: 4px;
+}
+
+.trailingAction:hover:not(:disabled) {
+  color: #6b1e2e;
+}
+
+.trailingAction:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(107, 30, 46, 0.12);
+}
+
+.trailingAction:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .input:-webkit-autofill,
 .input:-webkit-autofill:hover,
 .input:-webkit-autofill:focus {

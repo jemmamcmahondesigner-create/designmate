@@ -119,7 +119,6 @@ export default function NewAccountPage() {
 
         <GoogleSignInButton
           onClick={() => void signInWithGoogle()}
-          disabled={isLoading}
         />
 
         <OrDivider />
@@ -143,7 +142,6 @@ export default function NewAccountPage() {
               }}
               error={emailError}
               errorMessage="An account with this email already exists. Log in instead."
-              disabled={isLoading}
               className="w-full"
             />
 
@@ -157,7 +155,6 @@ export default function NewAccountPage() {
               onChange={(e) => setPassword(e.target.value)}
               helperText="Password must have 1 number and 1 special character."
               showHelper
-              disabled={isLoading}
               className="w-full"
             />
           </div>

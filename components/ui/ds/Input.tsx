@@ -11,7 +11,7 @@
  * Min-widths: sm → 160px, md → 200px, lg → 240px
  */
 
-import React, { useId } from 'react'
+import React, { useId, type ReactNode } from 'react'
 import styles from './Input.module.css'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -61,6 +61,8 @@ export interface InputProps {
   'aria-controls'?: string
   /** For combobox / search semantics */
   'aria-autocomplete'?: 'none' | 'list' | 'inline' | 'both'
+  /** Control rendered inside the field shell on the right (e.g. password visibility). */
+  trailingAction?: ReactNode
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -90,6 +92,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
       autoComplete,
       'aria-controls': ariaControls,
       'aria-autocomplete': ariaAutocomplete,
+      trailingAction,
     },
     ref
   ) {
@@ -150,6 +153,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
             onBlur={onBlur}
             onFocus={onFocus}
           />
+          {trailingAction}
         </div>
 
         {error && errorMessage && (

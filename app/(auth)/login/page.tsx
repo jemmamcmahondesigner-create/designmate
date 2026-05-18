@@ -9,7 +9,8 @@ import { AuthTextLink } from "@/components/auth/AuthTextLink";
 import { DesignTraceHeading } from "@/components/auth/DesignTraceHeading";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { OrDivider } from "@/components/auth/OrDivider";
-import { Input } from "@/components/ui/ds";
+import { Icon, Input } from "@/components/ui/ds";
+import inputStyles from "@/components/ui/ds/Input.module.css";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   getPostAuthPath,
@@ -25,6 +26,7 @@ export default function LoginPage() {
   const [status, setStatus] = useState<LoginStatus>("idle");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
 
   const signInWithGoogle = useCallback(async () => {
     const supabase = createSupabaseBrowserClient();
@@ -74,7 +76,6 @@ export default function LoginPage() {
         <GoogleSignInButton
           label="Continue with Google"
           onClick={() => void signInWithGoogle()}
-          disabled={isLoading}
         />
 
         <OrDivider />
@@ -97,13 +98,12 @@ export default function LoginPage() {
             }}
             error={emailError}
             errorMessage="No account found with this email."
-            disabled={isLoading}
             className="w-full"
           />
 
           <Input
             label="Password"
-            type="password"
+            type={passwordVisible ? "text" : "password"}
             size="lg"
             placeholder="Enter a unique 8 digit password"
             autoComplete="current-password"
@@ -114,8 +114,17 @@ export default function LoginPage() {
             }}
             error={passwordError}
             errorMessage="Incorrect password. Please try again."
-            disabled={isLoading}
             className="w-full"
+            trailingAction={
+              <button
+                type="button"
+                className={inputStyles.trailingAction}
+                onClick={() => setPasswordVisible((visible) => !visible)}
+                aria-label={passwordVisible ? "Hide password" : "Show password"}
+              >
+                <Icon name={passwordVisible ? "eye-off" : "eye"} size={16} />
+              </button>
+            }
           />
 
           <AuthSubmitButton label="Log In" loading={isLoading} />

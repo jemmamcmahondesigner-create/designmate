@@ -17,6 +17,7 @@ type ResetStatus = "idle" | "loading" | "email-error" | "email-sent";
 export default function ResetPasswordPage() {
   const [status, setStatus] = useState<ResetStatus>("idle");
   const [email, setEmail] = useState("");
+  const [generalError, setGeneralError] = useState<string | null>(null);
   const { cooldown, startCooldown, canResend } = useResendCooldown(60);
 
   const signInWithGoogle = useCallback(async () => {
@@ -42,7 +43,12 @@ export default function ResetPasswordPage() {
 
     if (error) {
       const fieldError = mapResetPasswordError(error.message);
-      setStatus(fieldError === "email-error" ? "email-error" : "idle");
+      if (fieldError === "email-error") {
+        setStatus("email-error");
+      } else {
+        setGeneralError(error.message);
+        setStatus("idle");
+      }
       return;
     }
 
@@ -123,14 +129,23 @@ export default function ResetPasswordPage() {
             onChange={(e) => {
               setEmail(e.target.value);
               if (status === "email-error") setStatus("idle");
+              if (generalError) setGeneralError(null);
             }}
             error={emailError}
             errorMessage="No account found with this email."
-            disabled={isLoading}
             className="w-full"
           />
 
           <AuthSubmitButton label="Reset password" loading={isLoading} />
+          {generalError ? (
+            <p
+              role="alert"
+              className="m-0 text-[12px] font-normal leading-normal"
+              style={{ color: "var(--feedback-error-text, #8b2020)" }}
+            >
+              {generalError}
+            </p>
+          ) : null}
         </form>
 
         <AuthTextLink href="/login" className="text-center">
@@ -139,10 +154,7 @@ export default function ResetPasswordPage() {
 
         <OrDivider />
 
-        <GoogleSignInButton
-          onClick={() => void signInWithGoogle()}
-          disabled={isLoading}
-        />
+        <GoogleSignInButton onClick={() => void signInWithGoogle()} />
       </div>
     </AuthCard>
   );
