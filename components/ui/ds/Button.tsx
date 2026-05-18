@@ -1,5 +1,5 @@
 /**
- * Button — DesignMate DS
+ * Button — DesignTrace DS
  *
  * Canonical implementation extracted from DLS (Figma node 2:673).
  * Do not reimplement — import from '@/components/ui/ds'.

@@ -1,0 +1,354 @@
+/* PageHeader.module.css
+   DLS source: VytA96WG9bMQpx5n0yciGH node 56:99
+*/
+
+/* ─── Root ──────────────────────────────────────────────────────────────────── */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-app-header, #ffffff);
+  border-bottom: 1px solid var(--border-subtle, #ede8e0);
+  width: 100%;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  flex-shrink: 0;
+}
+
+/* Breadcrumb + tabs: internal divider + tab bar provide edges — no extra bottom border */
+.rootBreadcrumbTabs {
+  border-bottom: none;
+}
+
+/* Search variant: header spans full width */
+.rootSearch {
+  width: 100%;
+}
+
+/* Breadcrumbs-only strip (e.g. Settings) — 48px bar aligned with slim headers */
+.rootBreadcrumbsSlim {
+  flex-direction: row;
+  align-items: center;
+  height: 48px;
+  box-sizing: border-box;
+  padding: 0 var(--scale-3, 12px) 0 var(--scale-6, 24px);
+}
+
+.rootBreadcrumbsSlim .breadcrumbTop {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  align-items: center;
+}
+
+.rootBreadcrumbsSlim .breadcrumbLeft {
+  gap: 0;
+}
+
+.rootBreadcrumbsSlim .breadcrumb {
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0;
+  color: var(--text-secondary, #6b5e55);
+}
+
+.rootBreadcrumbsSlim .titleRow {
+  display: none;
+}
+
+.rootBreadcrumbsSlim .breadcrumbDivider {
+  display: none;
+}
+
+/* Slim: default, detail, search — fixed 48px height */
+.slim {
+  height: 48px;
+}
+
+/* Tall: breadcrumb-tabs, breadcrumbs — height hugs content */
+.tall {
+  padding-top: 12px;
+}
+
+/* ─── Slim inner layout ─────────────────────────────────────────────────────── */
+
+.slimInner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 100%;
+  padding: 0 12px 0 24px;
+  width: 100%;
+}
+
+.slimInnerSearch {
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px 0 8px;
+}
+
+/* ─── Title row ─────────────────────────────────────────────────────────────── */
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 0 0;
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.36px;
+  color: #6b1e2e;
+  white-space: nowrap;
+  margin: 0;
+}
+
+/* ─── Breadcrumb top area ───────────────────────────────────────────────────── */
+
+.breadcrumbTop {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 24px 12px 24px;
+}
+
+.breadcrumbLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 0 0;
+  min-width: 0;
+}
+
+.breadcrumb {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #998c82;
+  white-space: pre;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.breadcrumbLink {
+  color: inherit;
+  text-decoration: none;
+  transition: color 120ms ease;
+}
+
+.breadcrumbLink:hover {
+  color: #6b1e2e;
+}
+
+.breadcrumbLink:focus-visible {
+  outline: 2px solid #6b1e2e;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.breadcrumbCurrent {
+  color: #2e1c1c;
+}
+
+.breadcrumbSep {
+  color: #998c82;
+}
+
+.breadcrumbDivider {
+  height: 1px;
+  background: #ede8e0;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+/* ─── Tab bar ───────────────────────────────────────────────────────────────── */
+
+.tabBar {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  overflow: hidden;
+  border-bottom: 1px solid #ede8e0;
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 0 0;
+  min-width: 0;
+  height: 100%;
+  padding: 6px 6px 6px 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* ─── Search field (search variant) ─────────────────────────────────────────── */
+
+.searchField {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 0;
+  max-width: 600px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #e4ddd3;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.searchField:focus-within {
+  border-color: #fff0a3;
+  border-width: 2px;
+}
+
+.searchIcon {
+  flex-shrink: 0;
+  color: #998c82;
+}
+
+.actionButtons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.slimInnerSearch .actions {
+  gap: 12px;
+}
+
+.searchInput {
+  flex: 1 0 0;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+}
+
+.searchInput::placeholder {
+  color: #998c82;
+}
+
+/* ─── Actions ───────────────────────────────────────────────────────────────── */
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ─── Split button group ────────────────────────────────────────────────────── */
+
+.buttonGroup {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #6b1e2e;
+}
+
+.btnGroupPrimary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 12px;
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btnGroupPrimary:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.btnGroupPrimary:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: -3px;
+}
+
+.btnGroupDivider {
+  width: 1px;
+  height: 32px;
+  background: #c9c0b4;
+  flex-shrink: 0;
+}
+
+.btnGroupArrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.btnGroupArrow:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.btnGroupArrow:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: -3px;
+}
+
+/* ─── Icon-only button ──────────────────────────────────────────────────────── */
+
+.btnIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e4ddd3;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #2e1c1c;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.btnIcon:hover {
+  background: #f3efe9;
+}
+
+.btnIcon:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+}

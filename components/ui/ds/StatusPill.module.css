@@ -1,0 +1,345 @@
+/* StatusPill.module.css
+   DLS source: VytA96WG9bMQpx5n0yciGH node 99:516
+   Rules: raw hex, no var() with slashes, no color-mix(), no backslash escapes.
+*/
+
+/* ─── Base ──────────────────────────────────────────────────────────────────── */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 9999px;
+  border-style: solid;
+  border-width: 0;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* interactive resets */
+button.root {
+  cursor: pointer;
+  background: inherit;
+}
+
+button.root:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+}
+
+/* ─── Sizes ─────────────────────────────────────────────────────────────────── */
+
+.size-sm {
+  padding: 2px 8px;
+}
+
+/* Sentence-case label (e.g. permission labels in settings tables) */
+.typographyBody {
+  text-transform: none;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.26px;
+}
+
+.size-md {
+  padding: 4px 10px;
+}
+
+.size-lg {
+  padding: 6px 12px;
+}
+
+/* ─── Label & chevron ───────────────────────────────────────────────────────── */
+
+.label {
+  flex-shrink: 0;
+}
+
+.chevron {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ─── Status: draft ─────────────────────────────────────────────────────────── */
+
+.status-draft {
+  background: #f3efe9;
+  color: #5c524a;
+}
+
+.status-draft.high {
+  background: #b8b0a8;
+  color: #ffffff;
+}
+
+.status-draft.interactive {
+  background: rgba(243, 239, 233, 0.85);
+}
+
+.status-draft.high.interactive {
+  background: rgba(184, 176, 168, 0.85);
+}
+
+/* ─── Status: in-review ─────────────────────────────────────────────────────── */
+
+.status-in-review {
+  background: #ffecac;
+  color: #7a5500;
+}
+
+.status-in-review.high {
+  background: #e0b530;
+  color: #3d2800;
+}
+
+.status-in-review.interactive {
+  background: rgba(255, 236, 172, 0.85);
+}
+
+.status-in-review.high.interactive {
+  background: #e0b530;
+}
+
+/* ─── Status: feedback-submitted (lifecycle — info / blue) ─────────────────── */
+
+.status-feedback-submitted {
+  background: #e8f1fb;
+  color: #1565c0;
+}
+
+.status-feedback-submitted.high {
+  background: #1565c0;
+  color: #ffffff;
+}
+
+.status-feedback-submitted.interactive {
+  background: rgba(232, 241, 251, 0.92);
+}
+
+.status-feedback-submitted.high.interactive {
+  background: #1565c0;
+}
+
+/* ─── Status: paused (lifecycle — neutral, same as draft) ─────────────────── */
+
+.status-paused {
+  background: #f3efe9;
+  color: #5c524a;
+}
+
+.status-paused.high {
+  background: #b8b0a8;
+  color: #ffffff;
+}
+
+.status-paused.interactive {
+  background: rgba(243, 239, 233, 0.85);
+}
+
+.status-paused.high.interactive {
+  background: rgba(184, 176, 168, 0.85);
+}
+
+/* ─── Status: approved ──────────────────────────────────────────────────────── */
+
+.status-approved {
+  background: #ebf6ee;
+  color: #256b38;
+}
+
+.status-approved.high {
+  background: #3b9b54;
+  color: #ffffff;
+}
+
+.status-approved.interactive {
+  background: rgba(235, 246, 238, 0.85);
+}
+
+.status-approved.high.interactive {
+  background: #3b9b54;
+}
+
+/* ─── Status: needs-changes ─────────────────────────────────────────────────── */
+
+.status-needs-changes {
+  background: #f7eff2;
+  color: #7a2b3a;
+}
+
+.status-needs-changes.high {
+  background: #6b1e2e;
+  color: #ffffff;
+}
+
+.status-needs-changes.interactive {
+  background: rgba(247, 239, 242, 0.85);
+}
+
+.status-needs-changes.high.interactive {
+  background: #6b1e2e;
+  border: 1px solid #5a1f2a;
+}
+
+/* ─── Status: blocked ───────────────────────────────────────────────────────── */
+
+.status-blocked {
+  background: #fceaea;
+  color: #8b2020;
+}
+
+.status-blocked.high {
+  background: #c94040;
+  color: #ffffff;
+}
+
+.status-blocked.interactive {
+  background: rgba(252, 234, 234, 0.85);
+}
+
+.status-blocked.high.interactive {
+  background: #c94040;
+}
+
+/* ─── Status: closed ────────────────────────────────────────────────────────── */
+
+.status-closed {
+  background: #ede8e0;
+  color: #a89e93;
+}
+
+.status-closed.high {
+  background: #7e7269;
+  border: 1px solid #5c524a;
+  color: #ffffff;
+}
+
+.status-closed.interactive {
+  background: rgba(237, 232, 224, 0.85);
+}
+
+.status-closed.high.interactive {
+  background: rgba(126, 114, 105, 0.85);
+}
+
+/* ─── DLS semantic colours (color + appearance tokens) ───────────────────────
+ * Mushroom = neutral lifecycle; Butter = in-review; Blue = feedback submitted;
+ * Green = approved; Brand = changes needed; Error = rejected.
+ * All values mirror existing status-* fills / Tag DLS hex (no var() per DS rules).
+ */
+
+.ds_mushroom_filled {
+  background: #f3efe9;
+  color: #5c524a;
+  border-width: 0;
+}
+
+.ds_mushroom_outline {
+  background: #ffffff;
+  color: #6b5e55;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #e4ddd3;
+}
+
+.ds_butter_filled {
+  background: #ffecac;
+  color: #7a5500;
+  border-width: 0;
+}
+
+.ds_butter_outline {
+  background: #ffffff;
+  color: #7a5500;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #fff0a3;
+}
+
+.ds_blue_filled {
+  background: #e8f1fb;
+  color: #1565c0;
+  border-width: 0;
+}
+
+.ds_blue_outline {
+  background: #ffffff;
+  color: #1565c0;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #b8dcf0;
+}
+
+.ds_green_filled {
+  background: #ebf6ee;
+  color: #256b38;
+  border-width: 0;
+}
+
+.ds_green_outline {
+  background: #ffffff;
+  color: #256b38;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #7dc98f;
+}
+
+.ds_brand_filled {
+  background: #f7eff2;
+  color: #7a2b3a;
+  border-width: 0;
+}
+
+.ds_brand_outline {
+  background: #ffffff;
+  color: #6b1e2e;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #e8d0d4;
+}
+
+.ds_error_filled {
+  background: #fceaea;
+  color: #8b2020;
+  border-width: 0;
+}
+
+.ds_error_outline {
+  background: #ffffff;
+  color: #8b2020;
+  border-width: 1px;
+  border-style: solid;
+  border-color: #e07070;
+}
+
+button.root.ds_mushroom_filled.interactive {
+  background: rgba(243, 239, 233, 0.85);
+}
+
+button.root.ds_butter_filled.interactive {
+  background: rgba(255, 236, 172, 0.85);
+}
+
+button.root.ds_blue_filled.interactive {
+  background: rgba(232, 241, 251, 0.92);
+}
+
+button.root.ds_green_filled.interactive {
+  background: rgba(235, 246, 238, 0.85);
+}
+
+button.root.ds_brand_filled.interactive {
+  background: rgba(247, 239, 242, 0.85);
+}
+
+button.root.ds_error_filled.interactive {
+  background: rgba(252, 234, 234, 0.85);
+}

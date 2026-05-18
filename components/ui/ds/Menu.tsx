@@ -1,0 +1,761 @@
+'use client';
+
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { Avatar } from './Avatar';
+import { Button } from './Button';
+import { Checkbox } from './Checkbox';
+import { Icon, type IconName } from './Icon';
+import styles from './Menu.module.css';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+//
+// DLS Menu has four types:
+//   dropdown     — icon + label, no footer
+//   context-menu — icon + label, `active` renders a right-hand check
+//   action-menu  — context-menu body + destructive (delete) footer
+//   multi-select — avatar + checkbox + label items, optional link-style footer
+//
+// Footer is declared declaratively via `footerAction` on the Menu.
+
+export type MenuType =
+  | 'dropdown'
+  | 'context-menu'
+  | 'action-menu'
+  | 'multi-select'
+  | 'sections';
+export type MenuFooterType = 'link' | 'delete' | 'button';
+
+export interface MenuSectionsState {
+  tags: {
+    all: boolean;
+    feedback: boolean;
+    changeRequests: boolean;
+    replies: boolean;
+    notifications: boolean;
+  };
+  people: {
+    all: boolean;
+    reviewerIds: string[];
+  };
+}
+
+export interface MenuSectionsReviewer {
+  id: string;
+  name: string;
+  initials: string;
+}
+
+export interface MenuFooterProps {
+  type: MenuFooterType;
+  /** Primary label. For `button` type this is the Done-style confirm label. */
+  label: string;
+  /** Optional override; defaults to "plus" for link / "trash" for delete / "plus" for button additional link */
+  icon?: IconName;
+  onClick?: () => void;
+  /** `button` only — label for the secondary "+ Link" control (default "Link") */
+  additionalLinkLabel?: string;
+  /** `button` only — click handler for the secondary "+ Link" control */
+  onAdditionalLink?: () => void;
+  /** `button` only — whether to show the secondary link (default true) */
+  showAdditionalLink?: boolean;
+}
+
+export interface MenuItemProps {
+  label: string;
+  /** Leading icon (default "icon" variant) */
+  icon?: IconName;
+  /** Avatar variant — when provided, renders in place of the icon */
+  avatarSrc?: string;
+  avatarName?: string;
+  /** Render a leading checkbox (multi-select pattern) */
+  checkbox?: boolean;
+  /** Active / selected — blush bg, brand text, trailing check */
+  active?: boolean;
+  /** Destructive styling for the item row (red text) */
+  destructive?: boolean;
+  /** Optional styles for the label span (e.g. lifecycle / status tone colours). */
+  labelStyle?: CSSProperties;
+  onClick?: () => void;
+  disabled?: boolean;
+}
+
+// ─── MenuItem ────────────────────────────────────────────────────────────────
+
+export function MenuItem({
+  label,
+  icon,
+  avatarSrc,
+  avatarName,
+  checkbox = false,
+  active = false,
+  destructive = false,
+  labelStyle,
+  onClick,
+  disabled = false,
+}: MenuItemProps) {
+  const iconColor = destructive ? '#8b2020' : active ? '#6b1e2e' : '#6b5e55';
+
+  const itemClass = [
+    styles.item,
+    active ? styles.itemActive : '',
+    destructive ? styles.itemDestructive : '',
+    disabled ? styles.itemDisabled : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const hasAvatar = Boolean(avatarSrc || avatarName);
+
+  return (
+    <li
+      role="menuitem"
+      aria-checked={checkbox ? active : undefined}
+      aria-disabled={disabled}
+      tabIndex={disabled ? -1 : 0}
+      className={itemClass}
+      onClick={() => !disabled && onClick?.()}
+      onKeyDown={(e: KeyboardEvent) => {
+        if ((e.key === 'Enter' || e.key === ' ') && !disabled) {
+          e.preventDefault();
+          onClick?.();
+        }
+      }}
+    >
+      {checkbox && (
+        <span
+          className={[styles.checkbox, active ? styles.checkboxChecked : '']
+            .filter(Boolean)
+            .join(' ')}
+          aria-hidden="true"
+        >
+          {active && <Icon name="check" size={12} />}
+        </span>
+      )}
+
+      {hasAvatar ? (
+        <span className={styles.itemAvatar} aria-hidden="true">
+          <Avatar src={avatarSrc} name={avatarName ?? label} size="md" />
+        </span>
+      ) : icon ? (
+        <span
+          className={styles.itemIcon}
+          aria-hidden="true"
+          style={{ color: iconColor }}
+        >
+          <Icon name={icon} size={16} />
+        </span>
+      ) : null}
+
+      <span className={styles.itemLabel} style={labelStyle}>
+        {label}
+      </span>
+
+      {active && !checkbox && (
+        <span
+          className={styles.itemCheck}
+          aria-hidden="true"
+          style={{ color: '#6b1e2e' }}
+        >
+          <Icon name="check" size={16} />
+        </span>
+      )}
+    </li>
+  );
+}
+
+// ─── MenuFooter ──────────────────────────────────────────────────────────────
+// Named export so callers can compose a custom footer too.
+
+export function MenuFooter({
+  type,
+  label,
+  icon,
+  onClick,
+  additionalLinkLabel = 'Link',
+  onAdditionalLink,
+  showAdditionalLink = true,
+}: MenuFooterProps) {
+  // ─── `button` variant — confirm Done + optional "+ Link" ───────────────────
+  if (type === 'button') {
+    return (
+      <div className={styles.footerButton}>
+        <button
+          type="button"
+          className={styles.footerDoneBtn}
+          onClick={() => onClick?.()}
+        >
+          {label}
+        </button>
+        {showAdditionalLink && (
+          <button
+            type="button"
+            className={styles.footerAdditionalLink}
+            onClick={() => onAdditionalLink?.()}
+          >
+            <span className={styles.footerIcon} aria-hidden="true">
+              <Icon name={icon ?? 'plus'} size={14} />
+            </span>
+            <span>{additionalLinkLabel}</span>
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // ─── `link` / `delete` variants ────────────────────────────────────────────
+  const resolvedIcon: IconName = icon ?? (type === 'delete' ? 'trash' : 'plus');
+  const isDelete = type === 'delete';
+
+  return (
+    <div
+      className={[
+        styles.footer,
+        isDelete ? styles.footerDelete : styles.footerLink,
+      ].join(' ')}
+    >
+      <button
+        type="button"
+        className={styles.footerBtn}
+        onClick={() => onClick?.()}
+      >
+        <span className={styles.footerIcon} aria-hidden="true">
+          <Icon name={resolvedIcon} size={16} />
+        </span>
+        <span className={styles.footerLabel}>{label}</span>
+      </button>
+    </div>
+  );
+}
+
+// ─── Menu ─────────────────────────────────────────────────────────────────────
+
+export interface MenuProps {
+  open: boolean;
+  onClose: () => void;
+  children: ReactNode;
+  type?: MenuType;
+  /** Ref of the triggering element — excluded from outside-click detection */
+  anchorRef?: RefObject<HTMLElement>;
+  /** Menu alignment relative to its nearest positioned ancestor */
+  align?: 'left' | 'right';
+  /** Render to `document.body` with fixed positioning (avoids overflow clipping, e.g. tables) */
+  portal?: boolean;
+  /** z-index when `portal` is true (default 100) */
+  portalZIndex?: number;
+  /** Optional id for the menu list element (aria-controls target) */
+  id?: string;
+  /** Declarative footer — pass `{ type, label, onClick }` */
+  footerAction?: MenuFooterProps;
+  sections?: MenuSectionsState;
+  reviewers?: MenuSectionsReviewer[];
+  onApply?: (filters: MenuSectionsState) => void;
+  'aria-label'?: string;
+  className?: string;
+}
+
+export function Menu({
+  open,
+  onClose,
+  children,
+  type = 'dropdown',
+  anchorRef,
+  align = 'right',
+  portal = false,
+  portalZIndex,
+  id,
+  footerAction,
+  sections,
+  reviewers = [],
+  onApply,
+  'aria-label': ariaLabel = 'Menu',
+  className,
+}: MenuProps) {
+  const isSectionsType = type === 'sections';
+  const menuRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const [portalStyle, setPortalStyle] = useState<CSSProperties>({});
+  const [sectionsOpenUpward, setSectionsOpenUpward] = useState(false);
+  const defaultTags = {
+    all: true,
+    feedback: false,
+    changeRequests: false,
+    replies: false,
+    notifications: false,
+  } as const;
+
+  const defaultPeople = { all: true, reviewerIds: [] as string[] };
+
+  const [draftSections, setDraftSections] = useState<MenuSectionsState>({
+    tags: { ...defaultTags },
+    people: { ...defaultPeople },
+  });
+  const defaultSections = useMemo<MenuSectionsState>(
+    () => ({
+      tags: { ...defaultTags },
+      people: { ...defaultPeople },
+    }),
+    []
+  );
+
+  // Close on outside click (skip clicks on the anchor itself so it can toggle)
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      if (anchorRef?.current?.contains(e.target as Node)) return;
+      onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open, onClose, anchorRef]);
+
+  useEffect(() => {
+    if (!open || type !== 'sections') return;
+    const viewportHalf = window.innerHeight / 2;
+    const anchorTop = anchorRef?.current?.getBoundingClientRect().top ?? 0;
+    setSectionsOpenUpward(anchorTop > viewportHalf);
+  }, [open, type, anchorRef]);
+
+  useEffect(() => {
+    if (!open || type !== 'sections') return;
+    const base = sections ?? defaultSections;
+    setDraftSections({
+      tags: { ...defaultTags, ...base.tags },
+      people: { ...defaultPeople, ...base.people },
+    });
+  }, [open, type, sections, defaultSections]);
+
+  // Escape closes; Arrow up/down moves focus within the list
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const items = Array.from(
+          listRef.current?.querySelectorAll<HTMLElement>(
+            '[role="menuitem"]:not([aria-disabled="true"])'
+          ) ?? []
+        );
+        if (items.length === 0) return;
+        const idx = items.indexOf(document.activeElement as HTMLElement);
+        const next =
+          e.key === 'ArrowDown'
+            ? items[Math.min(idx + 1, items.length - 1)]
+            : items[Math.max(idx - 1, 0)];
+        next?.focus();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [open, onClose]);
+
+  // Auto-focus first enabled item on open
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => {
+      const first = listRef.current?.querySelector<HTMLElement>(
+        '[role="menuitem"]:not([aria-disabled="true"])'
+      );
+      first?.focus();
+    }, 10);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  const updatePortalPosition = useCallback(() => {
+    if (!open || !portal || isSectionsType) return;
+    const el = anchorRef?.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const gap = 4;
+    const pad = 12;
+    const h = menuRef.current?.offsetHeight ?? 140;
+    const below = window.innerHeight - rect.bottom - gap - pad;
+    const above = rect.top - gap - pad;
+    const openUp = below < h && above > below;
+    const z = portalZIndex ?? 100;
+    const next: CSSProperties = {
+      position: 'fixed',
+      zIndex: z,
+      minWidth: 240,
+    };
+    if (align === 'left') {
+      next.left = Math.max(pad, rect.left);
+      if (openUp) {
+        next.bottom = window.innerHeight - rect.top + gap;
+        next.top = 'auto';
+      } else {
+        next.top = rect.bottom + gap;
+        next.bottom = 'auto';
+      }
+    } else {
+      next.right = Math.max(pad, window.innerWidth - rect.right);
+      if (openUp) {
+        next.bottom = window.innerHeight - rect.top + gap;
+        next.top = 'auto';
+      } else {
+        next.top = rect.bottom + gap;
+        next.bottom = 'auto';
+      }
+    }
+    setPortalStyle(next);
+  }, [open, portal, isSectionsType, align, portalZIndex, anchorRef]);
+
+  useLayoutEffect(() => {
+    if (!open || !portal || isSectionsType) return;
+    updatePortalPosition();
+    const raf = requestAnimationFrame(() => updatePortalPosition());
+    const el = menuRef.current;
+    const ro =
+      typeof ResizeObserver !== 'undefined' && el
+        ? new ResizeObserver(() => updatePortalPosition())
+        : null;
+    if (el) ro?.observe(el);
+    window.addEventListener('scroll', updatePortalPosition, true);
+    window.addEventListener('resize', updatePortalPosition);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+      window.removeEventListener('scroll', updatePortalPosition, true);
+      window.removeEventListener('resize', updatePortalPosition);
+    };
+  }, [open, portal, isSectionsType, updatePortalPosition, children, footerAction]);
+
+  if (!open) return null;
+
+  const usePortalLayout = portal && !isSectionsType;
+
+  const rootClassResolved = [
+    styles.menu,
+    !usePortalLayout && align === 'right' ? styles.alignRight : '',
+    !usePortalLayout && align === 'left' ? styles.alignLeft : '',
+    usePortalLayout ? styles.menuPortal : '',
+    type === 'multi-select' ? styles.multiSelect : '',
+    className ?? '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const sectionsRootClass = [styles.sectionsMenu, className ?? '']
+    .filter(Boolean)
+    .join(' ');
+
+  const hasChildren = Boolean(
+    children && (!Array.isArray(children) || children.some((c) => c != null && c !== false))
+  );
+  const selectedReviewerIds = draftSections.people.reviewerIds;
+  const tagsAllChecked = draftSections.tags.all;
+  const peopleAllChecked = draftSections.people.all;
+  const tagIndividualCount = [
+    draftSections.tags.feedback,
+    draftSections.tags.changeRequests,
+    draftSections.tags.replies,
+    draftSections.tags.notifications,
+  ].filter(Boolean).length;
+  const tagsIndeterminate =
+    !tagsAllChecked && tagIndividualCount > 0 && tagIndividualCount < 4;
+  const peopleIndeterminate =
+    !peopleAllChecked &&
+    selectedReviewerIds.length > 0 &&
+    selectedReviewerIds.length < reviewers.length;
+  const appliedSections = sections ?? defaultSections;
+  const normalizedDraft: MenuSectionsState = {
+    tags: { ...defaultTags, ...draftSections.tags },
+    people: { ...defaultPeople, ...draftSections.people },
+  };
+  const normalizedApplied: MenuSectionsState = {
+    tags: { ...defaultTags, ...appliedSections.tags },
+    people: { ...defaultPeople, ...appliedSections.people },
+  };
+  const isApplyEnabled =
+    JSON.stringify(normalizedDraft) !== JSON.stringify(normalizedApplied);
+
+  const isSectionsAtDefault =
+    JSON.stringify(normalizedDraft.tags) === JSON.stringify(defaultTags) &&
+    JSON.stringify(normalizedDraft.people) === JSON.stringify(defaultPeople);
+
+  function resetSectionsToDefault() {
+    setDraftSections({
+      tags: { ...defaultTags },
+      people: { ...defaultPeople },
+    });
+  }
+
+  function setTagsAll(checked: boolean) {
+    if (checked) {
+      setDraftSections((prev) => ({
+        ...prev,
+        tags: {
+          all: true,
+          feedback: false,
+          changeRequests: false,
+          replies: false,
+          notifications: false,
+        },
+      }));
+      return;
+    }
+    setDraftSections((prev) => {
+      const next = { ...prev.tags, all: false };
+      const anyIndividual =
+        next.feedback ||
+        next.changeRequests ||
+        next.replies ||
+        next.notifications;
+      if (!anyIndividual) {
+        return {
+          ...prev,
+          tags: {
+            all: true,
+            feedback: false,
+            changeRequests: false,
+            replies: false,
+            notifications: false,
+          },
+        };
+      }
+      return { ...prev, tags: next };
+    });
+  }
+
+  function setIndividualTag(
+    key: 'feedback' | 'changeRequests' | 'replies' | 'notifications',
+    checked: boolean
+  ) {
+    setDraftSections((prev) => {
+      const nextTags = {
+        ...prev.tags,
+        all: false,
+        [key]: checked,
+      };
+      const anyIndividual =
+        nextTags.feedback ||
+        nextTags.changeRequests ||
+        nextTags.replies ||
+        nextTags.notifications;
+      if (!anyIndividual) {
+        return {
+          ...prev,
+          tags: {
+            all: true,
+            feedback: false,
+            changeRequests: false,
+            replies: false,
+            notifications: false,
+          },
+        };
+      }
+      return { ...prev, tags: nextTags };
+    });
+  }
+
+  function setPeopleAll(checked: boolean) {
+    if (checked) {
+      setDraftSections((prev) => ({
+        ...prev,
+        people: { all: true, reviewerIds: [] },
+      }));
+      return;
+    }
+    setDraftSections((prev) => {
+      const next = { ...prev.people, all: false };
+      if (next.reviewerIds.length === 0) {
+        return { ...prev, people: { all: true, reviewerIds: [] } };
+      }
+      return { ...prev, people: next };
+    });
+  }
+
+  const floatingStyle: CSSProperties | undefined = isSectionsType
+    ? {
+        top: sectionsOpenUpward ? 'auto' : 'calc(100% + 4px)',
+        bottom: sectionsOpenUpward ? 'calc(100% + 4px)' : 'auto',
+      }
+    : usePortalLayout
+      ? portalStyle
+      : undefined;
+
+  const menuTree = (
+    <div
+      ref={menuRef}
+      id={id}
+      className={isSectionsType ? sectionsRootClass : rootClassResolved}
+      style={floatingStyle}
+    >
+      {isSectionsType ? (
+        <div className={styles.sectionsRoot}>
+          <div className={styles.sectionsHeadingWrap}>
+            <span className={styles.sectionsHeading}>TAGS</span>
+          </div>
+          <div className={styles.sectionsDivider} />
+          <div className={styles.sectionsRows}>
+            <div className={styles.sectionsRow}>
+              <Checkbox
+                id={`${id ?? 'menu'}-tags-all`}
+                label="All"
+                checked={tagsAllChecked}
+                indeterminate={tagsIndeterminate}
+                onChange={setTagsAll}
+              />
+            </div>
+            <div className={styles.sectionsRow}>
+              <Checkbox
+                id={`${id ?? 'menu'}-tags-feedback`}
+                label="Feedback"
+                checked={draftSections.tags.feedback}
+                onChange={(checked) => setIndividualTag('feedback', checked)}
+              />
+            </div>
+            <div className={styles.sectionsRow}>
+              <Checkbox
+                id={`${id ?? 'menu'}-tags-change-requests`}
+                label="Change Requests"
+                checked={draftSections.tags.changeRequests}
+                onChange={(checked) => setIndividualTag('changeRequests', checked)}
+              />
+            </div>
+            <div className={styles.sectionsRow}>
+              <Checkbox
+                id={`${id ?? 'menu'}-tags-replies`}
+                label="Replies"
+                checked={draftSections.tags.replies}
+                onChange={(checked) => setIndividualTag('replies', checked)}
+              />
+            </div>
+            <div className={styles.sectionsRow}>
+              <Checkbox
+                id={`${id ?? 'menu'}-tags-notifications`}
+                label="Notifications"
+                checked={draftSections.tags.notifications}
+                onChange={(checked) => setIndividualTag('notifications', checked)}
+              />
+            </div>
+          </div>
+
+          <div className={styles.sectionsHeadingWrap}>
+            <span className={styles.sectionsHeading}>PEOPLE</span>
+          </div>
+          <div className={styles.sectionsDivider} />
+          <div className={styles.sectionsRows}>
+            <div className={styles.sectionsRow}>
+              <Checkbox
+                id={`${id ?? 'menu'}-people-all`}
+                label="All"
+                checked={peopleAllChecked}
+                indeterminate={peopleIndeterminate}
+                onChange={setPeopleAll}
+              />
+            </div>
+            {reviewers.map((reviewer) => {
+              const isChecked = selectedReviewerIds.includes(reviewer.id);
+              return (
+                <div key={reviewer.id} className={styles.sectionsRowReviewer}>
+                  <Checkbox
+                    id={`${id ?? 'menu'}-people-${reviewer.id}`}
+                    label=""
+                    checked={isChecked}
+                    onChange={(checked) =>
+                      setDraftSections((prev) => {
+                        const nextIds = checked
+                          ? Array.from(new Set([...prev.people.reviewerIds, reviewer.id]))
+                          : prev.people.reviewerIds.filter((idValue) => idValue !== reviewer.id);
+                        if (nextIds.length === 0) {
+                          return {
+                            ...prev,
+                            people: { all: true, reviewerIds: [] },
+                          };
+                        }
+                        return {
+                          ...prev,
+                          people: {
+                            all: false,
+                            reviewerIds: nextIds,
+                          },
+                        };
+                      })
+                    }
+                  />
+                  <span className={styles.sectionsReviewerChip}>{reviewer.initials}</span>
+                  <span className={styles.sectionsReviewerName}>{reviewer.name}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div
+            className={styles.sectionsFooter}
+            style={{
+              display: 'flex',
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 12,
+            }}
+          >
+            <button
+              type="button"
+              disabled={isSectionsAtDefault}
+              onClick={() => resetSectionsToDefault()}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                padding: 0,
+                fontSize: 13,
+                fontWeight: 400,
+                color: '#6b5e55',
+                cursor: isSectionsAtDefault ? 'default' : 'pointer',
+                opacity: isSectionsAtDefault ? 0.4 : 1,
+                pointerEvents: isSectionsAtDefault ? 'none' : 'auto',
+              }}
+            >
+              Clear All
+            </button>
+            <Button
+              label="Apply"
+              size="sm"
+              variant="primary"
+              style={{ minWidth: 72 }}
+              disabled={!isApplyEnabled}
+              onClick={() => {
+                onApply?.(draftSections);
+                onClose();
+              }}
+            />
+          </div>
+        </div>
+      ) : (
+        <>
+          {hasChildren && (
+            <ul
+              ref={listRef}
+              role="menu"
+              aria-label={ariaLabel}
+              className={styles.list}
+            >
+              {children}
+            </ul>
+          )}
+
+          {footerAction && <MenuFooter {...footerAction} />}
+        </>
+      )}
+    </div>
+  );
+
+  return usePortalLayout ? createPortal(menuTree, document.body) : menuTree;
+}

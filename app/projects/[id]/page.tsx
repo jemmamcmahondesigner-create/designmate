@@ -34,11 +34,17 @@ function mapContributors(rows: unknown): ProjectContributor[] {
     const o = r as Record<string, unknown>;
     const email = o.email;
     const role = o.role;
+    const avatarRaw = o.avatar_url ?? o.avatarUrl;
+    const avatarUrl =
+      avatarRaw == null || String(avatarRaw).trim() === ""
+        ? null
+        : String(avatarRaw);
     return {
       id: String(o.id ?? ""),
       name: String(o.name ?? ""),
       email: email == null || String(email).trim() === "" ? null : String(email),
-      role: role == null || String(role).trim() === "" ? null : String(role)
+      role: role == null || String(role).trim() === "" ? null : String(role),
+      avatarUrl
     };
   });
 }

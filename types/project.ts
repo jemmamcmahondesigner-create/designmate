@@ -7,6 +7,8 @@ export type Project = {
   description: string | null;
   status: ProjectStatus;
   created_at: string;
+  /** Project-scoped contributor names from `contributors` join (client-side search). */
+  contributor_names: string[];
 };
 
 export type ProjectsByStatus = {
@@ -25,6 +27,8 @@ export type ProjectContributor = {
   name: string;
   email: string | null;
   role: string | null;
+  /** Profile image URL when available */
+  avatarUrl?: string | null;
 };
 
 export type ProjectReference = {

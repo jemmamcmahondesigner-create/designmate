@@ -1,5 +1,5 @@
 /**
- * Input — DesignMate DS
+ * Input — DesignTrace DS
  *
  * Canonical implementation extracted from DLS (Figma node 22:1382).
  * Do not reimplement — import from '@/components/ui/ds'.

@@ -1,0 +1,415 @@
+/* ArtifactPreview.module.css — DLS node 238:6488
+   Sizes: large (880px wide, 542px total) | small (240px thumbnail)
+   Modes: editable (form footer) | readonly (recessed display footer)
+   File types: figma | pdf — drives tag label only, no structural change
+*/
+
+/* ─── Root ──────────────────────────────────────────────────────────────────── */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #e4ddd3;
+  border-radius: 8px;
+  overflow: hidden;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.large {
+  width: 100%;         /* fills container — parent controls max-width */
+}
+
+.small {
+  flex-direction: row;
+  width: 100%;
+}
+
+/* ─── Preview area ───────────────────────────────────────────────────────────── */
+
+.preview {
+  border-bottom: 1px solid #e4ddd3;
+  flex-shrink: 0;
+}
+
+.previewLarge {
+  flex: 1 0 0;
+  min-height: 360px;   /* default — parent can override */
+}
+
+/* Artifact History: fixed-height preview chrome (Figma 290px grey area + file strip). */
+.previewLarge.previewArtifactHistory {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+.previewSmall {
+  width: 240px;
+  min-width: 240px;
+  max-width: 240px;
+  min-height: 140px;
+  max-height: 140px;
+  border-bottom: none;
+  border-right: 1px solid #e4ddd3;
+}
+
+.previewImage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  background: #c9c0b4;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.previewImageWrap {
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  overflow: hidden;
+}
+
+/* Artifact History: grey preview + single file strip at bottom (no separate fileBar) */
+.previewImageWrapHistory {
+  display: flex;
+  flex-direction: column;
+  min-height: inherit;
+  height: 100%;
+  width: 100%;
+  min-width: 0;
+}
+
+.previewArtifactHistoryImage {
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 290px;
+  height: 290px;
+}
+
+.historyPreviewPlaceholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  color: var(--text-tertiary, #998c82);
+}
+
+.historyFileBar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 16px;
+  background: #ffffff;
+  border-top: 1px solid #e4ddd3;
+  box-sizing: border-box;
+}
+
+.historyFileBar .fileName {
+  color: var(--text-primary, #2e1c1c);
+}
+
+.historyFileNameEmpty {
+  color: var(--text-disabled, #c9c0b4) !important;
+}
+
+.historyFileBar .lastEdited {
+  color: var(--text-tertiary, #998c82);
+}
+
+/* ─── Zoom controls ──────────────────────────────────────────────────────────── */
+
+.zoomControls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-self: flex-end;   /* bottom-right of preview area */
+}
+
+.zoomSmall {
+  align-self: flex-start;
+}
+
+.iconBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e4ddd3;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+  color: #6b1e2e;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.iconBtn:hover {
+  background: #f3efe9;
+}
+
+.iconBtn:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+}
+
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.iconBtn:disabled:hover {
+  background: #ffffff;
+}
+
+/* Minus icon — pure CSS horizontal bar */
+.minusIcon {
+  display: block;
+  width: 10px;
+  height: 3px;
+  background: #6b1e2e;
+  border-radius: 32px;
+}
+
+/* ─── File name bar ─────────────────────────────────────────────────────────── */
+
+.fileBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  background: #ffffff;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.fileName {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #2e1c1c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+.lastEdited {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #998c82;
+}
+
+/* ─── Editable details footer ────────────────────────────────────────────────── */
+
+.detailsEditable {
+  background: #f3efe9;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 16px;
+  padding-right: 16px;
+  padding-left: 16px;
+  padding-bottom: 16px;
+  flex-shrink: 0;
+}
+
+.descriptionField {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.detailsRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.nameInput {
+  flex: 1 0 0;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #e4ddd3;
+  border-radius: 6px;
+  background: #ffffff;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  box-sizing: border-box;
+}
+
+.nameInput::placeholder {
+  color: #998c82;
+  font-weight: 400;
+}
+
+.nameInput:focus-visible {
+  outline: none;
+  border-color: #6b1e2e;
+  box-shadow: 0 0 0 3px rgba(107, 30, 46, 0.12);
+}
+
+.nameInputError {
+  border-color: #e07070;
+  background: #fceaea;
+}
+
+.iterationSelectWrap {
+  flex: 0 0 auto;
+  min-width: 120px;
+  max-width: 200px;
+}
+
+.iterationSelectWrapError {
+  padding: 2px;
+  border-radius: 8px;
+  outline: 1px solid #e07070;
+  outline-offset: 0;
+  background: #fceaea;
+}
+
+/* Generic URL artifact — favicon + domain (non-Figma links) */
+.linkArtifactCard {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  text-decoration: none;
+  color: #2e1c1c;
+  background: #f3efe9;
+  box-sizing: border-box;
+  border-radius: 0;
+}
+
+.linkArtifactCard:hover {
+  background: #ede8e0;
+}
+
+.linkArtifactFavicon {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid #e4ddd3;
+}
+
+.linkArtifactDomain {
+  font-family: "Plus Jakarta Sans", sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #6b5e55;
+  text-align: center;
+  max-width: 100%;
+  word-break: break-all;
+}
+
+.linkArtifactExternal {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  color: #998c82;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* ─── Read-only details footer (View Review) ─────────────────────────────────── */
+
+.detailsReadonly {
+  background: #f3efe9;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 24px;
+  flex-shrink: 0;
+}
+
+.detailsReadonly.detailsReadonlyArtifactHistory {
+  gap: var(--scale-3, 12px);
+}
+
+.artifactHistoryHeaderBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* ─── Small thumbnail details (beside the small preview) ─────────────────────── */
+
+.detailsSmall {
+  background: #f3efe9;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 24px;
+  flex: 1 0 0;
+  min-width: 0;
+  align-self: stretch;
+}
+
+/* ─── Shared read-only content ───────────────────────────────────────────────── */
+
+.readonlyHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.readonlyName {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #6b5e55;
+  white-space: nowrap;
+}
+
+.readonlyDesc {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #6b5e55;
+  margin: 0;
+}
+
+.artifactHistoryDivider {
+  display: block;
+  width: 100%;
+  height: 1px;
+  background: var(--border-default, #e4ddd3);
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.artifactHistoryDetails {
+  display: flex;
+  flex-direction: column;
+  gap: var(--scale-3, 12px);
+  padding-top: var(--scale-2, 8px);
+  width: 100%;
+  min-width: 0;
+}

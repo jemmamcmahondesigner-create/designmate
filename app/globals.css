@@ -13,13 +13,21 @@ button, input, textarea, select {
   --text-heading: #6b1e2e;
   --text-primary: #2e1c1c;
   --text-secondary: #6b5e55;
+  --text-link: #6b1e2e;
   --text-tertiary: #998c82;
   --text-disabled: #c9c0b4;
   --text-inverse: #ffffff;
   --border-subtle: #ede8e0;
   --border-default: #e4ddd3;
   --brand-primary: #6b1e2e;
+  --brand-primary-subtle: #f5eaec;
+  --surface-app-header: #ffffff;
+  --interactive-selected-surface: #f5eaec;
+  --interactive-hover-surface-strong: #ede8e0;
+  --workflow-needs-changes-bg: #f7eff2;
+  --workflow-approved-text: #1a6840;
   --neutral-0: #ffffff;
+  --neutral-50: #faf8f6;
   --neutral-100: #f3efe9;
   --neutral-200: #e4ddd3;
   --border-width-input-default: 1px;
@@ -33,6 +41,7 @@ button, input, textarea, select {
   --radius-component-button-md: 6px;
   --radius-component-input: 6px;
   --radius-sm: 4px;
+  --radius-lg: 8px;
   --scale-1: 4px;
   --scale-1-5: 6px;
   --scale-2: 8px;
@@ -86,4 +95,15 @@ body {
 [role="menuitem"].destructive {
   color: #8b2020;
   background-color: #fceaea;
+}
+
+.text-link {
+  color: var(--text-link, #6b1e2e);
+  font-size: 13px;
+  font-weight: 400;
+  text-decoration: none;
+}
+
+.text-link:hover {
+  text-decoration: underline;
 }

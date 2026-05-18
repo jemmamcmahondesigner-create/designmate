@@ -1,0 +1,94 @@
+/* TextareaAi — DLS node 429:4687 (extends Textarea) */
+
+.outer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+/* Pulse placeholder only while AI is generating (field stays interactive). */
+.generatingPulse textarea::placeholder {
+  animation: textareaAiPlaceholderPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes textareaAiPlaceholderPulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Height / clip — overridden in FIX 3–4 via shared Textarea shell */
+
+.aiFooter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  flex-shrink: 0;
+}
+
+.aiFooterStart {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.footerHelper {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #6b5e55;
+}
+
+.aiFooterActions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  justify-content: flex-end;
+}
+
+.footerBtnReserve {
+  display: block;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+/* Loading slot — DLS node 429:5103 */
+.loadingBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle, #ede8e0);
+  background: var(--neutral-200, #e4ddd3);
+  color: var(--text-primary, #2e1c1c);
+  cursor: default;
+  pointer-events: none;
+}
+
+@keyframes textareaAiSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loadingBtnSpin {
+  display: block;
+  animation: textareaAiSpin 1s linear infinite;
+}

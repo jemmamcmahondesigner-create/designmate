@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { StatusPill, type StatusPillStatus } from "@/components/ui/ds";
 import type { Project, ProjectStatus } from "@/types/project";
 
 const CLIENT_OPTIONS = [
@@ -28,38 +29,19 @@ function clientTagStyles(client: string | null): {
   }
 }
 
-function StatusPill({ status }: { status: ProjectStatus }) {
-  const base =
-    "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase leading-[1.5] text-white";
-  const overlineStyle = { letterSpacing: "1px" as const };
-  if (status === "active") {
-    return (
-      <span
-        className={base}
-        style={{ backgroundColor: "#3b9b54", ...overlineStyle }}
-      >
-        Active
-      </span>
-    );
+function projectStatusToPill(
+  status: ProjectStatus
+): { status: StatusPillStatus; label: string } {
+  switch (status) {
+    case "active":
+      return { status: "approved", label: "Active" };
+    case "paused":
+      return { status: "draft", label: "Paused" };
+    case "complete":
+      return { status: "closed", label: "Complete" };
+    default:
+      return { status: "draft", label: "Paused" };
   }
-  if (status === "paused") {
-    return (
-      <span
-        className={base}
-        style={{ backgroundColor: "#b8b0a8", ...overlineStyle }}
-      >
-        Paused
-      </span>
-    );
-  }
-  return (
-    <span
-      className={base}
-      style={{ backgroundColor: "#7e7269", ...overlineStyle }}
-    >
-      Complete
-    </span>
-  );
 }
 
 export type ProjectCardProps = {
@@ -82,6 +64,7 @@ export function ProjectCard({
       : clientTrimmed ?? "Unassigned";
 
   const descriptionText = project.description?.trim() ?? "";
+  const statusPill = projectStatusToPill(project.status);
 
   return (
     <Link
@@ -108,7 +91,12 @@ export function ProjectCard({
             className="flex flex-wrap items-center text-[12px] font-normal leading-[1.5]"
             style={{ color: "#6b5e55", gap: 16, letterSpacing: "0.24px" }}
           >
-            <StatusPill status={project.status} />
+            <StatusPill
+              label={statusPill.label}
+              status={statusPill.status}
+              size="sm"
+              prominence="high"
+            />
             <span>{reviewCount} reviews</span>
             <span>{decisionCount} decisions</span>
           </div>

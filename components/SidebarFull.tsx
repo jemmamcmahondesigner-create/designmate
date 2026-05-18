@@ -83,7 +83,7 @@ export function SidebarFull() {
             className="hidden min-w-0 truncate text-[20px] font-bold leading-[1.5] group-hover:inline-block"
             style={{ color: "#6b1e2e" }}
           >
-            DesignMate
+            DesignTrace
           </span>
         </div>
       </div>

@@ -10,6 +10,7 @@ import {
   type ReactNode
 } from "react";
 import { useRouter } from "next/navigation";
+import { DiscardChangesModal } from "@/components/DiscardChangesModal";
 import { CreateReviewDrawer } from "@/components/CreateReviewDrawer";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
@@ -28,6 +29,8 @@ export type OpenNewReviewPayload =
       projectId: string;
       projectProblems: ProjectProblem[];
       teammateOptions: User[];
+      /** Fires after a review is created successfully from this project context */
+      onReviewCreated?: () => void;
     };
 
 type NewReviewDrawerContextValue = {
@@ -62,11 +65,17 @@ function mapContributorsToUsers(rows: unknown): User[] {
   return rows.map((r) => {
     const o = r as Record<string, unknown>;
     const email = o.email;
+    const avatarRaw = o.avatar_url ?? o.avatarUrl;
+    const avatarUrl =
+      avatarRaw == null || String(avatarRaw).trim() === ""
+        ? null
+        : String(avatarRaw);
     return {
       id: String(o.id ?? ""),
       name: String(o.name ?? ""),
       email:
-        email == null || String(email).trim() === "" ? null : String(email)
+        email == null || String(email).trim() === "" ? null : String(email),
+      avatarUrl
     };
   });
 }
@@ -80,11 +89,17 @@ export function NewReviewDrawerProvider({
 }>) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [drawerDirty, setDrawerDirty] = useState(false);
+  const [navDiscardOpen, setNavDiscardOpen] = useState(false);
+  const [pendingNavHref, setPendingNavHref] = useState<string | null>(null);
   const [scope, setScope] = useState<"global" | "project">("global");
   const [scopedProjectId, setScopedProjectId] = useState<string | null>(null);
   const [globalProjectId, setGlobalProjectId] = useState("");
   const [projectProblems, setProjectProblems] = useState<ProjectProblem[]>([]);
   const [teammateOptions, setTeammateOptions] = useState<User[]>([]);
+  const [onReviewCreated, setOnReviewCreated] = useState<(() => void) | null>(
+    null
+  );
 
   const openNewReview = useCallback((payload?: OpenNewReviewPayload) => {
     if (payload && payload.mode === "project") {
@@ -93,12 +108,14 @@ export function NewReviewDrawerProvider({
       setGlobalProjectId("");
       setProjectProblems(payload.projectProblems);
       setTeammateOptions(payload.teammateOptions);
+      setOnReviewCreated(() => payload.onReviewCreated ?? null);
     } else {
       setScope("global");
       setScopedProjectId(null);
       setGlobalProjectId("");
       setProjectProblems([]);
       setTeammateOptions([]);
+      setOnReviewCreated(null);
     }
     setOpen(true);
   }, []);
@@ -106,7 +123,29 @@ export function NewReviewDrawerProvider({
   const handleClose = useCallback(() => {
     setOpen(false);
     setGlobalProjectId("");
+    setOnReviewCreated(null);
+    setDrawerDirty(false);
   }, []);
+
+  // TODO: Also apply this guard to browser back/forward navigation via useRouter or similar once router config is confirmed
+
+  useEffect(() => {
+    if (!open || !drawerDirty) return;
+    function onPointerDownCapture(e: PointerEvent) {
+      const t = e.target as HTMLElement | null;
+      const a = t?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a) return;
+      const nav = a.closest('[aria-label="Main navigation"]');
+      if (!nav) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const href = a.getAttribute("href");
+      setPendingNavHref(href && href.trim() ? href.trim() : null);
+      setNavDiscardOpen(true);
+    }
+    document.addEventListener("pointerdown", onPointerDownCapture, true);
+    return () => document.removeEventListener("pointerdown", onPointerDownCapture, true);
+  }, [open, drawerDirty]);
 
   useEffect(() => {
     if (!open || scope !== "global" || !globalProjectId) {
@@ -158,6 +197,7 @@ export function NewReviewDrawerProvider({
     async (input: SubmitReviewInput) => {
       const result = await submitReviewClient(input);
       if (!result.error) {
+        router.push(`/reviews/${input.reviewId}`);
         router.refresh();
       }
       return result;
@@ -175,9 +215,28 @@ export function NewReviewDrawerProvider({
   return (
     <NewReviewDrawerContext.Provider value={ctx}>
       {children}
+      <DiscardChangesModal
+        open={navDiscardOpen}
+        title="Unsaved changes?"
+        message="You have unsaved changes. If you leave now your review details will be lost."
+        keepEditingLabel="Stay"
+        discardLabel="Leave anyway"
+        onKeepEditing={() => {
+          setNavDiscardOpen(false);
+          setPendingNavHref(null);
+        }}
+        onDiscard={() => {
+          const href = pendingNavHref;
+          setNavDiscardOpen(false);
+          setPendingNavHref(null);
+          handleClose();
+          if (href) router.push(href);
+        }}
+      />
       <CreateReviewDrawer
         open={open}
         onClose={handleClose}
+        onDirtyChange={setDrawerDirty}
         teammateOptions={teammateOptions}
         projectProblems={projectProblems}
         projectScoped={projectScoped}
@@ -187,6 +246,7 @@ export function NewReviewDrawerProvider({
         reviewerPoolKey={reviewerPoolKey}
         effectiveProjectId={effectiveProjectId}
         onCreateReview={handleCreateReview}
+        onReviewCreated={onReviewCreated ?? undefined}
       />
     </NewReviewDrawerContext.Provider>
   );

@@ -14,7 +14,17 @@ export default async function ProjectsPage() {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("projects")
-    .select("id, name, client, description, status, created_at")
+    .select(
+      `
+      id,
+      name,
+      client,
+      description,
+      status,
+      created_at,
+      contributors ( name )
+    `
+    )
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -35,6 +45,21 @@ export default async function ProjectsPage() {
   }
 
   const rows = data ?? [];
+  const teammateLabelOk =
+    rows.length === 0 ||
+    (rows[0] != null && Object.prototype.hasOwnProperty.call(rows[0], "contributors"));
+  const searchPlaceholder = teammateLabelOk
+    ? "Filter by project, client, or teammate..."
+    : "Filter by project or client...";
+
+  function contributorNamesFromRow(r: Record<string, unknown>): string[] {
+    const raw = r.contributors;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((c) => String((c as Record<string, unknown>).name ?? "").trim())
+      .filter(Boolean);
+  }
+
   const projects: Project[] = rows.map((row) => {
     const r = row as Record<string, unknown>;
     const descRaw = r.description;
@@ -57,7 +82,8 @@ export default async function ProjectsPage() {
       client,
       description,
       status: normalizeStatus(r.status as string | undefined),
-      created_at: String(r.created_at ?? "")
+      created_at: String(r.created_at ?? ""),
+      contributor_names: contributorNamesFromRow(r)
     };
   });
 
@@ -84,5 +110,11 @@ export default async function ProjectsPage() {
     }
   }
 
-  return <ProjectsView grouped={grouped} reviewCounts={reviewCounts} />;
+  return (
+    <ProjectsView
+      grouped={grouped}
+      reviewCounts={reviewCounts}
+      searchPlaceholder={searchPlaceholder}
+    />
+  );
 }

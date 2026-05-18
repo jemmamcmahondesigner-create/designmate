@@ -1,0 +1,46 @@
+/* Square icon trigger — matches PageHeader overflow control (node 56:99). */
+
+.root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e4ddd3;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #2e1c1c;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  padding: 0;
+}
+
+.root:hover {
+  background: #f3efe9;
+}
+
+.root:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+}
+
+.root:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Ghost — no border / fill (drawer close, accordion chevrons) */
+.rootGhost {
+  border: none;
+  background: transparent;
+}
+
+.rootGhost:hover:not(:disabled) {
+  background: transparent;
+}
+
+.rootGhost:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+}

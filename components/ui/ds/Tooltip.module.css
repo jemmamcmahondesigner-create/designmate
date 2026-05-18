@@ -1,0 +1,224 @@
+/* Tooltip.module.css
+   DLS source: VytA96WG9bMQpx5n0yciGH node 108:1128
+   Dark bg #2a221b, max-width 240px.
+   Never use for critical information.
+   Positions: top | bottom | left | right
+*/
+
+/* ─── Wrapper ────────────────────────────────────────────────────────────────── */
+
+.wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fullWidth {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.triggerFullWidth {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ─── Trigger ────────────────────────────────────────────────────────────────── */
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  /* Ensures hover registers even when the child control is disabled */
+  pointer-events: all;
+}
+
+.trigger:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ─── Bubble — hidden by default ─────────────────────────────────────────────── */
+
+.bubble {
+  position: absolute;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 240px;
+  width: max-content;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #2a221b;
+  box-shadow: 0 4px 8px 0 rgba(41, 33, 28, 0.18);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  /* Hidden until parent hovered/focused */
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+}
+
+.wrap:hover .bubble,
+.trigger:focus-visible ~ .bubble {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* ─── Position: top (default) ───────────────────────────────────────────────── */
+
+.pos-top {
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.pos-top::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #2a221b;
+}
+
+/* ─── Position: bottom ──────────────────────────────────────────────────────── */
+
+.pos-bottom {
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.pos-bottom::after {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-bottom-color: #2a221b;
+}
+
+/* ─── Position: left ────────────────────────────────────────────────────────── */
+
+.pos-left {
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.pos-left::after {
+  content: '';
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-left-color: #2a221b;
+}
+
+/* ─── Position: right ───────────────────────────────────────────────────────── */
+
+.pos-right {
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.pos-right::after {
+  content: '';
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-right-color: #2a221b;
+}
+
+/* ─── Text inside bubble ────────────────────────────────────────────────────── */
+
+.label {
+  color: #ffffff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  display: block;
+  white-space: normal;
+  word-break: normal;
+}
+
+.supportingText {
+  color: #c9c0b4;
+  white-space: nowrap;
+  display: block;
+}
+
+/* ─── Portal-floating bubble (position set via JS; escapes overflow:hidden) ─ */
+
+.bubbleFloating {
+  position: fixed;
+  z-index: 10000;
+  bottom: auto;
+  right: auto;
+  transform: none;
+}
+
+.bubbleFloatingUnplaced {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.bubbleFloatingPlaced {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: none;
+}
+
+/* Arrow when bubble sits above the trigger */
+.portalArrowTop::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #2a221b;
+}
+
+/* Arrow when bubble sits below the trigger */
+.portalArrowBottom::after {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-bottom-color: #2a221b;
+}
+
+/* Bubble sits to the right of the trigger (sidebar); arrow on the left edge of the bubble */
+.portalArrowRight::after {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-right-color: #2a221b;
+}

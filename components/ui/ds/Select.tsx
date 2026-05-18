@@ -1,0 +1,388 @@
+'use client';
+
+import {
+  useState,
+  useRef,
+  useId,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  type CSSProperties,
+  type KeyboardEvent,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { Icon } from './Icon';
+import styles from './Select.module.css';
+
+export type SelectSize = 'sm' | 'md' | 'lg';
+export type SelectState = 'default' | 'hover' | 'focused' | 'filled' | 'error' | 'disabled';
+
+export interface SelectOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
+const CREATE_PREFIX = '__create__:';
+
+export interface SelectProps {
+  options: SelectOption[];
+  value?: string;
+  onChange?: (value: string) => void;
+  placeholder?: string;
+  label?: string;
+  helperText?: string;
+  errorText?: string;
+  size?: SelectSize;
+  disabled?: boolean;
+  /** Renders the menu open immediately (for searchable/autocomplete UX) */
+  searchable?: boolean;
+  /**
+   * When used with `searchable`, appends "Create …" for typed values with no exact
+   * name match (case-insensitive). Calls `onCreateOption` with the raw typed string.
+   */
+  creatable?: boolean;
+  onCreateOption?: (typedLabel: string) => Promise<string | undefined>;
+  id?: string;
+  name?: string;
+  className?: string;
+  /**
+   * When true, menu is portaled to document.body with position fixed from trigger
+   * getBoundingClientRect() — use inside overflow:hidden containers (e.g. modals).
+   * When false, menu is position:absolute; top:100% under the trigger wrapper.
+   */
+  portaled?: boolean;
+}
+
+export function Select({
+  options,
+  value,
+  onChange,
+  placeholder = 'Select an option',
+  label,
+  helperText,
+  errorText,
+  size = 'sm',
+  disabled = false,
+  searchable = false,
+  creatable = false,
+  onCreateOption,
+  id: idProp,
+  name,
+  className,
+  portaled = false,
+}: SelectProps) {
+  const autoId = useId();
+  const id = idProp ?? autoId;
+  const [open, setOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [menuMaxHeight, setMenuMaxHeight] = useState<number>(240);
+  const [portalStyle, setPortalStyle] = useState<CSSProperties>({});
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+
+  const selectedOption = options.find(o => o.value === value);
+  const displayLabel = selectedOption?.label ?? '';
+  const hasError = !!errorText;
+  const isFilled = !!value;
+
+  const filteredOptions =
+    searchable && searchTerm
+      ? options.filter(o => o.label.toLowerCase().includes(searchTerm.toLowerCase()))
+      : options;
+
+  const trimmedSearch = searchTerm.trim();
+  const hasExactMatch =
+    trimmedSearch.length > 0 &&
+    options.some(o => o.label.toLowerCase() === trimmedSearch.toLowerCase());
+
+  const createValue =
+    creatable &&
+    searchable &&
+    onCreateOption &&
+    trimmedSearch.length > 0 &&
+    !hasExactMatch
+      ? `${CREATE_PREFIX}${encodeURIComponent(trimmedSearch)}`
+      : null;
+
+  const displayOptions: SelectOption[] = [...filteredOptions];
+  if (createValue) {
+    displayOptions.push({
+      value: createValue,
+      label: `Create role: ${trimmedSearch}`,
+    });
+  }
+
+  const showNoResults = displayOptions.length === 0;
+
+  const updatePortalPosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger || !open || !portaled) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const viewportPadding = 12;
+    const gap = 0;
+    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding - gap;
+    const spaceAbove = rect.top - viewportPadding - gap;
+    const prefersTop = spaceBelow < 200 && spaceAbove > spaceBelow;
+    const availableHeight = prefersTop ? spaceAbove : spaceBelow;
+    const mh = Math.max(120, Math.min(240, Math.floor(availableHeight)));
+
+    setMenuMaxHeight(mh);
+
+    if (prefersTop) {
+      setPortalStyle({
+        position: 'fixed',
+        left: Math.round(rect.left),
+        right: 'auto',
+        width: Math.round(rect.width),
+        bottom: Math.round(window.innerHeight - rect.top + gap),
+        maxHeight: mh,
+        zIndex: 10000,
+        marginTop: 0,
+      });
+    } else {
+      setPortalStyle({
+        position: 'fixed',
+        left: Math.round(rect.left),
+        right: 'auto',
+        width: Math.round(rect.width),
+        top: Math.round(rect.bottom + gap),
+        maxHeight: mh,
+        zIndex: 10000,
+        marginTop: 0,
+      });
+    }
+  }, [open, portaled]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    if (portaled) {
+      updatePortalPosition();
+      return;
+    }
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const viewportPadding = 12;
+    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+    const mh = Math.max(120, Math.min(240, Math.floor(spaceBelow)));
+    setMenuMaxHeight(mh);
+  }, [open, portaled, displayOptions.length, searchTerm, updatePortalPosition]);
+
+  useEffect(() => {
+    if (!open || !portaled) return;
+    const onScrollOrResize = () => {
+      requestAnimationFrame(() => updatePortalPosition());
+    };
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true);
+      window.removeEventListener('resize', onScrollOrResize);
+    };
+  }, [open, portaled, updatePortalPosition]);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        triggerRef.current?.contains(e.target as Node) ||
+        menuRef.current?.contains(e.target as Node)
+      )
+        return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const finishSelect = (optValue: string) => {
+    onChange?.(optValue);
+    setOpen(false);
+    setSearchTerm('');
+    triggerRef.current?.focus();
+  };
+
+  const handleSelect = (optValue: string) => {
+    if (optValue.startsWith(CREATE_PREFIX)) {
+      if (!onCreateOption) return;
+      const raw = decodeURIComponent(optValue.slice(CREATE_PREFIX.length));
+      void (async () => {
+        const newId = await onCreateOption(raw);
+        if (newId) finishSelect(newId);
+      })();
+      return;
+    }
+    finishSelect(optValue);
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      setOpen(false);
+      triggerRef.current?.focus();
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      setOpen(o => !o);
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setOpen(true);
+    }
+  };
+
+  const controlClass = [
+    styles.control,
+    styles[`size-${size}`],
+    hasError ? styles.error : '',
+    disabled ? styles.disabled : '',
+    open ? styles.open : '',
+    isFilled && !hasError ? styles.filled : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const labelClass = [
+    styles.label,
+    hasError ? styles.labelError : '',
+    disabled ? styles.labelDisabled : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const menuClassName = portaled
+    ? [styles.menu, styles.menuPortal].join(' ')
+    : [styles.menu, styles.menuAttached].join(' ');
+
+  const menuStyle: CSSProperties = portaled
+    ? { ...portalStyle, maxHeight: menuMaxHeight, marginTop: 0 }
+    : { maxHeight: menuMaxHeight, marginTop: 0 };
+
+  const menu = open ? (
+    <ul
+      ref={menuRef}
+      role="listbox"
+      aria-label={label ?? 'Options'}
+      className={menuClassName}
+      style={menuStyle}
+    >
+      {showNoResults && (
+        <li className={styles.noResults}>No options found</li>
+      )}
+      {displayOptions.map(option => (
+        <li
+          key={option.value}
+          role="option"
+          aria-selected={option.value === value}
+          aria-disabled={option.disabled}
+          className={[
+            styles.menuItem,
+            option.value === value ? styles.menuItemSelected : '',
+            option.disabled ? styles.menuItemDisabled : '',
+            option.value.startsWith(CREATE_PREFIX) ? styles.menuItemCreate : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          onMouseDown={e => e.preventDefault()}
+          onClick={() => !option.disabled && handleSelect(option.value)}
+        >
+          {option.label}
+          {option.value === value && !option.value.startsWith(CREATE_PREFIX) && (
+            <Icon name="check" size={14} className={styles.checkIcon} />
+          )}
+        </li>
+      ))}
+    </ul>
+  ) : null;
+
+  const menuNode =
+    portaled && typeof document !== 'undefined' && menu
+      ? createPortal(menu, document.body)
+      : menu;
+
+  return (
+    <div className={[styles.root, className ?? ''].filter(Boolean).join(' ')}>
+      {label && (
+        <label htmlFor={id} className={labelClass}>
+          {label}
+        </label>
+      )}
+
+      {/* Hidden native select for form submission (creatable rows are omitted) */}
+      <select
+        name={name}
+        value={value ?? ''}
+        disabled={disabled}
+        aria-hidden="true"
+        tabIndex={-1}
+        style={{ display: 'none' }}
+        onChange={e => onChange?.(e.target.value)}
+      >
+        <option value="" />
+        {options.map(o => (
+          <option key={o.value} value={o.value} disabled={o.disabled}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+
+      {/* Custom control */}
+      <div className={styles.wrapper}>
+        <button
+          ref={triggerRef}
+          id={id}
+          type="button"
+          role="combobox"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-disabled={disabled}
+          disabled={disabled}
+          className={controlClass}
+          onClick={() => !disabled && setOpen(o => !o)}
+          onKeyDown={handleKeyDown}
+        >
+          {searchable && open ? (
+            <input
+              className={styles.searchInput}
+              value={searchTerm}
+              placeholder={displayLabel || placeholder}
+              onChange={e => setSearchTerm(e.target.value)}
+              onClick={e => e.stopPropagation()}
+              autoFocus
+              aria-label="Search options"
+            />
+          ) : (
+            <span
+              className={displayLabel ? styles.valueText : styles.placeholderText}
+            >
+              {displayLabel || placeholder}
+            </span>
+          )}
+          <Icon
+            name="chevron-down"
+            size={size === 'sm' ? 14 : size === 'md' ? 16 : 18}
+            className={[styles.chevron, open ? styles.chevronOpen : '']
+              .filter(Boolean)
+              .join(' ')}
+            aria-hidden="true"
+          />
+        </button>
+        {!portaled ? menuNode : null}
+      </div>
+
+      {portaled ? menuNode : null}
+
+      {/* Helper / error text */}
+      {hasError && (
+        <p className={styles.errorText} role="alert">
+          {errorText}
+        </p>
+      )}
+      {!hasError && helperText && (
+        <p className={styles.helperText}>{helperText}</p>
+      )}
+    </div>
+  );
+}

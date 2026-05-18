@@ -1,0 +1,174 @@
+/* Tag.module.css
+   Extracted from DesignTrace DLS (VytA96WG9bMQpx5n0yciGH, node 99:389)
+   Rules: raw hex only, no var() with slashes, no color-mix(), no backslash escapes.
+*/
+
+/* ─── Base ─────────────────────────────────────────────────────────────────── */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  border-style: solid;
+  border-width: 1px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ─── Sizes ─────────────────────────────────────────────────────────────────── */
+
+.size-sm {
+  padding: 2px 8px;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+}
+
+.size-md {
+  padding: 4px 10px 4px 8px;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.13px;
+}
+
+/* sm with no icon has no trailing gap, md same */
+.size-sm.icon-none {
+  gap: 0;
+}
+.size-md.icon-none {
+  gap: 0;
+}
+
+/* removable: tighter right padding at sm */
+.size-sm.icon-removable {
+  padding-right: 5px;
+}
+.size-md.icon-removable {
+  padding-right: 8px;
+}
+
+/* leading icon: sm right stays 8px, md right stays 10px - handled by base */
+
+/* ─── Label ─────────────────────────────────────────────────────────────────── */
+
+.label {
+  flex-shrink: 0;
+  /* colour set per variant below */
+}
+
+/* ─── Icon slot ──────────────────────────────────────────────────────────────── */
+
+.iconWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* ─── Remove button ─────────────────────────────────────────────────────────── */
+
+.removeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  border-radius: 2px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.removeBtn:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+}
+
+/* ─── Variants ───────────────────────────────────────────────────────────────── */
+
+/* default - neutral-100 bg, border-default border, text-secondary text */
+.variant-default {
+  background: #f3efe9;
+  border-color: #e4ddd3;
+  color: #6b5e55;
+}
+
+/* brand - brand/primary/subtle bg, brand/primary/muted border, text/heading text */
+.variant-brand {
+  background: #f5eaec;
+  border-color: #e8d0d4;
+  color: #6b1e2e;
+}
+
+/* mint - surface/card/mint bg, teal border, feedback/success/text text */
+.variant-mint {
+  background: #ebf7f4;
+  border-color: #a8d9d0;
+  color: #256b38;
+}
+
+/* butter - surface/card/butter bg, brand/accent/mid border, feedback/warning/text */
+/* Note: butter uses 1px border with #fff0a3, distinct from warning's 1.5px #e5b025 */
+.variant-butter {
+  background: #fff6d7;
+  border-color: #fff0a3;
+  color: #7a5500;
+}
+
+/* aqua - surface/card/aqua bg, #b8dcf0 border, feedback/info/text */
+.variant-aqua {
+  background: #e5f3f9;
+  border-color: #b8dcf0;
+  color: #1a527a;
+}
+
+/* lilac - brand/lilac/subtle bg, brand/lilac/mid border, lilac text */
+.variant-lilac {
+  background: #f5e8f6;
+  border-color: #d9a8dc;
+  color: #7a3f8a;
+}
+
+/* success - feedback/success/bg, 2px success border, success text */
+.variant-success {
+  background: #ebf6ee;
+  border-color: #7dc98f;
+  border-width: 2px;
+  color: #256b38;
+}
+
+/* warning - feedback/warning/bg, 1.5px warning border, warning text */
+/* Note: warning uses 1.5px border with #e5b025, distinct from butter's 1px #fff0a3 */
+.variant-warning {
+  background: #fef8dc;
+  border-color: #e5b025;
+  border-width: 1.5px;
+  color: #7a5500;
+}
+
+/* error - feedback/error/bg, 2px error border, error text */
+.variant-error {
+  background: #fceaea;
+  border-color: #e07070;
+  border-width: 2px;
+  color: #8b2020;
+}
+
+/* neutral - neutral/150 bg, neutral/300 border, text-secondary text */
+.variant-neutral {
+  background: #ede8e0;
+  border-color: #c9c0b4;
+  color: #6b5e55;
+}

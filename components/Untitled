@@ -1,0 +1,18 @@
+const openRef = useRef(open);
+useEffect(() => {
+  openRef.current = open;
+}, [open]);
+
+useEffect(() => {
+  function onPointerDown(e: PointerEvent) {
+    if (!openRef.current) return;
+    if (!problemsSelectRef.current?.contains(e.target as Node)) {
+      setProblemsSelectOpen(false);
+    }
+    if (!reviewerBlockRef.current?.contains(e.target as Node)) {
+      setReviewerMenuOpen(false);
+    }
+  }
+  document.addEventListener("pointerdown", onPointerDown);
+  return () => document.removeEventListener("pointerdown", onPointerDown);
+}, []);

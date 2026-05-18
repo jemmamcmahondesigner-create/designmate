@@ -1,0 +1,404 @@
+/* ─── Menu root ──────────────────────────────────────────────────────────────
+ *
+ * The Menu fills the trigger width by default. Every caller must wrap its
+ * trigger + menu pair in a `position: relative` ancestor.
+ */
+
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 40;
+
+  min-width: 240px;
+  width: 100%;
+
+  display: flex;
+  flex-direction: column;
+
+  background: #ffffff;
+  border: 1px solid #e4ddd3;
+  border-radius: 8px;
+  box-shadow: 0px 4px 12px rgba(41, 33, 28, 0.12);
+  overflow: hidden;
+}
+
+.alignRight {
+  right: 0;
+  left: auto;
+}
+
+.alignLeft {
+  left: 0;
+  right: auto;
+}
+
+/* Portaled menu — position comes from inline fixed coords */
+.menuPortal {
+  position: fixed;
+  width: max-content;
+  max-width: min(100vw - 24px, 360px);
+}
+
+.multiSelect {
+  /* Multi-select items are slightly taller to fit avatar + checkbox */
+}
+
+/* ─── List ───────────────────────────────────────────────────────────────── */
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  /* Reset global `[role="menu"]` chrome — outer `.menu` keeps border + shadow */
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* ─── Item row ───────────────────────────────────────────────────────────── */
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  min-height: 36px;
+  cursor: pointer;
+  user-select: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.12px;
+  color: #2e1c1c;
+  border-radius: 0;
+  outline: none;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.item:hover,
+.item:focus {
+  background-color: #f3efe9;
+}
+
+.item:focus-visible {
+  box-shadow: inset 0 0 0 2px #c69099;
+}
+
+.itemActive {
+  color: #6b1e2e;
+}
+
+.itemActive:hover,
+.itemActive:focus {
+  background-color: #f3efe9;
+}
+
+.itemDestructive {
+  color: #8b2020;
+}
+
+.itemDestructive:hover,
+.itemDestructive:focus {
+  background-color: #fbecec;
+  color: #8b2020;
+}
+
+.itemDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.itemDisabled:hover,
+.itemDisabled:focus {
+  background-color: transparent;
+}
+
+/* ─── Leading slots ──────────────────────────────────────────────────────── */
+
+.itemIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.itemAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ─── Checkbox (multi-select) ────────────────────────────────────────────── */
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border: 1.5px solid #c7beb3;
+  border-radius: 3px;
+  background: #ffffff;
+  color: transparent;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.checkboxChecked {
+  background: #6b1e2e;
+  border-color: #6b1e2e;
+  color: #ffffff;
+}
+
+/* ─── Label + trailing check ─────────────────────────────────────────────── */
+
+.itemLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.itemCheck {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────────────────── */
+
+.footer {
+  border-top: 1px solid #ede8e0;
+  padding: 4px 0;
+}
+
+.footerBtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.12px;
+  cursor: pointer;
+  text-align: left;
+  outline: none;
+  transition: background-color 120ms ease;
+}
+
+.footerBtn:focus-visible {
+  box-shadow: inset 0 0 0 2px #c69099;
+}
+
+.footerIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.footerLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Link-style footer — brand colour, used with multi-select (e.g. "Create new…") */
+.footerLink .footerBtn {
+  color: #6b1e2e;
+}
+
+.footerLink .footerBtn:hover {
+  background-color: #f5eaec;
+}
+
+/* Delete-style footer — red, used with action-menu */
+.footerDelete .footerBtn {
+  color: #8b2020;
+}
+
+.footerDelete .footerBtn:hover {
+  background-color: #fbecec;
+}
+
+/* ─── Button footer ───────────────────────────────────────────────────────────
+ * Used with multi-select: primary "Done" button + optional "+ Link" on the right.
+ */
+
+.footerButton {
+  border-top: 1px solid #ede8e0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #ffffff;
+}
+
+.footerDoneBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 14px;
+  background: #6b1e2e;
+  color: #ffffff;
+  border: 0;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.12px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 120ms ease;
+}
+
+.footerDoneBtn:hover {
+  background: #53162a;
+}
+
+.footerDoneBtn:focus-visible {
+  box-shadow: 0 0 0 2px #c69099;
+}
+
+.footerAdditionalLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #6b1e2e;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.12px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 120ms ease;
+}
+
+.footerAdditionalLink:hover {
+  background-color: #f5eaec;
+}
+
+.footerAdditionalLink:focus-visible {
+  box-shadow: inset 0 0 0 2px #c69099;
+}
+
+/* ─── Sections type ───────────────────────────────────────────────────────── */
+
+.sectionsMenu {
+  position: absolute;
+  z-index: 40;
+  width: 229px;
+  background: #ffffff;
+  border: 1px solid #e4ddd3;
+  border-radius: 8px;
+  box-shadow: 0px 2px 4px rgba(41, 33, 28, 0.06), 0px 8px 16px rgba(41, 33, 28, 0.15);
+  overflow: hidden;
+}
+
+.sectionsRoot {
+  display: flex;
+  flex-direction: column;
+}
+
+.sectionsHeadingWrap {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  background: #f3efe9;
+}
+
+.sectionsHeading {
+  font-size: 10px;
+  font-weight: 600;
+  color: #998c82;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.sectionsDivider {
+  height: 1px;
+  background: #ede8e0;
+}
+
+.sectionsRows {
+  display: flex;
+  flex-direction: column;
+}
+
+.sectionsRow {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+}
+
+.sectionsRowReviewer {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+}
+
+.sectionsReviewerChip {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5eaec;
+  color: #6b1e2e;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+}
+
+.sectionsReviewerName {
+  font-size: 14px;
+  font-weight: 500;
+  color: #2e1c1c;
+}
+
+.sectionsFooter {
+  padding: 8px 12px;
+}
+
+.sectionsApplyButton {
+  width: 100%;
+}

@@ -1,0 +1,18 @@
+/* Artifact drawer detail rows — avatar stack (DS Table owns table chrome). */
+
+.avatarGroup {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.avatarGroupItem {
+  margin-right: -4px;
+  background: var(--brand-primary-subtle, #f5eaec) !important;
+  color: var(--text-heading, #6b1e2e) !important;
+  box-shadow: 0 0 0 1px var(--neutral-0, #fff);
+}
+
+.avatarGroupItem:last-child {
+  margin-right: 0;
+}

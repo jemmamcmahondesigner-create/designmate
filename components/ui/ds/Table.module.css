@@ -1,0 +1,259 @@
+/* DS Table — project DLS spec */
+
+.wrap {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--border-default, #e4ddd3);
+  border-radius: var(--radius-lg, 8px);
+  overflow: hidden;
+  background: var(--neutral-0, #fff);
+}
+
+.table {
+  box-sizing: border-box;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  border: none;
+}
+
+.theadRow {
+  background: var(--surface-app-header, #fff);
+  height: 44px;
+  min-height: 44px;
+  max-height: 44px;
+}
+
+/* No header bottom border — DLS uses 4px padding under labels, not a rule. */
+.theadRow th {
+  padding: 0;
+  vertical-align: middle;
+  text-align: left;
+  font-style: normal;
+  border: none;
+  border-bottom: none;
+  background: var(--surface-app-header, #fff);
+}
+
+/* DLS node 350:3860 — header cell chrome */
+.headerCellWrap {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: 44px;
+  padding: 4px 0 4px 16px;
+  gap: 12px;
+  background: var(--surface-app-header, #fff);
+}
+
+.headerLabelWrap {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.headerLabel {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-secondary, #6b5e55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.headerCellWrapAlignRight .headerLabelWrap {
+  text-align: right;
+}
+
+/* 24px-tall vertical rule at cell’s right edge (1px × 24px bar, rotated). */
+.headerDividerOuter {
+  display: flex;
+  align-items: flex-start;
+  flex-shrink: 0;
+}
+
+.headerDividerTrack {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.headerDividerRotate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(-90deg);
+}
+
+.headerDividerBar {
+  width: 24px;
+  height: 1px;
+  /* DLS `--border/default` → project token `--border-default` */
+  background: var(--border-default, #e4ddd3);
+  flex-shrink: 0;
+}
+
+.row {
+  height: 52px;
+  min-height: 52px;
+  max-height: 52px;
+}
+
+.row td {
+  box-sizing: border-box;
+  padding: 8px 16px;
+  vertical-align: middle;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  background: var(--surface-page, #faf8f6);
+  transition: background-color 0.15s ease;
+  border: none;
+  height: 52px;
+  min-height: 52px;
+  max-height: 52px;
+}
+
+.rowMuted td {
+  background: var(--neutral-50, #faf8f6);
+}
+
+.row:not(.rowSelected):hover td {
+  background-color: var(--interactive-selected-surface, #f5eaec);
+}
+
+.rowMuted:not(.rowSelected):hover td {
+  background-color: var(--interactive-selected-surface, #f5eaec);
+}
+
+.rowSelected td {
+  background: var(--interactive-selected-surface, #f5eaec);
+}
+
+.rowSelected:hover td {
+  background: var(--interactive-selected-surface, #f5eaec);
+}
+
+.alignRight {
+  text-align: right;
+}
+
+.alignCenter {
+  text-align: center;
+}
+
+.cellText {
+  color: var(--text-primary, #2e1c1c);
+  font-weight: 400;
+}
+
+.cellTextBold {
+  color: var(--text-primary, #2e1c1c);
+  font-weight: 700;
+}
+
+.row:not(.rowSelected):hover .cellTextBold {
+  color: var(--text-link, #6b1e2e);
+}
+
+.cellTextBoldSelected {
+  color: var(--text-link, #6b1e2e);
+}
+
+.row .cellLink {
+  color: var(--text-link, #6b1e2e);
+  font-weight: 400;
+  display: inline-flex;
+  align-items: center;
+  min-height: 100%;
+}
+
+.row .cellCustom {
+  color: inherit;
+  display: flex;
+  align-items: center;
+  min-height: 100%;
+}
+
+.kebabTd {
+  vertical-align: middle;
+  text-align: right;
+}
+
+.kebabCell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.row:hover .kebabCell,
+.rowSelected .kebabCell {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.row:hover:not(.rowSelected) .kebabCell :global(button) {
+  background: transparent;
+  border: none;
+}
+
+.row:hover:not(.rowSelected) .kebabCell :global(button:hover) {
+  background: transparent;
+  border: none;
+}
+
+.rowSelected .kebabCell :global(button) {
+  background: var(--brand-primary-subtle, #f5eaec);
+  border: none;
+}
+
+.rowSelected .kebabCell :global(button:hover) {
+  background: var(--brand-primary-subtle, #f5eaec);
+  border: none;
+}
+
+.empty {
+  padding: 48px 16px;
+  text-align: center;
+}
+
+.footer {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 32px;
+  padding: 4px 8px;
+  background: var(--surface-app-header, #fff);
+  border-top: 1px solid var(--border-default, #e4ddd3);
+}
+
+.footerRowsPerPage {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary, #6b5e55);
+}
+
+.footerRange {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-primary, #2e1c1c);
+}
+
+.footerNav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

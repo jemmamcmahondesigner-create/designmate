@@ -1,0 +1,179 @@
+/* Textarea.module.css — DLS multiline control
+   .fieldScrollClip clips scrollbar corners; .fieldShell carries border + focus ring.
+*/
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  white-space: nowrap;
+}
+
+.labelDisabled {
+  color: #c9c0b4;
+}
+
+.labelError {
+  color: #8b2020;
+}
+
+/* ─── Shell (border + radius + focus ring — no overflow; clip is inner) ───── */
+
+.fieldShellOuter {
+  width: 100%;
+  box-sizing: border-box;
+  /* Focus ring sits inside border-radius; no outer padding needed. */
+  padding: 0;
+}
+
+/** Tight layout: no outer inset (e.g. ArtifactPreview description). */
+.shellOuterTight {
+  padding: 0;
+}
+
+.fieldShell {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid #e4ddd3;
+  background: #ffffff;
+  box-sizing: border-box;
+  transition: border-color 0.1s ease, box-shadow 0.1s ease;
+}
+
+.fieldScrollClip {
+  border-radius: 6px;
+  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+}
+
+.fieldShell:hover:not(.fieldShellDisabled):not(.fieldShellReadOnly):not(
+    .fieldShellError
+  ) {
+  border-color: #c9c0b4;
+}
+
+.fieldShell:focus-within:not(.fieldShellDisabled):not(.fieldShellReadOnly) {
+  outline: none;
+  border-color: #6b1e2e;
+  box-shadow: 0 0 0 3px rgba(107, 30, 46, 0.15);
+}
+
+.fieldShellError {
+  background: #fceaea;
+  border-color: #e07070;
+}
+
+.fieldShellError:focus-within {
+  border-color: #e07070;
+  box-shadow: 0 0 0 3px rgba(224, 112, 112, 0.2);
+}
+
+.fieldShellDisabled {
+  background: #f3efe9;
+  border-color: #ede8e0;
+}
+
+.fieldShellReadOnly {
+  background: #f3efe9;
+  border-color: #ede8e0;
+}
+
+/* ─── Inner field (scrollable, no radius — shell clips) ───────────────────── */
+
+.field {
+  display: block;
+  width: 100%;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: #2e1c1c;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  box-sizing: border-box;
+  min-height: 90px;
+  max-height: 200px;
+  height: auto;
+  overflow-y: auto;
+  resize: vertical;
+  field-sizing: content;
+  transition: color 0.1s ease;
+}
+
+.field::placeholder {
+  color: var(--text-tertiary, #998c82);
+  font-size: 13px;
+  letter-spacing: 0.26px;
+}
+
+.size-sm {
+  padding: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.size-md {
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.size-lg {
+  padding: 10px 14px;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.fieldError {
+  color: #2e1c1c;
+}
+
+.fieldError::placeholder {
+  color: #998c82;
+}
+
+.fieldDisabled {
+  color: #998c82;
+  cursor: not-allowed;
+  resize: none;
+}
+
+.fieldDisabled::placeholder {
+  color: #998c82;
+}
+
+.fieldReadOnly {
+  color: #2e1c1c;
+  cursor: default;
+  resize: none;
+}
+
+.helper {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #6b5e55;
+}
+
+.helperDisabled {
+  color: #c9c0b4;
+}
+
+.helperError {
+  color: #8b2020;
+}

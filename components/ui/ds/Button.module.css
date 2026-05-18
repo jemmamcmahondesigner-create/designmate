@@ -95,9 +95,9 @@
 }
 .variant-secondary:disabled,
 .variant-secondary[aria-disabled='true'] {
-  background-color: #ffffff;
-  border-color: #e4ddd3;
-  color: #c9c0b4;
+  background-color: var(--neutral-200, #e4ddd3);
+  border-color: var(--border-subtle, #ede8e0);
+  color: var(--text-disabled, #c9c0b4);
 }
 .variant-ghost {
   background-color: transparent;

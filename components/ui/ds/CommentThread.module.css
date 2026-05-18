@@ -1,0 +1,232 @@
+/* CommentThread.module.css — DLS node 55:235
+   6 variants: feedback | with-reply | no-feedback | decision-required | decision
+   Width: fills container (used in the right-hand Feedback column)
+   Gap between items: 10px (scale/2-5)
+*/
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid #e4ddd3;
+  background: #ffffff;
+  width: 100%;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  box-sizing: border-box;
+}
+
+/* decision-required — butter/warning yellow */
+.rootWarning {
+  background: #fef8dc;
+  border-color: #e5b025;
+  justify-content: center;
+  padding: 12px 16px;
+}
+
+/* decision — lilac */
+.rootLilac {
+  background: #f5e8f6;
+  border-color: #ebc5ed;
+}
+
+/* ─── Header row ─────────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+/* Author name — used in feedback/with-reply/decision (does NOT flex-grow) */
+.authorName {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Author name — used in no-feedback/decision-required (flex-grows) */
+.authorNameFull {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  flex: 1 0 0;
+  min-width: 0;
+}
+
+.dot {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #998c82;
+  flex-shrink: 0;
+}
+
+.timestamp {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #998c82;
+  flex: 1 0 0;
+  min-width: 0;
+}
+
+/* Status label — "Feedback required" or "Decision Required" */
+.statusLabel {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #7a5500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.statusLabelWarning {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #7a5500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.blockedIcon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ─── Body text ──────────────────────────────────────────────────────────────── */
+
+.body {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #2e1c1c;
+  width: 100%;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+/* ─── Option tags ────────────────────────────────────────────────────────────── */
+
+.options {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+/* ─── Reply block (with-reply type) ─────────────────────────────────────────── */
+/* Recessed bg (#f3efe9), 12px padding, 4px radius */
+
+.replyBlock {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 4px;
+  background: #f3efe9;
+  width: 100%;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.replyIcon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: #6b5e55;
+  /* drill-down icon is mirrored horizontally in Figma */
+  transform: scaleX(-1);
+}
+
+.replyContent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 0 0;
+  min-width: 0;
+}
+
+.replyBody {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #2e1c1c;
+  margin: 0;
+  width: 100%;
+  min-width: 100%;
+}
+
+.replyMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.replyAuthor {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #6b5e55;
+  white-space: nowrap;
+}
+
+/* ─── Reply input row ────────────────────────────────────────────────────────── */
+
+.replyRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.replyInput {
+  flex: 1 0 0;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #e4ddd3;
+  border-radius: 6px;
+  background: #ffffff;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.replyInput::placeholder { color: #998c82; }
+
+.replyInput:focus {
+  border-color: #6b1e2e;
+  box-shadow: 0 0 0 3px rgba(107, 30, 46, 0.12);
+}
+
+/* ─── Make Decision button ───────────────────────────────────────────────────── */
+
+.makeDecisionBtn {
+  width: 100%;
+  flex-shrink: 0;
+}

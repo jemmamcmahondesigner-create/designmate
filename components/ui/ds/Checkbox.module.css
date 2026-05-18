@@ -1,0 +1,135 @@
+/* Checkbox.module.css — DLS node 192:2214
+   States: unchecked | checked | indeterminate
+   Sentiments: base | danger
+   All interactive states handled via CSS :hover / :focus-visible
+   Disabled: pointer-events-none + muted colours
+*/
+
+/* ─── Wrapper / label ────────────────────────────────────────────────────────── */
+
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  position: relative;
+  user-select: none;
+}
+
+.disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ─── Hide native input — keep it accessible ─────────────────────────────────── */
+
+.nativeInput {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/* ─── Box wrapper — provides the 2px padding Figma specifies ────────────────── */
+
+.boxWrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  flex-shrink: 0;
+  border-radius: 4px;
+}
+
+/* Focus ring on the wrapper when native input is focused */
+.nativeInput:focus-visible ~ .boxWrap {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+}
+
+/* ─── Box — the visual square ────────────────────────────────────────────────── */
+
+.box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+
+/* Unchecked — base sentiment */
+.boxUnchecked {
+  background: #ffffff;
+  border: 2px solid #e4ddd3;
+}
+
+.wrap:hover .boxUnchecked {
+  border-color: #c9c0b4;
+}
+
+/* Unchecked — danger sentiment */
+.boxDanger {
+  background: #ffffff;
+  border: 2px solid #e07070;
+}
+
+.wrap:hover .boxDanger {
+  border-color: #c94040;
+}
+
+/* Checked / indeterminate — brand filled */
+.boxChecked {
+  background: #6b1e2e;
+  border: none;
+}
+
+.wrap:hover .boxChecked {
+  background: #5a1826;
+}
+
+.wrap:active .boxChecked {
+  background: #4a1220;
+}
+
+/* Disabled states */
+.boxDisabled.boxUnchecked {
+  background: #f3efe9;
+  border-color: #e4ddd3;
+}
+
+.boxDisabled.boxChecked {
+  background: #e4ddd3;
+  border: none;
+}
+
+.boxDisabled.boxDanger {
+  background: #ede8e0;
+  border-color: #e4ddd3;
+}
+
+/* ─── Label text ─────────────────────────────────────────────────────────────── */
+
+.label {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #2e1c1c;
+  white-space: nowrap;
+  height: 20px;
+  display: flex;
+  align-items: center;
+}
+
+.labelDisabled {
+  color: #c9c0b4;
+}
+
+.labelStrike {
+  text-decoration: line-through;
+  text-decoration-skip-ink: none;
+}

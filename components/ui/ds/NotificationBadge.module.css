@@ -1,0 +1,52 @@
+/* NotificationBadge.module.css — DLS node 115:4555
+   Product uses: Dot/Success in sidebar nav items, Number/Brand in tab bars.
+*/
+
+/* ─── Number badge ──────────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 20px;
+  padding: 1px 7px 1px;
+  border-radius: 50px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* High prominence (default) */
+.badge-brand   { background: #6b1e2e; color: #ffffff; }
+.badge-success { background: #3b9b54; color: #ffffff; }
+.badge-warning { background: #e5c820; color: #ffffff; }
+.badge-error   { background: #c94040; color: #ffffff; }
+.badge-disabled{ background: #c9c0b4; color: #ffffff; }
+
+/* Low prominence — inverted, for use on dark/brand backgrounds */
+.low.badge-brand {
+  background: #ffffff;
+  color: #2e1c1c;
+}
+
+/* ─── Dot badge ─────────────────────────────────────────────────────────────── */
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-brand   { background: #6b1e2e; }
+.dot-success { background: #3b9b54; }
+.dot-warning { background: #e5c820; }
+.dot-error   { background: #c94040; }
+.dot-disabled{ background: #c9c0b4; }

@@ -11,7 +11,6 @@ export default function ProjectDetailLayout({
         minHeight: "100vh",
         minWidth: 0,
         flex: 1,
-        overflow: "hidden",
         flexDirection: "column",
         backgroundColor: "#faf8f6"
       }}

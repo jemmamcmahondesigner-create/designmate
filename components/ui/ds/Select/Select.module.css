@@ -1,0 +1,211 @@
+/**
+ * Select.module.css - DesignTrace DS
+ * Extracted from Figma DLS node 27:2945
+ *
+ * No backslash escaping. No slash-separated token names. Raw hex values.
+ */
+
+/* Root wrapper */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  width: 100%;
+}
+
+/* Label */
+
+.label {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.required {
+  color: #2e1c1c;
+  margin-left: 1px;
+}
+
+/* Control shell */
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background-color: #ffffff;
+  border: 1px solid #e4ddd3;
+  border-radius: 6px;
+  padding-left: 8px;
+  padding-right: 8px;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  position: relative;
+}
+
+.control:hover:not(.controlDisabled):not(.controlError) {
+  border-color: #c9c0b4;
+}
+
+.control:focus-within:not(.controlDisabled),
+.controlOpen:not(.controlDisabled) {
+  border-color: #6b1e2e;
+  box-shadow: 0 0 0 3px rgba(107, 30, 46, 0.12);
+  outline: none;
+}
+
+.controlError {
+  border-color: #e07070;
+}
+
+.controlError:focus-within {
+  border-color: #e07070;
+  box-shadow: 0 0 0 3px rgba(224, 112, 112, 0.12);
+}
+
+.controlDisabled {
+  background-color: #f3efe9;
+  border-color: #e4ddd3;
+  cursor: not-allowed;
+}
+
+/* Sizes */
+
+.size-sm {
+  height: 32px;
+  min-width: 160px;
+}
+
+.size-md {
+  height: 38px;
+  min-width: 200px;
+}
+
+/* Content area */
+
+.content {
+  flex: 1 0 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+/* Value and placeholder text */
+
+.value {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+
+.placeholder {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #998c82;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+
+/* Search input - searchable type */
+
+.searchInput {
+  flex: 1 0 0;
+  min-width: 0;
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+}
+
+.searchInput::placeholder {
+  color: #998c82;
+}
+
+.searchInput:disabled {
+  color: #c9c0b4;
+  cursor: not-allowed;
+}
+
+.searchInput:focus,
+.searchInput:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Trailing icon */
+
+.trailingIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #998c82;
+}
+
+.iconRotated {
+  transform: rotate(180deg);
+  transition: transform 120ms ease;
+}
+
+/* Selected chips area - multi type */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: flex-start;
+  width: 100%;
+}
+
+/* Below-control text */
+
+.helperText {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: var(--text-secondary, #6b5e55);
+  white-space: normal;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+}
+
+.errorText {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #8b2020;
+  white-space: nowrap;
+}

@@ -1,0 +1,51 @@
+/* Avatar.module.css
+   DLS source: VytA96WG9bMQpx5n0yciGH node 115:2031
+   Sizes: md=24px, lg=32px. Both are circles.
+*/
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  overflow: hidden;
+  flex-shrink: 0;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  background: #e4ddd3;
+  color: #6b5e55;
+  font-weight: 600;
+  user-select: none;
+}
+
+/* ─── Sizes ─────────────────────────────────────────────────────────────────── */
+
+.size-md {
+  width: 24px;
+  height: 24px;
+  font-size: 9px;
+  letter-spacing: 0;
+}
+
+.size-lg {
+  width: 32px;
+  height: 32px;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+/* ─── Image ─────────────────────────────────────────────────────────────────── */
+
+.img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+
+/* ─── Initials ──────────────────────────────────────────────────────────────── */
+
+.initials {
+  line-height: 1;
+  text-transform: uppercase;
+}

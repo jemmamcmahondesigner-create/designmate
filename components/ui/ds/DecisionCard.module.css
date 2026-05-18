@@ -1,0 +1,201 @@
+/* DecisionCard.module.css — DLS node 55:195
+   Status header: recessed bg (#f3efe9), status pill right-aligned
+   Content: options → decision text → owner row → optional trade-off block
+   Trade-off: white card, 2px butter border (#fff0a3), AI stars icon
+*/
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-radius: 8px;
+  border: 1px solid #e4ddd3;
+  background: #ffffff;
+  box-shadow: 0 1px 3px 0 rgba(41, 33, 28, 0.08);
+  overflow: clip;
+  width: 100%;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  box-sizing: border-box;
+  padding-bottom: 20px;
+}
+
+.emptyRoot {
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  padding: 24px 16px;
+}
+
+.emptyCopy {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #6b5e55;
+  text-align: center;
+}
+
+/* ─── Status header ──────────────────────────────────────────────────────────── */
+/* Recessed surface (#f3efe9), 12px v, 12px h padding */
+
+.statusHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #f3efe9;
+  border-radius: 4px;
+  width: 100%;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.statusLabel {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #6b5e55;
+  white-space: nowrap;
+}
+
+/* ─── Content area ───────────────────────────────────────────────────────────── */
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px;
+  width: 100%;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+/* ─── Option tags ────────────────────────────────────────────────────────────── */
+
+.options {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+/* ─── Text block (decision text + owner row) ─────────────────────────────────── */
+
+.textBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.decisionText {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #2e1c1c;
+  width: 100%;
+  margin: 0;
+}
+
+/* ─── Owner row ──────────────────────────────────────────────────────────────── */
+
+.ownerRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.recordedLine {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #998c82;
+}
+
+.ownerDetails {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.ownerName {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: normal;
+  color: #6b5e55;
+  white-space: nowrap;
+}
+
+.dot {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #998c82;
+}
+
+.timestamp {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #998c82;
+  white-space: nowrap;
+}
+
+/* ─── Trade-off block ────────────────────────────────────────────────────────── */
+/* White card, 2px butter border (#fff0a3) */
+
+.tradeOff {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 2px solid #fff0a3;
+  background: #ffffff;
+  width: 100%;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.tradeOffHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.tradeOffLabel {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #998c82;
+  white-space: nowrap;
+}
+
+.aiIcon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.tradeOffNote {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  margin: 0;
+  width: 100%;
+}

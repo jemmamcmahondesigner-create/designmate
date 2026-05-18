@@ -1,0 +1,1 @@
+SELECT id, name, role FROM contributors LIMIT 10;

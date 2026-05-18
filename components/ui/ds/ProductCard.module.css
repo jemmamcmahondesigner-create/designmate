@@ -1,0 +1,118 @@
+/* ProductCard.module.css — DLS node 123:2058
+   Project tile card.
+   Width: fills grid column (not fixed).
+   Title: H3 SemiBold 20px / line-height 1.35 / tracking -0.3px
+*/
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+  border-radius: 8px;
+  border: 1px solid #e4ddd3;
+  background: #ffffff;
+  box-shadow: 0 1px 3px 0 rgba(41, 33, 28, 0.08);
+  width: 100%;
+  min-width: 200px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  box-sizing: border-box;
+  /* Ensure the anchor-variant looks identical to the article-variant */
+  color: inherit;
+  text-decoration: none;
+}
+
+.clickable {
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.clickable:hover {
+  box-shadow: 0 4px 12px rgba(41, 33, 28, 0.12);
+  border-color: #c9c0b4;
+}
+
+.clickable:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+}
+
+/* ─── Title ─────────────────────────────────────────────────────────────────── */
+
+.title {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.3px;
+  color: #2e1c1c;
+  margin: 0;
+  /* Clamp to 2 lines */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ─── Meta (status + counts) ────────────────────────────────────────────────── */
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.count {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #6b5e55;
+  white-space: nowrap;
+}
+
+/* ─── Description ────────────────────────────────────────────────────────────── */
+
+.description {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #6b5e55;
+  margin: 0;
+  /* Clamp to 2 lines */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  height: 40px;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────────────────────── */
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+}
+
+/* ─── Avatar group ───────────────────────────────────────────────────────────── */
+
+.avatarGroup {
+  display: flex;
+  align-items: center;
+  flex-direction: row-reverse;
+  padding-right: 4px;
+}
+
+.avatarWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: -4px;
+  border-radius: 50%;
+  border: 1px solid #ffffff;
+  overflow: hidden;
+  flex-shrink: 0;
+}

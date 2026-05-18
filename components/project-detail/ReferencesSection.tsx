@@ -201,30 +201,39 @@ export function ReferencesSection({
       </h2>
 
       {showEmptyState ? (
-        <div
-          className="mt-3 flex w-full flex-col items-center justify-center border border-solid border-[#e4ddd3]"
-          style={{
-            borderRadius: 6,
-            minHeight: 100,
-            gap: 8,
-            backgroundColor: "#f3efe9",
-            padding: 32
-          }}
-        >
-          <p className="m-0 text-[12px] font-normal leading-[1.5] text-[#998c82]">
-            No source files added yet.
-          </p>
-          <Button
-            type="button"
-            variant="ghost"
-            label="Add source"
-            icon="leading"
-            iconName="plus"
-            size="sm"
-            disabled={isSaving}
-            onClick={() => fileInputRef.current?.click()}
-          />
-        </div>
+        <>
+          <div
+            className="mt-3 flex w-full items-center justify-center border border-solid border-[#e4ddd3]"
+            style={{
+              borderRadius: 8,
+              height: 80,
+              backgroundColor: "#f3efe9",
+            }}
+          >
+            <p
+              className="m-0 px-4 text-center"
+              style={{
+                fontSize: 13,
+                fontWeight: 400,
+                color: "var(--text-tertiary, #998c82)",
+              }}
+            >
+              No source files added yet.
+            </p>
+          </div>
+          <div className="mt-2">
+            <Button
+              type="button"
+              variant="ghost"
+              label="Add source"
+              icon="leading"
+              iconName="plus"
+              size="sm"
+              disabled={isSaving}
+              onClick={() => fileInputRef.current?.click()}
+            />
+          </div>
+        </>
       ) : null}
 
       {references.length > 0 ? (
@@ -272,7 +281,7 @@ export function ReferencesSection({
         </div>
       ) : null}
 
-      <div className="mt-3 flex w-full min-w-0 flex-col gap-2">
+      <div className={`flex w-full min-w-0 flex-col gap-2 ${references.length > 0 ? "mt-3" : ""}`}>
         {!showEmptyState ? (
           <Button
             type="button"

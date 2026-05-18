@@ -1,11 +1,37 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "@/lib/phosphor";
-import { Button } from "@/components/ui/ds";
-import { CreateProjectModal } from "@/components/CreateProjectModal";
-import { ProjectCard } from "@/components/ProjectCard";
-import type { Project, ProjectsByStatus } from "@/types/project";
+import {
+  Button,
+  Divider,
+  NotificationBadge,
+  PageHeader,
+  ProductCard,
+  Tooltip,
+  type StatusPillStatus
+} from "@/components/ui/ds";
+import { useNewReviewDrawer } from "@/components/NewReviewDrawerProvider";
+import { useCreateProjectModal } from "@/components/projects/CreateProjectModalProvider";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { canEditReviewDetails } from "@/lib/reviews/workflow";
+import type { Project, ProjectStatus, ProjectsByStatus } from "@/types/project";
+
+function projectStatusPresentation(status: ProjectStatus): {
+  label: string;
+  variant: StatusPillStatus;
+} {
+  switch (status) {
+    case "active":
+      return { label: "Active", variant: "approved" };
+    case "paused":
+      return { label: "Paused", variant: "draft" };
+    case "complete":
+      return { label: "Complete", variant: "closed" };
+    default:
+      return { label: "Paused", variant: "draft" };
+  }
+}
 
 type AccordionSectionProps = {
   title: string;
@@ -14,17 +40,19 @@ type AccordionSectionProps = {
   open: boolean;
   disabled: boolean;
   onToggle: () => void;
-  emptyMessage?: React.ReactNode;
+  emptyMessage?: ReactNode;
   showEmptyPanel?: boolean;
 };
 
 function AccordionHeaderRow({
   title,
+  count,
   open,
   disabled,
   onToggle
 }: {
   title: string;
+  count: number;
   open: boolean;
   disabled: boolean;
   onToggle: () => void;
@@ -45,17 +73,7 @@ function AccordionHeaderRow({
     <ChevronDown size={12} weight="fill" color={iconColor} />
   );
 
-  const dividerEl = disabled ? (
-    <div
-      className="ml-3 h-px min-w-0 flex-1"
-      style={{ backgroundColor: "#e4ddd3" }}
-    />
-  ) : (
-    <div
-      className="ml-3 h-px min-w-0 flex-1"
-      style={{ backgroundColor: "#c9c0b4" }}
-    />
-  );
+  const dividerEl = <Divider className="ml-3 min-w-0 flex-1" />;
 
   const isTrulyDisabled = disabled;
 
@@ -72,6 +90,13 @@ function AccordionHeaderRow({
         style={{ color: labelColor }}
       >
         {title}
+      </span>
+      <span className="ml-3 inline-flex shrink-0 items-center self-center">
+        <NotificationBadge
+          count={count}
+          sentiment="brand"
+          prominence={open ? "high" : "low"}
+        />
       </span>
       {dividerEl}
     </>
@@ -114,6 +139,7 @@ function AccordionSection({
       <div className="pb-2 pt-1">
         <AccordionHeaderRow
           title={title}
+          count={projects.length}
           open={open}
           disabled={disabled}
           onToggle={onToggle}
@@ -126,13 +152,23 @@ function AccordionSection({
 
       {open && projects.length > 0 ? (
         <div className="grid grid-cols-1 gap-4 pb-6 sm:grid-cols-2 lg:grid-cols-4">
-          {projects.map((p) => (
-            <ProjectCard
-              key={p.id}
-              project={p}
-              reviewCount={reviewCounts[p.id] ?? 0}
-            />
-          ))}
+          {projects.map((p) => {
+            const meta = projectStatusPresentation(p.status);
+            return (
+              <ProductCard
+                key={p.id}
+                title={p.name}
+                statusLabel={meta.label}
+                statusVariant={meta.variant}
+                reviewCount={reviewCounts[p.id] ?? 0}
+                decisionCount={0}
+                description={p.description ?? undefined}
+                tagLabel={p.client ?? undefined}
+                contributors={[]}
+                href={`/projects/${p.id}`}
+              />
+            );
+          })}
         </div>
       ) : null}
     </section>
@@ -142,16 +178,76 @@ function AccordionSection({
 export type ProjectsViewProps = {
   grouped: ProjectsByStatus;
   reviewCounts: Record<string, number>;
+  searchPlaceholder: string;
 };
 
-export function ProjectsView({ grouped, reviewCounts }: ProjectsViewProps) {
-  const [modalOpen, setModalOpen] = useState(false);
+export function ProjectsView({
+  grouped,
+  reviewCounts,
+  searchPlaceholder
+}: ProjectsViewProps) {
+  const createProject = useCreateProjectModal();
+  const { openNewReview } = useNewReviewDrawer();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [currentContributorRole, setCurrentContributorRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    const contributorId =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem("designtrace_dev_contributor_id")
+        : null;
+    if (!contributorId) {
+      setCurrentContributorRole(null);
+      return;
+    }
+    const supabase = createSupabaseBrowserClient();
+    void supabase
+      .from("contributors")
+      .select("role")
+      .eq("id", contributorId)
+      .maybeSingle()
+      .then(({ data }) => {
+        const role = data == null ? null : String((data as Record<string, unknown>).role ?? "");
+        setCurrentContributorRole(role && role.trim() ? role : null);
+      });
+  }, []);
+
+  const canCreateReview = canEditReviewDetails(currentContributorRole);
+
+  const handleNewReview = () => {
+    openNewReview({ mode: "global" });
+  };
   const [activeOpen, setActiveOpen] = useState(true);
   const [pausedOpen, setPausedOpen] = useState(false);
   const [completeOpen, setCompleteOpen] = useState(false);
 
-  const pausedDisabled = grouped.paused.length === 0;
-  const completeDisabled = grouped.complete.length === 0;
+  const filteredGrouped = useMemo((): ProjectsByStatus => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return grouped;
+    const filt = (arr: Project[]) =>
+      arr.filter((p) => {
+        const team = (p.contributor_names ?? []).join("\0").toLowerCase();
+        const hay = [p.name, p.client ?? "", team].join("\0").toLowerCase();
+        return hay.includes(q);
+      });
+    return {
+      active: filt(grouped.active),
+      paused: filt(grouped.paused),
+      complete: filt(grouped.complete)
+    };
+  }, [grouped, searchQuery]);
+
+  useEffect(() => {
+    if (searchQuery.trim() !== "") return;
+    setActiveOpen(true);
+    setPausedOpen(false);
+    setCompleteOpen(false);
+  }, [searchQuery]);
+
+  const hasSearch = searchQuery.trim() !== "";
+
+  const pausedDisabled = !hasSearch && grouped.paused.length === 0;
+  const completeDisabled = !hasSearch && grouped.complete.length === 0;
 
   const activeEmptyPanel = (
     <div
@@ -183,6 +279,41 @@ export function ProjectsView({ grouped, reviewCounts }: ProjectsViewProps) {
         backgroundColor: "#faf8f6"
       }}
     >
+      <PageHeader
+        variant="search"
+        searchPlaceholder={searchPlaceholder}
+        searchValue={searchQuery}
+        onSearch={setSearchQuery}
+        primaryActionSlot={
+          canCreateReview ? (
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              label="Review"
+              icon="leading"
+              iconName="plus"
+              onClick={handleNewReview}
+            />
+          ) : (
+            <Tooltip label="Only designers can create reviews" position="bottom">
+              <span style={{ display: "inline-flex" }}>
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  label="Review"
+                  icon="leading"
+                  iconName="plus"
+                  disabled
+                  onClick={handleNewReview}
+                />
+              </span>
+            </Tooltip>
+          )
+        }
+      />
+
       <div
         className="w-full pb-16"
         style={{
@@ -213,21 +344,6 @@ export function ProjectsView({ grouped, reviewCounts }: ProjectsViewProps) {
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center" style={{ gap: 12 }}>
-            <button
-              type="button"
-              disabled
-              className="inline-flex cursor-not-allowed items-center border text-[13px] font-medium leading-[1.5]"
-              style={{
-                backgroundColor: "#e4ddd3",
-                borderColor: "#ede8e0",
-                color: "#c9c0b4",
-                borderRadius: 6,
-                padding: "6px 12px",
-                letterSpacing: "0.26px"
-              }}
-            >
-              Filter
-            </button>
             <Button
               type="button"
               variant="secondary"
@@ -235,44 +351,48 @@ export function ProjectsView({ grouped, reviewCounts }: ProjectsViewProps) {
               label="New Project"
               icon="leading"
               iconName="plus"
-              onClick={() => setModalOpen(true)}
+              onClick={() => createProject?.openCreateProject()}
             />
           </div>
         </div>
 
         <div className="flex flex-col">
-          <AccordionSection
-            title="Active"
-            projects={grouped.active}
-            reviewCounts={reviewCounts}
-            open={activeOpen}
-            disabled={false}
-            onToggle={() => setActiveOpen((v) => !v)}
-            emptyMessage={activeEmptyPanel}
-            showEmptyPanel
-          />
-          <AccordionSection
-            title="Paused"
-            projects={grouped.paused}
-            reviewCounts={reviewCounts}
-            open={pausedOpen}
-            disabled={pausedDisabled}
-            onToggle={() => setPausedOpen((v) => !v)}
-            showEmptyPanel={false}
-          />
-          <AccordionSection
-            title="Complete"
-            projects={grouped.complete}
-            reviewCounts={reviewCounts}
-            open={completeOpen}
-            disabled={completeDisabled}
-            onToggle={() => setCompleteOpen((v) => !v)}
-            showEmptyPanel={false}
-          />
+          {(!hasSearch || filteredGrouped.active.length > 0) && (
+            <AccordionSection
+              title="Active"
+              projects={filteredGrouped.active}
+              reviewCounts={reviewCounts}
+              open={activeOpen}
+              disabled={false}
+              onToggle={() => setActiveOpen((v) => !v)}
+              emptyMessage={activeEmptyPanel}
+              showEmptyPanel
+            />
+          )}
+          {(!hasSearch || filteredGrouped.paused.length > 0) && (
+            <AccordionSection
+              title="Paused"
+              projects={filteredGrouped.paused}
+              reviewCounts={reviewCounts}
+              open={pausedOpen}
+              disabled={pausedDisabled}
+              onToggle={() => setPausedOpen((v) => !v)}
+              showEmptyPanel={false}
+            />
+          )}
+          {(!hasSearch || filteredGrouped.complete.length > 0) && (
+            <AccordionSection
+              title="Complete"
+              projects={filteredGrouped.complete}
+              reviewCounts={reviewCounts}
+              open={completeOpen}
+              disabled={completeDisabled}
+              onToggle={() => setCompleteOpen((v) => !v)}
+              showEmptyPanel={false}
+            />
+          )}
         </div>
       </div>
-
-      <CreateProjectModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </div>
   );
 }

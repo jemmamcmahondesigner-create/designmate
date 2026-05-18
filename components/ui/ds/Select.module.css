@@ -1,0 +1,266 @@
+/* Select.module.css — DLS node 110:1553
+   Types: single | searchable
+   Sizes: sm (32px) | md (38px) | lg (44px)
+   States: default | hover | focused | filled | error | disabled | open
+   Width: FILL container (not fixed 240px)
+*/
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  width: 100%;
+}
+
+/* ─── Label ─────────────────────────────────────────────────────────────────── */
+
+.label {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  white-space: nowrap;
+}
+
+.labelError   { color: #8b2020; }
+.labelDisabled { color: #c9c0b4; }
+
+/* ─── Wrapper ────────────────────────────────────────────────────────────────── */
+
+.wrapper {
+  position: relative;
+  width: 100%;
+}
+
+/* Inline dropdown: flush under trigger (sm = 32px), same width as control */
+.menuAttached {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  width: 100%;
+  margin-top: 0;
+  z-index: 100;
+}
+
+/* ─── Control button ─────────────────────────────────────────────────────────── */
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0 8px;
+  border: 1px solid #e4ddd3;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+  text-align: left;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  transition: border-color 0.1s ease, background 0.1s ease;
+  box-sizing: border-box;
+}
+
+/* Sizes */
+.size-sm { height: 32px; }
+.size-md { height: 38px; }
+.size-lg { height: 44px; border-radius: 8px; }
+
+/* States */
+.control:hover:not(.disabled):not(.error) {
+  border-color: #c9c0b4;
+}
+
+.control:focus-visible {
+  outline: none;
+  border-color: #6b1e2e;
+  box-shadow: 0 0 0 3px rgba(107, 30, 46, 0.12);
+}
+
+.open:not(.error) {
+  border-color: #6b1e2e;
+  box-shadow: 0 0 0 3px rgba(107, 30, 46, 0.12);
+}
+
+.error {
+  border-color: #e07070;
+  background: #fceaea;
+}
+
+.disabled {
+  background: #f3efe9;
+  border-color: #ede8e0;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+/* ─── Text inside control ────────────────────────────────────────────────────── */
+
+.valueText {
+  flex: 1 0 0;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.placeholderText {
+  flex: 1 0 0;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: var(--text-tertiary, #998c82);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Chevron ────────────────────────────────────────────────────────────────── */
+
+.chevron {
+  flex-shrink: 0;
+  color: #6b5e55;
+  transition: transform 0.15s ease;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+/* ─── Search input (searchable type) ─────────────────────────────────────────── */
+
+.searchInput {
+  flex: 1 0 0;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  padding: 0;
+}
+
+.searchInput::placeholder {
+  color: #998c82;
+}
+
+/* ─── Dropdown menu ──────────────────────────────────────────────────────────── */
+
+.menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: #ffffff;
+  border: 1px solid #e4ddd3;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(41, 33, 28, 0.06), 0 8px 16px rgba(41, 33, 28, 0.15);
+  padding: 4px 0;
+  z-index: 100;
+  list-style: none;
+  margin: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.menuBottom {
+  top: calc(100% + 4px);
+  bottom: auto;
+}
+
+.menuTop {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+/* Portaled menu: position + z-index come from inline styles (above modal/footer clipping). */
+.menuPortal {
+  z-index: 10000;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  cursor: pointer;
+  gap: 8px;
+}
+
+.menuItem:hover {
+  background: #f3efe9;
+}
+
+.menuItemSelected {
+  font-weight: 500;
+  color: #6b1e2e;
+  background: #f5eaec;
+}
+
+.menuItemSelected:hover {
+  background: #eedade;
+}
+
+.menuItemDisabled {
+  color: #c9c0b4;
+  cursor: not-allowed;
+}
+
+.menuItemDisabled:hover {
+  background: transparent;
+}
+
+.menuItemCreate {
+  color: #6b1e2e;
+  font-weight: 500;
+}
+
+.checkIcon {
+  flex-shrink: 0;
+  color: #6b1e2e;
+}
+
+.noResults {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #998c82;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* ─── Helper / error text ────────────────────────────────────────────────────── */
+
+.helperText {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #6b5e55;
+  margin: 0;
+}
+
+.errorText {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #8b2020;
+  margin: 0;
+}

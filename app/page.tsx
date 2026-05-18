@@ -7,7 +7,7 @@ export default function HomePage() {
       <Container>
         <div className="space-y-4">
           <h1 className="text-balance text-3xl font-semibold tracking-tight">
-            DesignMate
+            DesignTrace
           </h1>
           <p className="max-w-prose text-pretty text-zinc-600">
             Next.js 14 + Tailwind + Supabase starter with a clean folder

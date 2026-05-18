@@ -1,4 +1,4 @@
-# DesignMate
+# DesignTrace
 
 Next.js 14 + TypeScript + Tailwind + Supabase starter, scaffolded with a clean structure for a multi-tenant B2B SaaS app.
 

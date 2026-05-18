@@ -1,29 +1,54 @@
 /**
- * Icon — DesignMate DS
+ * Icon — DesignTrace DS
  *
- * Renders named SVGs from the DLS registry. Colour via currentColor on the parent.
+ * Paths from `public/icons/*.svg` are compiled into `publicIconsRegistry.ts`
+ * (run `node scripts/generate-icon-registry.mjs` after changing SVGs).
+ * Colour inherits via currentColor.
  */
 
 import React from 'react'
+import { ICONS, type PublicIconKey } from './publicIconsRegistry'
 
-export const ICON_NAMES = [
-  'plus',
-  'close',
-  'upload',
-  'stretch',
-  'kebab',
-  'search',
-  'check',
-  'chevron-down',
-  'chevron-right',
-  'chevron-left',
-  'link',
-  'nav-mark',
+/** Re-export: SVG definitions compiled from `public/icons/*.svg`. */
+export { ICONS, type PublicIconKey } from './publicIconsRegistry'
+
+/** Icon names that are not a direct key of `ICONS` (aliases or inline-only). */
+const EXTRA_ICON_NAMES = [
   'nav-archive',
   'nav-reviews',
+  'nav-home',
+  'nav-settings',
+  'nav-decisions',
+  'close-drawer',
+  'open-drawer',
+  'link',
+  'check-circle-fill',
+  'nav-mark',
+  'share',
+  'status-blocked',
+  'upload',
 ] as const
 
-export type IconName = (typeof ICON_NAMES)[number]
+export type IconName = PublicIconKey | (typeof EXTRA_ICON_NAMES)[number]
+
+export const ICON_NAMES = Array.from(
+  new Set<string>([...Object.keys(ICONS), ...EXTRA_ICON_NAMES]),
+).sort() as IconName[]
+
+const ICON_ALIAS_TO_PUBLIC: Partial<Record<IconName, PublicIconKey>> = {
+  'nav-archive': 'archive',
+  'nav-reviews': 'reviews',
+  'nav-home': 'home',
+  'nav-settings': 'settings',
+  'nav-decisions': 'decisions',
+}
+
+function publicIconKeyFor(name: IconName): PublicIconKey | undefined {
+  const aliased = ICON_ALIAS_TO_PUBLIC[name]
+  if (aliased) return aliased
+  if (Object.prototype.hasOwnProperty.call(ICONS, name)) return name as PublicIconKey
+  return undefined
+}
 
 export type IconProps = {
   name: IconName
@@ -32,6 +57,32 @@ export type IconProps = {
   style?: React.CSSProperties
   /** When set, icon is exposed to assistive tech (e.g. standalone control). */
   'aria-label'?: string
+}
+
+function SvgFromRegistry({
+  def,
+  size,
+  ariaLabel,
+}: {
+  def: { viewBox: string; innerHtml: string }
+  size: number
+  ariaLabel?: string
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={def.viewBox}
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{ display: 'block', flexShrink: 0, color: 'inherit' }}
+      aria-hidden={ariaLabel ? undefined : true}
+      aria-label={ariaLabel}
+      role={ariaLabel ? 'img' : undefined}
+      focusable="false"
+      dangerouslySetInnerHTML={{ __html: def.innerHtml }}
+    />
+  )
 }
 
 function SvgRoot({
@@ -73,28 +124,77 @@ export function Icon({
   style,
   'aria-label': ariaLabel,
 }: IconProps) {
+  const regKey = publicIconKeyFor(name)
+  if (regKey) {
+    const def = ICONS[regKey]
+    return (
+      <span
+        className={`inline-flex shrink-0 items-center justify-center text-current ${className ?? ''}`}
+        style={style}
+      >
+        <SvgFromRegistry def={def} size={size} ariaLabel={ariaLabel} />
+      </span>
+    )
+  }
+
   const stroke = 'currentColor'
   const strokeW = 1.75
 
   const inner = (() => {
     switch (name) {
-      case 'plus':
+      case 'close-drawer':
         return (
-          <path
-            d="M12 5v14M5 12h14"
-            stroke={stroke}
-            strokeWidth={strokeW}
-            strokeLinecap="round"
-          />
+          <>
+            <rect
+              x="3"
+              y="4"
+              width="18"
+              height="16"
+              rx="2"
+              stroke={stroke}
+              strokeWidth={strokeW}
+            />
+            <path
+              d="M15 4v16"
+              stroke={stroke}
+              strokeWidth={strokeW}
+              strokeLinecap="round"
+            />
+            <path
+              d="M10.5 9.5l-2.5 2.5 2.5 2.5"
+              stroke={stroke}
+              strokeWidth={strokeW}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </>
         )
-      case 'close':
+      case 'open-drawer':
         return (
-          <path
-            d="M6 6l12 12M18 6L6 18"
-            stroke={stroke}
-            strokeWidth={strokeW}
-            strokeLinecap="round"
-          />
+          <>
+            <rect
+              x="3"
+              y="4"
+              width="18"
+              height="16"
+              rx="2"
+              stroke={stroke}
+              strokeWidth={strokeW}
+            />
+            <path
+              d="M15 4v16"
+              stroke={stroke}
+              strokeWidth={strokeW}
+              strokeLinecap="round"
+            />
+            <path
+              d="M8 9.5l2.5 2.5-2.5 2.5"
+              stroke={stroke}
+              strokeWidth={strokeW}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </>
         )
       case 'upload':
         return (
@@ -114,77 +214,18 @@ export function Icon({
             />
           </>
         )
-      case 'stretch':
+      case 'check-circle-fill':
         return (
           <>
+            <circle cx="12" cy="12" r="10" fill="#2a8a45" />
             <path
-              d="M9 3H4v5M15 3h5v5M15 21h5v-5M9 21H4v-5"
-              stroke={stroke}
+              d="M7.5 12l3 3 6-6"
+              stroke="#ffffff"
               strokeWidth={strokeW}
               strokeLinecap="round"
               strokeLinejoin="round"
             />
           </>
-        )
-      case 'kebab':
-        return (
-          <>
-            <circle cx="6" cy="12" r="1.5" fill={stroke} />
-            <circle cx="12" cy="12" r="1.5" fill={stroke} />
-            <circle cx="18" cy="12" r="1.5" fill={stroke} />
-          </>
-        )
-      case 'search':
-        return (
-          <>
-            <circle cx="10.5" cy="10.5" r="5.5" stroke={stroke} strokeWidth={strokeW} />
-            <path
-              d="M15 15l5 5"
-              stroke={stroke}
-              strokeWidth={strokeW}
-              strokeLinecap="round"
-            />
-          </>
-        )
-      case 'check':
-        return (
-          <path
-            d="M5 12l4 4L19 7"
-            stroke={stroke}
-            strokeWidth={strokeW}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        )
-      case 'chevron-down':
-        return (
-          <path
-            d="M6 9l6 6 6-6"
-            stroke={stroke}
-            strokeWidth={strokeW}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        )
-      case 'chevron-right':
-        return (
-          <path
-            d="M9 6l6 6-6 6"
-            stroke={stroke}
-            strokeWidth={strokeW}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        )
-      case 'chevron-left':
-        return (
-          <path
-            d="M15 6l-6 6 6 6"
-            stroke={stroke}
-            strokeWidth={strokeW}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
         )
       case 'link':
         return (
@@ -196,6 +237,18 @@ export function Icon({
             strokeLinejoin="round"
           />
         )
+      case 'status-blocked':
+        return (
+          <>
+            <circle cx="12" cy="12" r="9" stroke={stroke} strokeWidth={strokeW} />
+            <path
+              d="M12 8v5M12 16v.5"
+              stroke={stroke}
+              strokeWidth={strokeW}
+              strokeLinecap="round"
+            />
+          </>
+        )
       case 'nav-mark':
         return (
           <path
@@ -205,40 +258,14 @@ export function Icon({
             strokeLinejoin="round"
           />
         )
-      case 'nav-archive':
+      case 'share':
         return (
           <>
+            <circle cx="18" cy="5" r="3" stroke={stroke} strokeWidth={strokeW} />
+            <circle cx="6" cy="12" r="3" stroke={stroke} strokeWidth={strokeW} />
+            <circle cx="18" cy="19" r="3" stroke={stroke} strokeWidth={strokeW} />
             <path
-              d="M4 8h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V8z"
-              stroke={stroke}
-              strokeWidth={strokeW}
-              strokeLinejoin="round"
-            />
-            <path
-              d="M5 8V6a1 1 0 011-1h12a1 1 0 011 1v2M9 8H5"
-              stroke={stroke}
-              strokeWidth={strokeW}
-              strokeLinecap="round"
-            />
-          </>
-        )
-      case 'nav-reviews':
-        return (
-          <>
-            <path
-              d="M6 4h7a2 2 0 012 2v2H6V4z"
-              stroke={stroke}
-              strokeWidth={strokeW}
-              strokeLinejoin="round"
-            />
-            <path
-              d="M6 8h12v4a1 1 0 01-1 1H7a1 1 0 01-1-1V8z"
-              stroke={stroke}
-              strokeWidth={strokeW}
-              strokeLinejoin="round"
-            />
-            <path
-              d="M8 18h8M4 20h16"
+              d="M8.5 10.5l7-3M8.5 13.5l7 3"
               stroke={stroke}
               strokeWidth={strokeW}
               strokeLinecap="round"
@@ -267,6 +294,7 @@ const LEGACY_ICON: Partial<Record<string, IconName>> = {
   x: 'close',
   'arrow-right': 'chevron-right',
   'arrow-left': 'chevron-left',
+  'arrow-up': 'chevron-up',
   'link-simple': 'link',
   'upload-simple': 'upload',
   'dots-three-vertical': 'kebab',

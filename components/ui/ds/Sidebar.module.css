@@ -1,0 +1,525 @@
+/* Sidebar.module.css — DLS node 120:1609 */
+
+/* ─── Root ──────────────────────────────────────────────────────────────────── */
+
+.root {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 100vh;
+  max-height: 100vh;
+  background: #faf8f6;
+  border-right: 1px solid var(--border-subtle, #ede8e0);
+  padding-bottom: 16px;
+  padding-top: 0;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.rootCollapsed {
+  width: 56px;
+}
+
+.rootExpanded {
+  width: 240px;
+}
+
+/* ─── Brand / Logo (DesignTrace — dashed rule is unique vs solid footerDivider) ─ */
+
+.brandHeader {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.brandRow {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 100%;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  padding-left: 16px;
+  padding-right: 16px;
+  box-sizing: border-box;
+}
+
+.brandLogoShell {
+  position: relative;
+  width: 100%;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.brandWordmarkImg {
+  position: absolute;
+  left: 0;
+  top: calc(50% + 1px);
+  transform: translateY(-50%);
+  display: block;
+  height: 24px;
+  width: auto;
+  max-width: 132px;
+  transition: opacity 200ms ease-in-out;
+}
+
+.brandMarkWrap {
+  position: absolute;
+  left: 0px;
+  top: calc(50% - 2px);
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  transition: opacity 200ms ease-in-out;
+}
+
+.brandMarkImg {
+  display: block;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.brandDashedSpec {
+  background-image: repeating-linear-gradient(
+    to right,
+    #a0384f 0px,
+    #a0384f 2px,
+    transparent 2px,
+    transparent 6px
+  );
+  background-size: 100% 2px;
+  background-position: bottom;
+  background-repeat: no-repeat;
+  border-bottom: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+}
+
+.logoVisible {
+  opacity: 1;
+}
+
+.logoHidden {
+  opacity: 0;
+}
+
+/* ─── Main nav (Projects / Reviews) ─────────────────────────────────────────── */
+
+.mainNav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.navRowLink {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #6b5e55);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.navRowLink:hover {
+  background: var(--interactive-hover-surface-strong, #ede8e0);
+}
+
+.navRowLink:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Active route: colours only — layout (padding, justify) comes from inline styles on the link */
+.navRowLink[data-active='true'] {
+  background: var(--workflow-needs-changes-bg, #f7eff2);
+  color: var(--text-heading, #6b1e2e);
+}
+
+.navRowLink[data-active='true']:hover {
+  background: var(--workflow-needs-changes-bg, #f7eff2);
+}
+
+.navRowLink[data-active='true'] .navRowIcon {
+  color: var(--text-heading, #6b1e2e);
+}
+
+.navRowLink[data-active='true'] .navRowLabel {
+  color: var(--text-heading, #6b1e2e);
+}
+
+.navRowIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  color: inherit;
+}
+
+.navRowLabelWrap {
+  min-width: 0;
+}
+
+.navRowLabel {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: inherit;
+}
+
+/* ─── Workspace ─────────────────────────────────────────────────────────────── */
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 0;
+  min-height: 0;
+  background: #ffffff;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.workspace::-webkit-scrollbar {
+  display: none;
+}
+
+.workspaceNavStack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.workspaceHeading {
+  padding: 8px 0 4px 20px;
+  background: #ffffff;
+  flex-shrink: 0;
+}
+
+.sectionLabel {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #998c82;
+  transition: opacity 0.15s ease;
+}
+
+/* ─── Nav items (Projects block) ────────────────────────────────────────────── */
+
+.navItems {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.navItemsBottom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 48px;
+  padding: 8px 12px 8px 20px;
+  border: none;
+  border-radius: 4px;
+  background: #ffffff;
+  cursor: pointer;
+  text-align: left;
+}
+
+.navItem:hover {
+  background: #f3efe9;
+}
+
+.navItem:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.navItemActive {
+  background: #f7eff2;
+}
+
+.navItemActive:hover {
+  background: #f7eff2;
+}
+
+.navItemOpen {
+  background: #f7eff2;
+}
+
+.navItemOpen:hover {
+  background: #f7eff2;
+}
+
+.navItemOpen .navIcon {
+  color: #6b1e2e;
+}
+
+.navItemOpen .navLabel {
+  color: #6b1e2e;
+}
+
+.navIcon {
+  flex-shrink: 0;
+  color: #6b5e55;
+}
+
+.navItemActive .navIcon {
+  color: #6b1e2e;
+}
+
+.navLabel {
+  flex: 1 0 0;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 0.15s ease;
+}
+
+.navItemActive .navLabel {
+  color: #6b1e2e;
+}
+
+.navChevron {
+  flex-shrink: 0;
+  color: #6b5e55;
+  transition: opacity 0.15s ease;
+}
+
+/* ─── Sub items (project list) ──────────────────────────────────────────────── */
+
+.subItems {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  padding-bottom: 0;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.subItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 48px;
+  padding: 8px 18px 8px 16px;
+  border: none;
+  border-radius: 4px;
+  background: #ffffff;
+  cursor: pointer;
+  text-align: left;
+}
+
+.subItem:hover {
+  background: #f3efe9;
+}
+
+.subItem:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.subItemActive {
+  background: #f5eaec;
+}
+
+.subItemActive:hover {
+  background: #ecd8dc;
+}
+
+.subItemActive:active {
+  background: #e8d0d4;
+}
+
+.subItemLabels {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1 0 0;
+  min-width: 0;
+  line-height: 1.5;
+  transition: opacity 0.15s ease;
+}
+
+.subItemName {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.26px;
+  color: #6b5e55;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subItemNameActive {
+  color: #6b1e2e;
+}
+
+.subItemClient {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #998c82;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subItemClientActive {
+  color: #6b5e55;
+}
+
+/* ─── Footer ────────────────────────────────────────────────────────────────── */
+
+.footerDivider {
+  height: 1px;
+  background: var(--border-subtle, #ede8e0);
+  flex-shrink: 0;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 4px 12px 4px 20px;
+  flex-shrink: 0;
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.footer:hover {
+  background: #f3efe9;
+}
+
+.footerActive {
+  background: #f7eff2;
+}
+
+.userName {
+  flex: 1 0 0;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: normal;
+  color: #6b5e55;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity 0.15s ease;
+}
+
+.footerMin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 48px;
+  flex-shrink: 0;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.footerMin:hover {
+  background: #f3efe9;
+}
+
+.footerMinActive {
+  background: #f7eff2;
+}
+
+.footerColumn {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  margin-top: auto;
+  flex-shrink: 0;
+  width: 100%;
+}
+
+.footerUserRow {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  border-radius: 4px;
+  box-sizing: border-box;
+  width: calc(100% - 8px);
+  margin: 0 4px;
+}
+
+.footerUserRow:hover {
+  background: var(--interactive-hover-surface-strong, #ede8e0);
+}
+
+.footerUserRowActive {
+  background: var(--interactive-hover-surface-strong, #ede8e0);
+}
+
+.footerUserNameWrap {
+  min-width: 0;
+}
+
+.footerUserName {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: normal;
+  color: var(--text-secondary, #6b5e55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footerSlot {
+  width: 100%;
+  padding: 0 4px 8px;
+  box-sizing: border-box;
+}

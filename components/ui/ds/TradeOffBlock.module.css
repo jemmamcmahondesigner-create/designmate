@@ -1,0 +1,215 @@
+/* TradeOffBlock.module.css — DLS node 117:5554
+   Yellow accent border (#fff0a3 / 2px).
+   3 option row sentiments: success (green), brand (burgundy), error (red).
+*/
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 12px;
+  border: 2px solid #fff0a3;
+  background: #ffffff;
+  width: 100%;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  box-sizing: border-box;
+}
+
+/* ─── Header ─────────────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.headerLabel {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #998c82;
+  white-space: nowrap;
+}
+
+/* ─── Note row ───────────────────────────────────────────────────────────────── */
+
+.noteRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.noteText {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.24px;
+  color: #6b5e55;
+  white-space: nowrap;
+}
+
+/* ─── Options list ───────────────────────────────────────────────────────────── */
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ─── Option row ─────────────────────────────────────────────────────────────── */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.row-success {
+  background: #ebf6ee;
+  border-color: #7dc98f;
+}
+
+.row-brand {
+  background: #6b1e2e;
+  border-color: #6b1e2e;
+}
+
+.row-error {
+  background: #fceaea;
+  border-color: #e07070;
+}
+
+/* ─── Row internals ──────────────────────────────────────────────────────────── */
+
+.rowLeft {
+  display: flex;
+  flex: 1 0 0;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rowHeading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rowHeadingText {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #6b1e2e;
+  white-space: nowrap;
+}
+
+.rowHeadingInverse {
+  color: #ffffff;
+}
+
+.rowContent {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.rowBody {
+  flex: 1 0 0;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  color: #2e1c1c;
+  margin: 0;
+}
+
+.rowBodyInverse {
+  color: #ffffff;
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ─── Pills inside rows ──────────────────────────────────────────────────────── */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #ffffff;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pill-success { background: #3b9b54; }
+.pill-brand   { background: #6b1e2e; }
+.pill-error   { background: #c94040; }
+
+/* ─── Icon button ────────────────────────────────────────────────────────────── */
+
+.iconBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.iconBtn:hover { background: rgba(0,0,0,0.06); }
+.iconBtn:focus-visible { outline: 3px solid #6b1e2e; outline-offset: 2px; }
+
+.iconBtnInverse:hover { background: rgba(255,255,255,0.12); }
+
+/* ─── Right: action button ───────────────────────────────────────────────────── */
+
+.rowRight {
+  flex-shrink: 0;
+}
+
+.actionBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: none;
+  background: #ffffff;
+  color: #6b1e2e;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.actionBtn:hover { background: #f5eaec; }
+.actionBtn:focus-visible { outline: 3px solid #6b1e2e; outline-offset: 2px; }

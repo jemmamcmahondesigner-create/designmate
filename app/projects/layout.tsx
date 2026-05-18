@@ -1,4 +1,5 @@
 import { NewReviewDrawerProvider } from "@/components/NewReviewDrawerProvider";
+import { CreateProjectModalProvider } from "@/components/projects/CreateProjectModalProvider";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export default async function ProjectsLayout({
@@ -19,19 +20,22 @@ export default async function ProjectsLayout({
 
   return (
     <NewReviewDrawerProvider allProjects={allProjects}>
-      <div
-        className="flex min-h-screen w-full min-w-0 flex-1"
-        style={{
-          display: "flex",
-          minHeight: "100vh",
-          width: "100%",
-          minWidth: 0,
-          flex: 1,
-          overflow: "hidden"
-        }}
-      >
-        {children}
-      </div>
+      <CreateProjectModalProvider>
+        <div
+          className="flex min-h-screen min-w-0 flex-1"
+          style={{
+            display: "flex",
+            minHeight: "100vh",
+            width: "100%",
+            maxWidth: "100%",
+            minWidth: 0,
+            flex: 1,
+            overflow: "hidden"
+          }}
+        >
+          {children}
+        </div>
+      </CreateProjectModalProvider>
     </NewReviewDrawerProvider>
   );
 }

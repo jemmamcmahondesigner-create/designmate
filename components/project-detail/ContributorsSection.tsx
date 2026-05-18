@@ -1,668 +1,537 @@
 "use client";
 
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent
-} from "react";
-import { createPortal } from "react-dom";
-import { Button, Icon, Input } from "@/components/ui/ds";
-import { RoleSelect } from "@/components/ui/RoleSelect";
+  Avatar,
+  Button,
+  Checkbox,
+  Icon,
+  Input,
+  Modal,
+  Select,
+} from "@/components/ui/ds";
+import { useToast } from "@/components/Toast";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
 import type { ProjectContributor } from "@/types/project";
 
 const sectionHeadingClass =
   "text-[20px] font-semibold leading-[1.3] text-[#6b1e2e]";
-
 const sectionHeadingStyle = { letterSpacing: "-0.3px" as const };
-
-const ROLE_OPTIONS = [
-  "Designer",
-  "Product Manager",
-  "Engineer",
-  "Stakeholder",
-  "Client",
-  "Other"
-] as const;
-
-type Mode = "idle" | "search" | "create";
 
 type ContributorsSectionProps = {
   projectId: string;
   initialContributors: ProjectContributor[];
 };
 
-function FixedToastPortal({
-  message,
-  onDone
-}: {
-  message: string;
-  onDone: () => void;
-}) {
-  const [opacity, setOpacity] = useState(0);
-  const [transition, setTransition] = useState("opacity 200ms ease");
-  const [mounted, setMounted] = useState(false);
-  const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    let innerRaf = 0;
-    const outerRaf = requestAnimationFrame(() => {
-      innerRaf = requestAnimationFrame(() => setOpacity(1));
-    });
-    const startFadeOut = window.setTimeout(() => {
-      setTransition("opacity 500ms ease");
-      setOpacity(0);
-    }, 3500);
-    const remove = window.setTimeout(() => {
-      onDoneRef.current();
-    }, 4000);
-    return () => {
-      cancelAnimationFrame(outerRaf);
-      cancelAnimationFrame(innerRaf);
-      window.clearTimeout(startFadeOut);
-      window.clearTimeout(remove);
-    };
-  }, []);
-
-  if (!mounted || typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className="fixed z-50"
-      style={{
-        bottom: 24,
-        left: 24,
-        backgroundColor: "#ebf6ee",
-        border: "1px solid #7dc98f",
-        borderRadius: 8,
-        padding: "12px 16px",
-        fontSize: 13,
-        fontWeight: 500,
-        color: "#256b38",
-        boxShadow: "0px 4px 12px rgba(41,33,28,0.12)",
-        opacity,
-        transition,
-        maxWidth: 360
-      }}
-      role="status"
-    >
-      {message}
-    </div>,
-    document.body
-  );
-}
-
-function UndoToastPortal({
-  message,
-  onUndo,
-  onDone
-}: {
-  message: string;
-  onUndo: () => void | Promise<void>;
-  onDone: () => void;
-}) {
-  const [opacity, setOpacity] = useState(0);
-  const [transition, setTransition] = useState("opacity 200ms ease");
-  const [mounted, setMounted] = useState(false);
-  const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    let innerRaf = 0;
-    const outerRaf = requestAnimationFrame(() => {
-      innerRaf = requestAnimationFrame(() => setOpacity(1));
-    });
-    const startFadeOut = window.setTimeout(() => {
-      setTransition("opacity 500ms ease");
-      setOpacity(0);
-    }, 3500);
-    const remove = window.setTimeout(() => {
-      onDoneRef.current();
-    }, 4000);
-    return () => {
-      cancelAnimationFrame(outerRaf);
-      cancelAnimationFrame(innerRaf);
-      window.clearTimeout(startFadeOut);
-      window.clearTimeout(remove);
-    };
-  }, []);
-
-  if (!mounted || typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className="fixed z-50 flex flex-wrap items-center"
-      style={{
-        bottom: 24,
-        left: 24,
-        backgroundColor: "#ebf6ee",
-        border: "1px solid #7dc98f",
-        borderRadius: 8,
-        padding: "12px 16px",
-        fontSize: 13,
-        fontWeight: 500,
-        color: "#256b38",
-        boxShadow: "0px 4px 12px rgba(41,33,28,0.12)",
-        opacity,
-        transition,
-        maxWidth: 400
-      }}
-      role="status"
-    >
-      <span>{message}</span>
-      <Button
-        type="button"
-        variant="ghost"
-        label="Undo"
-        className="ml-3 !p-0 underline"
-        onClick={() => {
-          void Promise.resolve(onUndo()).then(() => onDone());
-        }}
-      />
-    </div>,
-    document.body
-  );
-}
-
 export function ContributorsSection({
   projectId,
-  initialContributors
+  initialContributors,
 }: ContributorsSectionProps) {
+  const { showToast } = useToast();
   const [contributors, setContributors] =
     useState<ProjectContributor[]>(initialContributors);
-  const [mode, setMode] = useState<Mode>("idle");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [nameDraft, setNameDraft] = useState("");
-  const [emailDraft, setEmailDraft] = useState("");
-  const [roleDraft, setRoleDraft] = useState<string>(ROLE_OPTIONS[0]);
-  const [isSaving, setIsSaving] = useState(false);
-  const [toast, setToast] = useState<{ message: string; key: number } | null>(
-    null
-  );
-  const [undoToast, setUndoToast] = useState<{ key: number } | null>(null);
-  const undoContributorSnapshotRef = useRef<ProjectContributor | null>(null);
-
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const nameInputRef = useRef<HTMLInputElement>(null);
-  const flowRef = useRef<HTMLDivElement>(null);
-
-  const searchMatches = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return contributors;
-    return contributors.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        (c.email ?? "").toLowerCase().includes(q)
-    );
-  }, [contributors, searchQuery]);
-
-  useEffect(() => {
-    if (mode === "search") {
-      searchInputRef.current?.focus();
-    }
-    if (mode === "create") {
-      nameInputRef.current?.focus();
-    }
-  }, [mode]);
-
-  useEffect(() => {
-    if (mode === "idle") return;
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (flowRef.current?.contains(e.target as Node)) return;
-      setMode("idle");
-      setSearchQuery("");
-      setNameDraft("");
-      setEmailDraft("");
-      setRoleDraft(ROLE_OPTIONS[0]);
-    };
-    const onKeyDown = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setMode("idle");
-        setSearchQuery("");
-        setNameDraft("");
-        setEmailDraft("");
-        setRoleDraft(ROLE_OPTIONS[0]);
-      }
-    };
-    document.addEventListener("mousedown", onDocMouseDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onDocMouseDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [mode]);
-
-  const showToast = useCallback((message: string) => {
-    setToast({ message, key: Date.now() });
-  }, []);
-
-  const dismissToast = useCallback(() => {
-    setToast(null);
-  }, []);
-
-  const dismissUndoToast = useCallback(() => {
-    setUndoToast(null);
-  }, []);
-
-  const closeCreateForm = useCallback(() => {
-    setNameDraft("");
-    setEmailDraft("");
-    setRoleDraft(ROLE_OPTIONS[0]);
-    setMode("idle");
-  }, []);
-
-  const addContributorClone = useCallback(
-    async (c: ProjectContributor) => {
-      if (isSaving) return;
-      setIsSaving(true);
-      const supabase = createSupabaseBrowserClient();
-      const { data, error } = await supabase
-        .from("contributors")
-        .insert({
-          project_id: projectId,
-          name: c.name,
-          email: c.email,
-          role: c.role
-        })
-        .select("id, name, email, role")
-        .single();
-
-      setIsSaving(false);
-      if (error || !data) return;
-
-      const row = data as {
-        id: string;
-        name: string;
-        email: string | null;
-        role: string | null;
-      };
-      setContributors((prev) => [
-        ...prev,
-        {
-          id: row.id,
-          name: row.name,
-          email: row.email,
-          role: row.role
-        }
-      ]);
-      showToast("Team member added");
-      setMode("idle");
-      setSearchQuery("");
-    },
-    [isSaving, projectId, showToast]
-  );
-
-  const saveNewContributor = useCallback(async () => {
-    const name = nameDraft.trim();
-    if (!name || isSaving) return;
-    setIsSaving(true);
-    const emailTrim = emailDraft.trim();
-    const supabase = createSupabaseBrowserClient();
-    const { data, error } = await supabase
-      .from("contributors")
-      .insert({
-        project_id: projectId,
-        name,
-        email: emailTrim === "" ? null : emailTrim,
-        role: roleDraft || null
-      })
-      .select("id, name, email, role")
-      .single();
-
-    setIsSaving(false);
-    if (error || !data) return;
-
-    const row = data as {
-      id: string;
-      name: string;
-      email: string | null;
-      role: string | null;
-    };
-    setContributors((prev) => [
-      ...prev,
-      {
-        id: row.id,
-        name: row.name,
-        email: row.email,
-        role: row.role
-      }
-    ]);
-    const msg = emailTrim
-      ? `Team member added · Invite sent to ${emailTrim}`
-      : "Team member added";
-    showToast(msg);
-    closeCreateForm();
-  }, [
-    closeCreateForm,
-    emailDraft,
-    isSaving,
-    nameDraft,
-    projectId,
-    roleDraft,
-    showToast
-  ]);
-
-  const onFormKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      void saveNewContributor();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      closeCreateForm();
-    }
-  };
-
-  const removeContributor = useCallback(
-    async (c: ProjectContributor) => {
-      setContributors((prev) => prev.filter((x) => x.id !== c.id));
-      undoContributorSnapshotRef.current = c;
-      setUndoToast({ key: Date.now() });
-
-      const supabase = createSupabaseBrowserClient();
-      await supabase.from("contributors").delete().eq("id", c.id);
-    },
+  const [allContributors, setAllContributors] =
+    useState<ProjectContributor[]>(initialContributors);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selectedContributorIds, setSelectedContributorIds] = useState<string[]>(
     []
   );
+  const [contributorModalOpen, setContributorModalOpen] = useState(false);
+  const [newContributorName, setNewContributorName] = useState("");
+  const [newContributorEmail, setNewContributorEmail] = useState("");
+  const [newContributorRole, setNewContributorRole] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [emailExistsError, setEmailExistsError] = useState<string | null>(null);
+  const anchorRef = useRef<HTMLDivElement | null>(null);
 
-  const undoRemoveContributor = useCallback(async () => {
-    const snap = undoContributorSnapshotRef.current;
-    if (!snap) return;
+  useEffect(() => {
     const supabase = createSupabaseBrowserClient();
-    const { data, error } = await supabase
+    void supabase
       .from("contributors")
-      .insert({
-        project_id: projectId,
-        name: snap.name,
-        email: snap.email,
-        role: snap.role
-      })
       .select("id, name, email, role")
-      .single();
+      .order("created_at", { ascending: true })
+      .then(({ data }) => {
+        if (!Array.isArray(data)) return;
+        const mapped = data.map((row) => {
+          const item = row as Record<string, unknown>;
+          return {
+            id: String(item.id ?? ""),
+            name: String(item.name ?? ""),
+            email:
+              item.email == null || String(item.email).trim() === ""
+                ? null
+                : String(item.email),
+            role:
+              item.role == null || String(item.role).trim() === ""
+                ? null
+                : String(item.role),
+            avatarUrl: null,
+          } satisfies ProjectContributor;
+        });
+        setAllContributors(mapped);
+      });
+  }, []);
 
-    if (error || !data) return;
-
-    const row = data as {
-      id: string;
-      name: string;
-      email: string | null;
-      role: string | null;
-    };
-    setContributors((prev) => [
-      ...prev,
-      {
-        id: row.id,
-        name: row.name,
-        email: row.email,
-        role: row.role
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (!anchorRef.current?.contains(e.target as Node)) {
+        setMenuOpen(false);
       }
-    ]);
-    undoContributorSnapshotRef.current = null;
-  }, [projectId]);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [menuOpen]);
 
-  const showEmptyState = contributors.length === 0 && mode === "idle";
+  const availableContributors = useMemo(
+    () =>
+      allContributors.filter(
+        (contributor) =>
+          (search.trim() === "" ||
+            contributor.name.toLowerCase().includes(search.toLowerCase()))
+      ),
+    [allContributors, search]
+  );
+
+  const closeCreateModal = () => {
+    setContributorModalOpen(false);
+    setNewContributorName("");
+    setNewContributorEmail("");
+    setNewContributorRole("");
+    setEmailExistsError(null);
+  };
+
+  useEffect(() => {
+    if (!contributorModalOpen) return;
+    const email = newContributorEmail.trim().toLowerCase();
+    if (!email) {
+      setEmailExistsError(null);
+      return;
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      const supabase = createSupabaseBrowserClient();
+      void supabase
+        .from("contributors")
+        .select("id")
+        .ilike("email", email)
+        .limit(1)
+        .then(({ data }) => {
+          if (cancelled) return;
+          setEmailExistsError(
+            Array.isArray(data) && data.length > 0
+              ? "A teammate with this email already exists."
+              : null
+          );
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [contributorModalOpen, newContributorEmail]);
+
+  const removeContributor = async (contributorId: string) => {
+    setContributors((prev) =>
+      prev.filter((contributor) => contributor.id !== contributorId)
+    );
+    const supabase = createSupabaseBrowserClient();
+    const { error } = await supabase.from("contributors").delete().eq("id", contributorId);
+    if (!error) showToast("Changes saved");
+  };
 
   return (
-    <section>
+    <section className="flex flex-col gap-3">
       <h2 className={sectionHeadingClass} style={sectionHeadingStyle}>
-        Team Members
+        Teammates
       </h2>
-      {showEmptyState ? (
+
+      {contributors.length === 0 && (
         <div
-          className="mt-3 flex w-full flex-col items-center justify-center border border-solid border-[#e4ddd3]"
           style={{
-            borderRadius: 6,
-            minHeight: 100,
-            gap: 8,
             backgroundColor: "#f3efe9",
-            padding: 32
+            border: "1px solid #e4ddd3",
+            borderRadius: 8,
+            height: 68,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
-          <p className="m-0 text-[12px] font-normal leading-[1.5] text-[#998c82]">
-            No team members added yet.
-          </p>
-          <Button
-            type="button"
-            variant="ghost"
-            label="Add contributor"
-            icon="leading"
-            iconName="plus"
-            size="sm"
-            onClick={() => {
-              setMode("search");
-              setSearchQuery("");
-            }}
-          />
+          <span style={{ fontSize: 14, fontWeight: 500, color: "#998c82" }}>
+            Add teammates to collaborate on this project.
+          </span>
         </div>
-      ) : null}
-      {contributors.length > 0 ? (
-        <div className="mt-3 flex flex-wrap" style={{ gap: 4 }}>
-          {contributors.map((c) => (
+      )}
+
+      {contributors.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          {contributors.map((contributor) => (
             <div
-              key={c.id}
-              className="group flex h-8 max-w-full min-w-0 items-center border border-solid border-[#e4ddd3] bg-[#f3efe9] px-2 transition-all duration-150 ease-in-out hover:border-[#e8d0d4] hover:bg-[#f5eaec]"
+              key={contributor.id}
               style={{
+                height: 32,
+                backgroundColor: "#f3efe9",
+                border: "1px solid #e4ddd3",
                 borderRadius: 4,
-                gap: 8
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 4,
+                paddingBottom: 4,
+                gap: 8,
+                display: "inline-flex",
+                alignItems: "center",
               }}
             >
-              {/* TODO: replace with real avatar when auth is implemented */}
-              <span
-                className="shrink-0 rounded-full"
-                style={{
-                  width: 24,
-                  height: 24,
-                  backgroundColor: "#e4ddd3"
-                }}
-                aria-hidden
+              <Avatar
+                name={contributor.name}
+                src={contributor.avatarUrl ?? undefined}
+                size="md"
               />
-              <span
-                className="min-w-0 truncate text-[12px] font-medium leading-[1.5] text-[#6b5e55] transition-colors duration-150 group-hover:text-[#6b1e2e]"
-                style={{ letterSpacing: "0.24px" }}
-                title={c.name}
-              >
-                {c.name}
+              <span style={{ fontSize: 13, fontWeight: 500, color: "#6b5e55" }}>
+                {contributor.name}
               </span>
-              {c.role ? (
+              {contributor.role ? (
                 <span
-                  className="shrink-0 rounded-[4px] border-0 text-[10px] font-semibold uppercase leading-[1.5] text-[#6b5e55]"
                   style={{
-                    backgroundColor: "#e4ddd3",
-                    padding: "2px 6px"
+                    fontSize: 13,
+                    fontWeight: 400,
+                    color: "#998c82",
+                    lineHeight: 1.65,
                   }}
                 >
-                  {c.role}
+                  {contributor.role}
                 </span>
               ) : null}
-              <div className="flex h-8 w-6 shrink-0 items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-                <button
-                  type="button"
-                  className="flex items-center justify-center border-0 bg-transparent p-0 opacity-100 text-[#998c82] transition-opacity hover:text-[#6b1e2e]"
-                  aria-label={`Remove ${c.name}`}
-                  onClick={() => void removeContributor(c)}
-                >
-                  <span className="inline-flex text-current">
-                    <Icon name="close" size={14} />
-                  </span>
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => void removeContributor(contributor.id)}
+                aria-label={`Remove ${contributor.name}`}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "#998c82",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: 0,
+                }}
+              >
+                <Icon name="close" size={14} />
+              </button>
             </div>
           ))}
         </div>
-      ) : null}
-      {toast ? (
-        <FixedToastPortal
-          key={toast.key}
-          message={toast.message}
-          onDone={dismissToast}
-        />
-      ) : null}
-      {undoToast ? (
-        <UndoToastPortal
-          key={undoToast.key}
-          message="Team member removed"
-          onUndo={undoRemoveContributor}
-          onDone={dismissUndoToast}
-        />
-      ) : null}
+      )}
 
-      <div ref={flowRef} className="mt-3 flex w-full min-w-0 flex-col gap-2">
-        {!showEmptyState ? (
-          <Button
-            type="button"
-            variant="ghost"
-            label="Add contributor"
-            icon="leading"
-            iconName="plus"
-            size="sm"
-            className="self-start"
-            onClick={() => {
-              setMode("search");
-              setSearchQuery("");
-            }}
-          />
-        ) : null}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 10,
+          position: "relative",
+        }}
+        ref={anchorRef}
+      >
+        <button
+          type="button"
+          onClick={() => setMenuOpen((prev) => !prev)}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            paddingLeft: 12,
+            paddingRight: 12,
+            paddingTop: 6,
+            paddingBottom: 6,
+            borderRadius: 6,
+            border: "none",
+            cursor: "pointer",
+            fontSize: 13,
+            fontWeight: 500,
+            fontFamily: "'Plus Jakarta Sans', sans-serif",
+            backgroundColor: menuOpen ? "#f5eaec" : "transparent",
+            color: "#6b1e2e",
+            flexShrink: 0,
+            transition: "background-color 120ms ease",
+          }}
+        >
+          <Icon name="plus" size={14} />
+          Add a contributor
+        </button>
 
-        {mode === "search" ? (
-          <div className="relative w-full">
-            <Input
-              ref={searchInputRef}
-              type="text"
-              label="Search contributors"
-              placeholder="Search by name or email..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              size="sm"
-              showHelper={false}
-              className="w-full"
-              aria-controls="contributor-search-results"
-              aria-autocomplete="list"
-            />
-            <div
-              id="contributor-search-results"
-              className="absolute left-0 right-0 z-30 mt-1 overflow-hidden border border-solid bg-white"
-              style={{
-                borderColor: "#e4ddd3",
-                borderRadius: 8,
-                boxShadow: "0px 4px 12px rgba(41,33,28,0.12)",
-                maxHeight: 280,
-                overflowY: "auto"
-              }}
-              role="listbox"
-            >
-              {searchMatches.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  role="option"
-                  aria-selected={false}
-                  className="flex w-full items-center gap-3 border-0 bg-transparent px-3 text-left transition-colors duration-150 hover:bg-[#f3efe9]"
-                  style={{ height: 36, paddingLeft: 12, paddingRight: 12 }}
-                  onClick={() => void addContributorClone(c)}
-                >
-                  <span
-                    className="shrink-0 rounded-full"
-                    style={{
-                      width: 24,
-                      height: 24,
-                      backgroundColor: "#e4ddd3"
-                    }}
-                    aria-hidden
-                  />
-                  <span
-                    className="min-w-0 truncate text-[13px] font-medium leading-[1.5] text-[#2e1c1c]"
-                  >
-                    {c.name}
-                  </span>
-                  <span
-                    className="ml-auto min-w-0 truncate text-[12px] font-normal leading-[1.5] text-[#998c82]"
-                  >
-                    {c.email ?? ""}
-                  </span>
-                </button>
-              ))}
-              <Button
-                type="button"
-                variant="ghost"
-                label="Create new team member"
-                icon="leading"
-                iconName="plus-circle"
-                className="w-full justify-start rounded-none border-t border-solid border-[#ede8e0] !px-3 !py-0 !h-9"
-                onClick={() => {
-                  setMode("create");
-                  setSearchQuery("");
-                }}
-              />
-            </div>
-          </div>
-        ) : null}
-
-        {mode === "create" ? (
+        {menuOpen && (
           <div
-            className="flex w-full min-w-0 flex-wrap items-center"
-            style={{ gap: 8 }}
-            onKeyDown={onFormKeyDown}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              maxWidth: 400,
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              position: "relative",
+            }}
           >
-            <Input
-              ref={nameInputRef}
-              type="text"
-              label="Name"
-              placeholder="Name"
-              value={nameDraft}
-              onChange={(e) => setNameDraft(e.target.value)}
-              disabled={isSaving}
-              size="sm"
-              showHelper={false}
-              className="min-w-0 flex-[1_1_120px]"
-            />
-            <Input
-              type="email"
-              label="Email"
-              placeholder="Email"
-              value={emailDraft}
-              onChange={(e) => setEmailDraft(e.target.value)}
-              disabled={isSaving}
-              size="sm"
-              showHelper={false}
-              className="min-w-0 flex-[1_1_120px]"
-            />
-            <RoleSelect
-              value={roleDraft}
-              onChange={setRoleDraft}
-              disabled={isSaving}
-              aria-label="Contributor role"
-            />
-            <div className="flex shrink-0 items-center gap-3">
-              <Button
-                type="button"
-                variant="accent"
-                label="Add"
-                size="sm"
-                disabled={isSaving}
-                onClick={() => void saveNewContributor()}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                label="Cancel"
-                size="sm"
-                onClick={closeCreateForm}
-              />
+            <div
+              style={{
+                position: "absolute",
+                bottom: "100%",
+                left: 0,
+                width: 399,
+                backgroundColor: "#ffffff",
+                border: "1px solid #e4ddd3",
+                borderRadius: 8,
+                boxShadow:
+                  "0px 2px 4px rgba(41,33,28,0.06), 0px 8px 16px rgba(41,33,28,0.15)",
+                overflow: "hidden",
+                zIndex: 50,
+                paddingTop: 4,
+                paddingBottom: 0,
+                marginBottom: 4,
+              }}
+            >
+              <div style={{ paddingBottom: 4 }}>
+                {availableContributors.length === 0 && (
+                  <div style={{ padding: "8px 12px", fontSize: 13, color: "#998c82" }}>
+                    No teammates found.
+                  </div>
+                )}
+                {availableContributors.map((contributor) => {
+                  const alreadyOnProject = contributors.some(
+                    (current) => current.id === contributor.id
+                  );
+                  return (
+                    <label
+                      key={contributor.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "8px 12px",
+                        cursor: alreadyOnProject ? "not-allowed" : "pointer",
+                        width: "100%",
+                        boxSizing: "border-box",
+                        opacity: alreadyOnProject ? 0.6 : 1,
+                      }}
+                    >
+                      <Checkbox
+                        id={`contributor-${contributor.id}`}
+                        label=""
+                        checked={selectedContributorIds.includes(contributor.id)}
+                        disabled={alreadyOnProject}
+                        onChange={(checked) => {
+                          if (alreadyOnProject) return;
+                          setSelectedContributorIds((prev) =>
+                            checked
+                              ? [...prev, contributor.id]
+                              : prev.filter((id) => id !== contributor.id)
+                          );
+                        }}
+                      />
+                      <Avatar name={contributor.name} size="md" />
+                      <span style={{ fontSize: 14, fontWeight: 500, color: "#2e1c1c", flex: 1 }}>
+                        {contributor.name}
+                      </span>
+                      {alreadyOnProject ? (
+                        <span style={{ fontSize: 12, color: "#998c82" }}>Already on project</span>
+                      ) : null}
+                    </label>
+                  );
+                })}
+              </div>
+              <div style={{ height: 1, backgroundColor: "#e4ddd3" }} />
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "8px 12px",
+                }}
+              >
+                <Button
+                  variant="primary"
+                  size="sm"
+                  label="Done"
+                  onClick={() => {
+                    const toAdd = allContributors.filter((contributor) =>
+                      selectedContributorIds.includes(contributor.id)
+                    );
+                    let added = false;
+                    setContributors((prev) => {
+                      const next = [
+                        ...prev,
+                        ...toAdd.filter(
+                          (candidate) => !prev.some((existing) => existing.id === candidate.id)
+                        ),
+                      ];
+                      added = next.length > prev.length;
+                      return next;
+                    });
+                    setSelectedContributorIds([]);
+                    setMenuOpen(false);
+                    setSearch("");
+                    if (added) showToast("Changes saved");
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setContributorModalOpen(true);
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: 14,
+                    fontWeight: 500,
+                    color: "#6b1e2e",
+                    fontFamily: "'Plus Jakarta Sans', sans-serif",
+                  }}
+                >
+                  <Icon name="plus" size={16} />
+                  Create a new teammate
+                </button>
+              </div>
             </div>
+
+            <input
+              type="text"
+              placeholder="Find teammates"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoFocus
+              style={{
+                height: 32,
+                width: "100%",
+                border: "1px solid #6b1e2e",
+                borderRadius: 6,
+                padding: "0 8px",
+                fontSize: 13,
+                fontFamily: "'Plus Jakarta Sans', sans-serif",
+                color: "#2e1c1c",
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
           </div>
-        ) : null}
+        )}
       </div>
+
+      <Modal
+        open={contributorModalOpen}
+        type="form"
+        size="md"
+        title="Create a new teammate"
+        onClose={closeCreateModal}
+        footer={
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              width: "100%",
+              gap: 8,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }} />
+            <Button
+              variant="secondary"
+              size="sm"
+              label="Cancel"
+              onClick={closeCreateModal}
+            />
+            <Button
+              variant="accent"
+              size="sm"
+              label="Create"
+              disabled={
+                !newContributorName.trim() ||
+                isSaving ||
+                Boolean(emailExistsError)
+              }
+              onClick={async () => {
+                const name = newContributorName.trim();
+                if (!name || isSaving || emailExistsError) return;
+                setIsSaving(true);
+                const supabase = createSupabaseBrowserClient();
+                const { data } = await supabase
+                  .from("contributors")
+                  .insert({
+                    project_id: projectId,
+                    name,
+                    email: newContributorEmail.trim() || null,
+                    role: newContributorRole.trim() || null,
+                  })
+                  .select("id, name, email, role")
+                  .single();
+                setIsSaving(false);
+                if (!data) return;
+                const next: ProjectContributor = {
+                  id: String((data as Record<string, unknown>).id ?? ""),
+                  name: String((data as Record<string, unknown>).name ?? ""),
+                  email:
+                    ((data as Record<string, unknown>).email as
+                      | string
+                      | null
+                      | undefined) ?? null,
+                  role:
+                    ((data as Record<string, unknown>).role as
+                      | string
+                      | null
+                      | undefined) ?? null,
+                };
+                setAllContributors((prev) => [...prev, next]);
+                setContributors((prev) => [...prev, next]);
+                await logTimelineEventClient({
+                  projectId,
+                  actorId: next.id,
+                  eventType: "teammate_added",
+                  payload: { teammate_name: next.name }
+                });
+                showToast("Changes saved");
+                closeCreateModal();
+              }}
+            />
+          </div>
+        }
+      >
+        <Input
+          label="Name"
+          size="sm"
+          placeholder="Full name"
+          value={newContributorName}
+          onChange={(e) => setNewContributorName(e.target.value)}
+        />
+        <Input
+          label="Email Address"
+          size="sm"
+          type="email"
+          placeholder="email@example.com"
+          value={newContributorEmail}
+          onChange={(e) => setNewContributorEmail(e.target.value)}
+          error={Boolean(emailExistsError)}
+          errorMessage={emailExistsError ?? undefined}
+        />
+        <Select
+          label="Role"
+          size="sm"
+          placeholder="Select"
+          options={[
+            { value: "Designer", label: "Designer" },
+            { value: "Product Manager", label: "Product Manager" },
+            { value: "Engineer", label: "Engineer" },
+            { value: "Stakeholder", label: "Stakeholder" },
+          ]}
+          value={newContributorRole || undefined}
+          onChange={(value) => setNewContributorRole(value)}
+        />
+      </Modal>
     </section>
   );
 }
+

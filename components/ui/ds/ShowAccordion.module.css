@@ -1,0 +1,56 @@
+/* ShowAccordion.module.css — DLS node 145:2279
+   Divider line | ghost button | divider line layout.
+   Triggered when >5 active projects exist in sidebar.
+*/
+
+.root {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 4px 0;
+}
+
+.line {
+  flex: 1 0 0;
+  height: 1px;
+  background: #e4ddd3;
+  min-width: 0;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #6b1e2e;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.btn:hover {
+  background: #f5eaec;
+}
+
+.btn:active {
+  background: #e8d0d4;
+}
+
+.btn:focus-visible {
+  outline: 3px solid #6b1e2e;
+  outline-offset: 2px;
+}
+
+.label {
+  flex-shrink: 0;
+}
