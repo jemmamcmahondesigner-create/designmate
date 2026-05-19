@@ -32,7 +32,7 @@ export interface InputProps {
   /** Error state — shows error border and errorMessage below field */
   error?: boolean
   /** Error message shown below field when error is true */
-  errorMessage?: string
+  errorMessage?: ReactNode
   /** Helper / hint text shown below field (hidden when error is true) */
   helperText?: string
   /** Whether to show helper text */
@@ -157,7 +157,12 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
         </div>
 
         {error && errorMessage && (
-          <p id={errorId} className={styles.errorText} role="alert">
+          <p
+            id={errorId}
+            className={styles.errorText}
+            role="alert"
+            style={typeof errorMessage === 'string' ? undefined : { whiteSpace: 'normal' }}
+          >
             {errorMessage}
           </p>
         )}

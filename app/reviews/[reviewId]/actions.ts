@@ -122,6 +122,7 @@ export async function createTeammateFromReviewAction(input: {
   email: string | null;
   role: string | null;
   requireDecisionMaker: boolean;
+  includeInWorkspace?: boolean;
 }): Promise<{ error: string | null }> {
   const supabase = await createSupabaseServerClient();
   const name = input.name.trim();
@@ -129,10 +130,23 @@ export async function createTeammateFromReviewAction(input: {
     return { error: "Name is required." };
   }
 
+  let workspaceId: string | null = null;
+  if (input.includeInWorkspace !== false) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const activeWorkspaceId = user?.user_metadata?.active_workspace_id;
+    workspaceId =
+      typeof activeWorkspaceId === "string" && activeWorkspaceId.trim()
+        ? activeWorkspaceId.trim()
+        : null;
+  }
+
   const { data: newContributor, error: insertError } = await supabase
     .from("contributors")
     .insert({
       project_id: input.projectId,
+      workspace_id: workspaceId,
       name,
       email: input.email?.trim() ? input.email.trim() : null,
       role: input.role?.trim() ? input.role.trim() : null,

@@ -1,4 +1,5 @@
 import { ProjectsView } from "@/components/ProjectsView";
+import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Project, ProjectStatus, ProjectsByStatus } from "@/types/project";
 
@@ -12,6 +13,22 @@ function normalizeStatus(raw: string | null | undefined): ProjectStatus {
 
 export default async function ProjectsPage() {
   const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const activeWorkspaceId = getActiveWorkspaceIdFromUser(user);
+
+  if (!activeWorkspaceId) {
+    return (
+      <ProjectsView
+        grouped={{ active: [], paused: [], complete: [] }}
+        reviewCounts={{}}
+        searchPlaceholder="Filter by project, client, or teammate..."
+        workspaceEmptyMessage="Set up your workspace to see projects."
+      />
+    );
+  }
+
   const { data, error } = await supabase
     .from("projects")
     .select(
@@ -25,6 +42,7 @@ export default async function ProjectsPage() {
       contributors ( name )
     `
     )
+    .eq("workspace_id", activeWorkspaceId)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -99,7 +117,8 @@ export default async function ProjectsPage() {
   // with an efficient count query or RPC instead of fetching all rows.
   const { data: reviewRows, error: reviewsError } = await supabase
     .from("reviews")
-    .select("project_id");
+    .select("project_id, projects!inner(workspace_id)")
+    .eq("projects.workspace_id", activeWorkspaceId);
 
   if (!reviewsError && reviewRows) {
     for (const row of reviewRows) {

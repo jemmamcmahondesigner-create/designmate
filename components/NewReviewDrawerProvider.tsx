@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { DiscardChangesModal } from "@/components/DiscardChangesModal";
 import { CreateReviewDrawer } from "@/components/CreateReviewDrawer";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
 import {
   submitReviewClient,
   type SubmitReviewInput
@@ -160,19 +161,24 @@ export function NewReviewDrawerProvider({
     const supabase = createSupabaseBrowserClient();
 
     void (async () => {
-      const [{ data: problemsRows }, { data: contributorsRows }] =
-        await Promise.all([
-          supabase
-            .from("problems")
-            .select("id, description")
-            .eq("project_id", globalProjectId)
-            .order("created_at", { ascending: true }),
-          supabase
-            .from("contributors")
-            .select("id, name, email, role")
-            .eq("project_id", globalProjectId)
-            .order("created_at", { ascending: true })
-        ]);
+      const activeWorkspaceId = await getActiveWorkspaceId(supabase);
+      let contributorsQuery = supabase
+        .from("contributors")
+        .select("id, name, email, role")
+        .eq("project_id", globalProjectId)
+        .order("created_at", { ascending: true });
+      if (activeWorkspaceId) {
+        contributorsQuery = contributorsQuery.eq("workspace_id", activeWorkspaceId);
+      }
+
+      const [{ data: problemsRows }, { data: contributorsRows }] = await Promise.all([
+        supabase
+          .from("problems")
+          .select("id, description")
+          .eq("project_id", globalProjectId)
+          .order("created_at", { ascending: true }),
+        contributorsQuery,
+      ]);
 
       if (cancelled) return;
       setProjectProblems(mapProblems(problemsRows));

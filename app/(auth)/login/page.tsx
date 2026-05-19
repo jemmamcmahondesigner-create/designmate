@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { AuthMark } from "@/components/auth/AuthMark";
@@ -27,6 +27,13 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
+
+  useEffect(() => {
+    const emailParam = new URLSearchParams(window.location.search).get("email");
+    if (emailParam) {
+      setEmail(emailParam);
+    }
+  }, []);
 
   const signInWithGoogle = useCallback(async () => {
     const supabase = createSupabaseBrowserClient();
@@ -105,7 +112,7 @@ export default function LoginPage() {
             label="Password"
             type={passwordVisible ? "text" : "password"}
             size="lg"
-            placeholder="Enter a unique 8 digit password"
+            placeholder="Enter password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => {

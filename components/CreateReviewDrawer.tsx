@@ -36,6 +36,9 @@ import {
   Tooltip
 } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
+import { sendWorkspaceInvite } from "@/lib/workspace/invite-client";
+import { inviteToastMessage } from "@/lib/workspace/invite-toast";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
 import type {
   ArtifactDraftForSubmit,
@@ -725,19 +728,20 @@ export function CreateReviewDrawer({
     let cancelled = false;
     const handle = window.setTimeout(() => {
       const supabase = createSupabaseBrowserClient();
-      void supabase
-        .from("contributors")
-        .select("id")
-        .ilike("email", email)
-        .limit(1)
-        .then(({ data }) => {
-          if (cancelled) return;
-          setTeammateEmailExistsError(
-            Array.isArray(data) && data.length > 0
-              ? "A teammate with this email already exists."
-              : null
-          );
-        });
+      void (async () => {
+        const activeWorkspaceId = await getActiveWorkspaceId(supabase);
+        let query = supabase.from("contributors").select("id").ilike("email", email).limit(1);
+        if (activeWorkspaceId) {
+          query = query.eq("workspace_id", activeWorkspaceId);
+        }
+        const { data } = await query;
+        if (cancelled) return;
+        setTeammateEmailExistsError(
+          Array.isArray(data) && data.length > 0
+            ? "A teammate with this email already exists."
+            : null
+        );
+      })();
     }, 250);
     return () => {
       cancelled = true;
@@ -892,10 +896,14 @@ export function CreateReviewDrawer({
         .filter(Boolean)
     );
     void (async () => {
-      const baseQuery = supabase
+      const activeWorkspaceId = await getActiveWorkspaceId(supabase);
+      let baseQuery = supabase
         .from("contributors")
         .select("id, name, email, role")
         .order("created_at", { ascending: true });
+      if (activeWorkspaceId) {
+        baseQuery = baseQuery.eq("workspace_id", activeWorkspaceId);
+      }
       const { data } =
         q.length > 0
           ? await baseQuery.ilike("name", `%${reviewerQuery.trim()}%`)
@@ -2584,7 +2592,7 @@ export function CreateReviewDrawer({
           <div style={{ flex: 1, minWidth: 0 }}>
             <Checkbox
               id={includeTeammateCheckboxId}
-              label="Include person within the project team."
+              label="Include person within the project team"
               checked={includeTeammateInProject}
               disabled={!effectiveProjectId.trim()}
               onChange={setIncludeTeammateInProject}
@@ -2608,10 +2616,28 @@ export function CreateReviewDrawer({
             }
             onClick={async () => {
               const name = newTeammateName.trim();
+              const email = newTeammateEmail.trim();
               if (!name || teammateEmailExistsError || isCreatingTeammate) return;
               if (includeTeammateInProject && !effectiveProjectId.trim()) return;
               setIsCreatingTeammate(true);
               const supabase = createSupabaseBrowserClient();
+              const activeWorkspaceId = await getActiveWorkspaceId(supabase);
+
+              if (includeTeammateInProject && email && activeWorkspaceId) {
+                const inviteResult = await sendWorkspaceInvite({
+                  workspace_id: activeWorkspaceId,
+                  email,
+                  name,
+                  role: "viewer",
+                });
+                if (inviteResult.status === "error") {
+                  setIsCreatingTeammate(false);
+                  showToast(inviteToastMessage(inviteResult, name, email));
+                  return;
+                }
+                showToast(inviteToastMessage(inviteResult, name, email));
+              }
+
               const { data, error } = await supabase
                 .from("contributors")
                 .insert({
@@ -2619,9 +2645,10 @@ export function CreateReviewDrawer({
                     includeTeammateInProject && effectiveProjectId.trim()
                       ? effectiveProjectId.trim()
                       : null,
+                  workspace_id: includeTeammateInProject ? activeWorkspaceId : null,
                   name,
-                  email: newTeammateEmail.trim() || null,
-                  role: newTeammateRole.trim() || "Stakeholder"
+                  email: email || null,
+                  role: newTeammateRole.trim() || "Stakeholder",
                 })
                 .select("id, name, email, role")
                 .single();
@@ -2656,7 +2683,9 @@ export function CreateReviewDrawer({
                   payload: { teammate_name: newUser.name }
                 });
               }
-              showToast("Changes saved");
+              if (!includeTeammateInProject || !email || !activeWorkspaceId) {
+                showToast("Changes saved");
+              }
               router.refresh();
               closeCreateTeammateModal();
             }}

@@ -1,25 +1,51 @@
 "use client";
 
-import { FormEvent, useCallback, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { AuthMark } from "@/components/auth/AuthMark";
 import { AuthSubmitButton } from "@/components/auth/AuthSubmitButton";
 import { AuthTextLink } from "@/components/auth/AuthTextLink";
 import { DesignTraceHeading } from "@/components/auth/DesignTraceHeading";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
+import { InputLockIcon } from "@/components/auth/InputLockIcon";
 import { OrDivider } from "@/components/auth/OrDivider";
 import { useResendCooldown } from "@/components/auth/useResendCooldown";
-import { Button, Input } from "@/components/ui/ds";
+import { Alert, Button, Input } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { getSiteOrigin, mapSignUpError } from "@/lib/auth/mapAuthError";
+import {
+  getSignUpPasswordServerErrorMessage,
+  getSiteOrigin,
+  validateSignUpPassword,
+} from "@/lib/auth/mapAuthError";
+import { INVITE_CODE_STORAGE_KEY } from "@/lib/workspace/invite-client";
 
-type NewAccountStatus = "idle" | "loading" | "email-error" | "email-sent";
+type NewAccountStatus = "idle" | "loading" | "email-sent";
 
-export default function NewAccountPage() {
+function NewAccountPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [status, setStatus] = useState<NewAccountStatus>("idle");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [emailExistsError, setEmailExistsError] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
   const { cooldown, startCooldown, canResend } = useResendCooldown(60);
+
+  useEffect(() => {
+    const code = searchParams.get("invite_code")?.trim();
+    const inviteEmail = searchParams.get("email")?.trim();
+
+    if (inviteEmail) {
+      setEmail(inviteEmail);
+    }
+
+    if (code) {
+      setInviteCode(code);
+      window.localStorage.setItem(INVITE_CODE_STORAGE_KEY, code);
+    }
+  }, [searchParams]);
 
   const signInWithGoogle = useCallback(async () => {
     const supabase = createSupabaseBrowserClient();
@@ -33,17 +59,59 @@ export default function NewAccountPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    const passwordValidationError = validateSignUpPassword(password);
+    if (passwordValidationError) {
+      setPasswordError(passwordValidationError);
+      return;
+    }
+
+    setPasswordError(null);
+    setEmailExistsError(false);
     setStatus("loading");
 
+    const trimmedEmail = email.trim();
+
+    try {
+      const checkRes = await fetch("/api/auth/check-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmedEmail }),
+      });
+
+      if (checkRes.ok) {
+        const { exists } = (await checkRes.json()) as { exists?: boolean };
+        if (exists === true) {
+          setEmailExistsError(true);
+          setStatus("idle");
+          return;
+        }
+      }
+    } catch {
+      // If the check fails, allow signUp to proceed.
+    }
+
     const supabase = createSupabaseBrowserClient();
-    const { error } = await supabase.auth.signUp({
-      email: email.trim(),
+    const { data, error } = await supabase.auth.signUp({
+      email: trimmedEmail,
       password,
+      options: {
+        emailRedirectTo: `${getSiteOrigin()}/auth/confirm`,
+      },
     });
 
     if (error) {
-      const fieldError = mapSignUpError(error.message);
-      setStatus(fieldError === "email-error" ? "email-error" : "idle");
+      const passwordServerError = getSignUpPasswordServerErrorMessage(error);
+      if (passwordServerError) {
+        setPasswordError(passwordServerError);
+      }
+      setStatus("idle");
+      return;
+    }
+
+    if (data.session) {
+      router.push("/onboarding");
+      router.refresh();
       return;
     }
 
@@ -57,12 +125,15 @@ export default function NewAccountPage() {
     await supabase.auth.resend({
       type: "signup",
       email: email.trim(),
+      options: {
+        emailRedirectTo: `${getSiteOrigin()}/auth/confirm`,
+      },
     });
     startCooldown();
   };
 
   const isLoading = status === "loading";
-  const emailError = status === "email-error";
+  const emailLocked = Boolean(inviteCode);
 
   if (status === "email-sent") {
     return (
@@ -79,10 +150,10 @@ export default function NewAccountPage() {
             An email confirmation has been sent. Check your email!
           </h2>
           <p
-            className="m-0 max-w-[420px] text-center text-[12px] font-normal leading-[1.5]"
-            style={{ color: "var(--text-tertiary, #998c82)" }}
+            className="m-0 max-w-[420px] text-center text-[15px] font-normal leading-normal"
+            style={{ color: "var(--text-secondary, #6b5e55)" }}
           >
-            Didn&apos;t receive the email? Check your inbox and spam before resending.
+            We&apos;ve sent a link to &quot;{email}&quot;
           </p>
           <Button
             variant="accent"
@@ -97,6 +168,12 @@ export default function NewAccountPage() {
             className="w-full"
             style={{ width: "100%" }}
           />
+          <p
+            className="m-0 max-w-[420px] text-center text-[12px] font-normal leading-[1.5]"
+            style={{ color: "var(--text-tertiary, #998c82)" }}
+          >
+            Didn&apos;t receive the email? Check your inbox and spam before resending.
+          </p>
         </div>
       </AuthCard>
     );
@@ -117,9 +194,18 @@ export default function NewAccountPage() {
           Let&apos;s create you a new account!
         </p>
 
-        <GoogleSignInButton
-          onClick={() => void signInWithGoogle()}
-        />
+        {inviteCode ? (
+          <div className="w-full">
+            <Alert
+              sentiment="base"
+              prominence="low"
+              title="You've been invited to join a workspace. Create your account to accept."
+              dismissible={false}
+            />
+          </div>
+        ) : null}
+
+        <GoogleSignInButton onClick={() => void signInWithGoogle()} />
 
         <OrDivider />
 
@@ -136,12 +222,29 @@ export default function NewAccountPage() {
               placeholder="Email address"
               autoComplete="email"
               value={email}
+              disabled={emailLocked}
+              trailingAction={emailLocked ? <InputLockIcon /> : undefined}
               onChange={(e) => {
+                if (emailLocked) return;
                 setEmail(e.target.value);
-                if (status === "email-error") setStatus("idle");
+                if (emailExistsError) setEmailExistsError(false);
               }}
-              error={emailError}
-              errorMessage="An account with this email already exists. Log in instead."
+              error={emailExistsError}
+              errorMessage={
+                emailExistsError ? (
+                  <>
+                    An account already exists with this email.{" "}
+                    <AuthTextLink
+                      href={`/login?email=${encodeURIComponent(email.trim())}`}
+                      className="text-[12px] leading-[1.5]"
+                      style={{ color: "var(--text-link, #6b1e2e)" }}
+                    >
+                      Log in instead
+                    </AuthTextLink>
+                    .
+                  </>
+                ) : undefined
+              }
               className="w-full"
             />
 
@@ -152,9 +255,14 @@ export default function NewAccountPage() {
               placeholder="Enter a unique 8 digit password"
               autoComplete="new-password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              helperText="Password must have 1 number and 1 special character."
-              showHelper
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (passwordError) setPasswordError(null);
+              }}
+              error={Boolean(passwordError)}
+              errorMessage={passwordError ?? undefined}
+              helperText="Min. 8 characters with uppercase, lowercase, number and symbol."
+              showHelper={!passwordError}
               className="w-full"
             />
           </div>
@@ -170,5 +278,13 @@ export default function NewAccountPage() {
         </p>
       </div>
     </AuthCard>
+  );
+}
+
+export default function NewAccountPage() {
+  return (
+    <Suspense fallback={null}>
+      <NewAccountPageContent />
+    </Suspense>
   );
 }

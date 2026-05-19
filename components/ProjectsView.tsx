@@ -179,12 +179,14 @@ export type ProjectsViewProps = {
   grouped: ProjectsByStatus;
   reviewCounts: Record<string, number>;
   searchPlaceholder: string;
+  workspaceEmptyMessage?: string;
 };
 
 export function ProjectsView({
   grouped,
   reviewCounts,
-  searchPlaceholder
+  searchPlaceholder,
+  workspaceEmptyMessage,
 }: ProjectsViewProps) {
   const createProject = useCreateProjectModal();
   const { openNewReview } = useNewReviewDrawer();
@@ -264,7 +266,8 @@ export function ProjectsView({
         className="max-w-md text-[14px] font-medium leading-[1.5]"
         style={{ color: "#998c82" }}
       >
-        No active projects exist. Create a project to start a review.
+        {workspaceEmptyMessage ??
+          "No active projects exist. Create a project to start a review."}
       </p>
     </div>
   );

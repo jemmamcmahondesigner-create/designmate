@@ -1,0 +1,96 @@
+/* Intro slide copy */
+.onboarding-copy-enter {
+  animation: onboarding-copy-fade-up 300ms ease-out forwards;
+}
+
+.onboarding-copy-hidden {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+.onboarding-copy-fade-out {
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+
+.onboarding-slide1-heading-enter {
+  animation: onboarding-copy-fade-up 500ms ease-out 300ms forwards;
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+.onboarding-slide1-overlay-enter {
+  animation: onboarding-fade-in 400ms ease-out 800ms forwards;
+  opacity: 0;
+}
+
+/* Intro exit / steps enter */
+.onboarding-intro-exit {
+  opacity: 0;
+  transition: opacity 300ms ease-out;
+  pointer-events: none;
+}
+
+.onboarding-steps-enter {
+  animation: onboarding-fade-in 300ms ease-out forwards;
+}
+
+@keyframes onboarding-copy-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes onboarding-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Cream wipe overlay on image panel */
+.onboarding-wipe {
+  position: absolute;
+  top: 0;
+  z-index: 20;
+  height: 100%;
+  background: #faf8f6;
+  transition: width 400ms ease-in-out;
+  pointer-events: none;
+}
+
+.onboarding-wipe-anchor-left {
+  left: 0;
+}
+
+.onboarding-wipe-anchor-right {
+  right: 0;
+}
+
+.onboarding-cursor-trail-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-copy-enter,
+  .onboarding-slide1-heading-enter,
+  .onboarding-slide1-overlay-enter,
+  .onboarding-intro-exit,
+  .onboarding-steps-enter,
+  .onboarding-wipe {
+    animation: none !important;
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

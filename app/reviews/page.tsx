@@ -1,5 +1,6 @@
 import { AllReviewsView, type AllReviewsGroupedByType } from "@/components/AllReviewsView";
 import { getEffectiveCurrentContributor } from "@/lib/auth/effectiveContributor";
+import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import { formatDistanceToNow } from "@/lib/formatDistanceToNow";
 import { reviewRowHasRecordedDecision } from "@/lib/reviews/fetchProjectReviews";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -60,8 +61,12 @@ function toProjectMeta(
 
 export default async function AllReviewsPage() {
   const supabase = await createSupabaseServerClient();
-  const contributor = await getEffectiveCurrentContributor(supabase);
-  if (!contributor?.id) {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const activeWorkspaceId = getActiveWorkspaceIdFromUser(user);
+
+  if (!activeWorkspaceId) {
     return (
       <AllReviewsView
         grouped={{ compare: [], approve: [], critique: [], align: [] }}
@@ -70,99 +75,56 @@ export default async function AllReviewsPage() {
     );
   }
 
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-  const email = user?.email?.trim().toLowerCase();
-
-  const { data: contribRowsById } = await supabase
-    .from("contributors")
-    .select("project_id")
-    .eq("id", contributor.id);
-
-  const { data: contribRowsByEmail } = email
-    ? await supabase
-        .from("contributors")
-        .select("project_id")
-        .ilike("email", email)
-    : { data: [] };
-
-  const projectIds = [
-    ...new Set(
-      [...(contribRowsById ?? []), ...(contribRowsByEmail ?? [])]
-        .map((row) => String((row as Record<string, unknown>).project_id ?? "").trim())
-        .filter(Boolean)
-    )
-  ];
-
+  const contributor = await getEffectiveCurrentContributor(supabase);
   const byId = new Map<string, Record<string, unknown>>();
 
-  if (projectIds.length > 0) {
-    const { data } = await supabase
+  const reviewSelect = `
+    id,
+    title,
+    review_type,
+    status,
+    decision_status,
+    require_decision_maker,
+    decision_comments,
+    decision_text,
+    owner_display_name,
+    created_at,
+    updated_at,
+    project_id,
+    projects!inner (
+      id,
+      name,
+      client,
+      status,
+      workspace_id,
+      contributors ( name )
+    )
+  `;
+
+  const { data: workspaceReviews } = await supabase
+    .from("reviews")
+    .select(reviewSelect)
+    .eq("projects.workspace_id", activeWorkspaceId)
+    .eq("projects.status", "active");
+
+  for (const row of workspaceReviews ?? []) {
+    const cast = row as Record<string, unknown>;
+    const id = String(cast.id ?? "");
+    if (id) byId.set(id, cast);
+  }
+
+  if (contributor?.id) {
+    const { data: reviewerRows } = await supabase
       .from("reviews")
-      .select(
-        `
-          id,
-          title,
-          review_type,
-          status,
-          decision_status,
-          require_decision_maker,
-          decision_comments,
-          decision_text,
-          owner_display_name,
-          created_at,
-          updated_at,
-          project_id,
-          projects!inner (
-            id,
-            name,
-            client,
-            status,
-            contributors ( name )
-          )
-        `
-      )
-      .in("project_id", projectIds)
+      .select(reviewSelect)
+      .contains("reviewer_contributor_ids", [contributor.id])
+      .eq("projects.workspace_id", activeWorkspaceId)
       .eq("projects.status", "active");
-    for (const row of data ?? []) {
+    for (const row of reviewerRows ?? []) {
       const cast = row as Record<string, unknown>;
       const id = String(cast.id ?? "");
       if (id) byId.set(id, cast);
     }
-  }
-
-  const { data: reviewerRows } = await supabase
-    .from("reviews")
-    .select(
-      `
-        id,
-        title,
-        review_type,
-        status,
-        decision_status,
-        require_decision_maker,
-        decision_comments,
-        decision_text,
-        owner_display_name,
-        created_at,
-        updated_at,
-        project_id,
-        projects!inner (
-          id,
-          name,
-          client,
-          status,
-          contributors ( name )
-        )
-      `
-    )
-    .contains("reviewer_contributor_ids", [contributor.id])
-    .eq("projects.status", "active");
-  for (const row of reviewerRows ?? []) {
-    const cast = row as Record<string, unknown>;
-    const id = String(cast.id ?? "");
-    if (id) byId.set(id, cast);
   }
 
   const grouped: AllReviewsGroupedByType = {

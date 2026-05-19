@@ -16,8 +16,19 @@ export async function GET(request: Request) {
   const token_hash = searchParams.get("token_hash");
   const typeParam = searchParams.get("type");
 
+  const emailParam = searchParams.get("email");
+
+  const loginWithConfirmationError = () => {
+    const loginUrl = new URL("/login", origin);
+    loginUrl.searchParams.set("error", "confirmation-failed");
+    if (emailParam) {
+      loginUrl.searchParams.set("email", emailParam);
+    }
+    return NextResponse.redirect(loginUrl.toString());
+  };
+
   if (!token_hash || !typeParam || !OTP_TYPES.has(typeParam)) {
-    return NextResponse.redirect(`${origin}/login?error=confirmation-failed`);
+    return loginWithConfirmationError();
   }
 
   const supabase = await createSupabaseServerClient();
@@ -27,7 +38,7 @@ export async function GET(request: Request) {
   });
 
   if (error) {
-    return NextResponse.redirect(`${origin}/login?error=confirmation-failed`);
+    return loginWithConfirmationError();
   }
 
   return NextResponse.redirect(`${origin}/onboarding`);

@@ -81,10 +81,10 @@ export default function ResetPasswordPage() {
             A password reset has been sent. Check your email!
           </h2>
           <p
-            className="m-0 max-w-[420px] text-center text-[12px] font-normal leading-[1.5]"
-            style={{ color: "var(--text-tertiary, #998c82)" }}
+            className="m-0 max-w-[420px] text-center text-[15px] font-normal leading-normal"
+            style={{ color: "var(--text-secondary, #6b5e55)" }}
           >
-            Didn&apos;t receive the reset? Check your inbox and spam before resending.
+            We&apos;ve sent a link to &quot;{email}&quot;
           </p>
           <Button
             variant="accent"
@@ -95,6 +95,12 @@ export default function ResetPasswordPage() {
             className="w-full"
             style={{ width: "100%" }}
           />
+          <p
+            className="m-0 max-w-[420px] text-center text-[12px] font-normal leading-[1.5]"
+            style={{ color: "var(--text-tertiary, #998c82)" }}
+          >
+            Didn&apos;t receive the reset? Check your inbox and spam before resending.
+          </p>
         </div>
       </AuthCard>
     );
@@ -131,21 +137,16 @@ export default function ResetPasswordPage() {
               if (status === "email-error") setStatus("idle");
               if (generalError) setGeneralError(null);
             }}
-            error={emailError}
-            errorMessage="No account found with this email."
+            error={emailError || Boolean(generalError)}
+            errorMessage={
+              emailError
+                ? "No account found with this email."
+                : generalError ?? undefined
+            }
             className="w-full"
           />
 
           <AuthSubmitButton label="Reset password" loading={isLoading} />
-          {generalError ? (
-            <p
-              role="alert"
-              className="m-0 text-[12px] font-normal leading-normal"
-              style={{ color: "var(--feedback-error-text, #8b2020)" }}
-            >
-              {generalError}
-            </p>
-          ) : null}
         </form>
 
         <AuthTextLink href="/login" className="text-center">

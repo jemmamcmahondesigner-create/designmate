@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { AuthMark } from "@/components/auth/AuthMark";
@@ -10,7 +10,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type PagePhase = "exchanging" | "ready" | "submitting";
 
-export default function UpdatePasswordPage() {
+function UpdatePasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const exchangeStarted = useRef(false);
@@ -142,5 +142,13 @@ export default function UpdatePasswordPage() {
         </form>
       </div>
     </AuthCard>
+  );
+}
+
+export default function UpdatePasswordPage() {
+  return (
+    <Suspense fallback={null}>
+      <UpdatePasswordContent />
+    </Suspense>
   );
 }

@@ -33,6 +33,8 @@ export interface SidebarProps {
   /** Popover open state for aria-expanded on the footer button. */
   settingsMenuOpen?: boolean;
   onUserAnchorChange?: (el: HTMLElement | null) => void;
+  /** Workspace name shown above Projects nav when rail is expanded. */
+  workspaceLabel?: string | null;
   /** Shown in the white nav area above the footer divider; hidden when rail collapsed. */
   aboveFooterSlot?: ReactNode;
   footerSlot?: ReactNode;
@@ -106,6 +108,7 @@ export function Sidebar({
   userActive = false,
   settingsMenuOpen = false,
   onUserAnchorChange,
+  workspaceLabel,
   aboveFooterSlot,
   footerSlot,
   className,
@@ -262,6 +265,20 @@ export function Sidebar({
           paddingRight: isExpanded ? 4 : '4px',
         }}
       >
+        {workspaceLabel?.trim() && isExpanded ? (
+          <div
+            style={{
+              paddingTop: 12,
+              paddingLeft: 16,
+              paddingBottom: 0,
+              paddingRight: 0,
+            }}
+          >
+            <span className={styles.sectionLabel} style={{ fontWeight: 600 }}>
+              {workspaceLabel.trim().toUpperCase()}
+            </span>
+          </div>
+        ) : null}
         {wrapNavLink('projects', 'Projects', '/projects', 'nav-archive', projectsActive)}
         {wrapNavLink('reviews', 'All Reviews', '/reviews', 'nav-reviews', reviewsActive)}
         {aboveFooterSlot ? (

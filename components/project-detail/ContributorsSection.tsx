@@ -12,6 +12,9 @@ import {
 } from "@/components/ui/ds";
 import { useToast } from "@/components/Toast";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
+import { sendWorkspaceInvite } from "@/lib/workspace/invite-client";
+import { inviteToastMessage } from "@/lib/workspace/invite-toast";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
 import type { ProjectContributor } from "@/types/project";
 
@@ -48,11 +51,16 @@ export function ContributorsSection({
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
-    void supabase
-      .from("contributors")
-      .select("id, name, email, role")
-      .order("created_at", { ascending: true })
-      .then(({ data }) => {
+    void (async () => {
+      const activeWorkspaceId = await getActiveWorkspaceId(supabase);
+      let query = supabase
+        .from("contributors")
+        .select("id, name, email, role")
+        .order("created_at", { ascending: true });
+      if (activeWorkspaceId) {
+        query = query.eq("workspace_id", activeWorkspaceId);
+      }
+      const { data } = await query;
         if (!Array.isArray(data)) return;
         const mapped = data.map((row) => {
           const item = row as Record<string, unknown>;
@@ -70,8 +78,8 @@ export function ContributorsSection({
             avatarUrl: null,
           } satisfies ProjectContributor;
         });
-        setAllContributors(mapped);
-      });
+      setAllContributors(mapped);
+    })();
   }, []);
 
   useEffect(() => {
@@ -456,15 +464,34 @@ export function ContributorsSection({
               }
               onClick={async () => {
                 const name = newContributorName.trim();
+                const email = newContributorEmail.trim();
                 if (!name || isSaving || emailExistsError) return;
                 setIsSaving(true);
                 const supabase = createSupabaseBrowserClient();
+                const activeWorkspaceId = await getActiveWorkspaceId(supabase);
+
+                if (email && activeWorkspaceId) {
+                  const inviteResult = await sendWorkspaceInvite({
+                    workspace_id: activeWorkspaceId,
+                    email,
+                    name,
+                    role: "viewer",
+                  });
+                  if (inviteResult.status === "error") {
+                    setIsSaving(false);
+                    showToast(inviteToastMessage(inviteResult, name, email));
+                    return;
+                  }
+                  showToast(inviteToastMessage(inviteResult, name, email));
+                }
+
                 const { data } = await supabase
                   .from("contributors")
                   .insert({
                     project_id: projectId,
+                    workspace_id: activeWorkspaceId,
                     name,
-                    email: newContributorEmail.trim() || null,
+                    email: email || null,
                     role: newContributorRole.trim() || null,
                   })
                   .select("id, name, email, role")
@@ -493,7 +520,9 @@ export function ContributorsSection({
                   eventType: "teammate_added",
                   payload: { teammate_name: next.name }
                 });
-                showToast("Changes saved");
+                if (!email || !activeWorkspaceId) {
+                  showToast("Changes saved");
+                }
                 closeCreateModal();
               }}
             />

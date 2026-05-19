@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { DiscardChangesModal } from "@/components/DiscardChangesModal";
 import { Alert, Button, Input, Modal, Select, Textarea, Tooltip } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
 
 const CLIENT_OPTIONS = [
@@ -67,13 +68,21 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
     setError(null);
 
     const supabase = createSupabaseBrowserClient();
+    const activeWorkspaceId = await getActiveWorkspaceId(supabase);
+    if (!activeWorkspaceId) {
+      setError("Set up your workspace before creating a project.");
+      setSubmitting(false);
+      return;
+    }
+
     const { data: createdProject, error: insertError } = await supabase
       .from("projects")
       .insert({
         name: trimmed,
         client: client.trim() || null,
         description: description.trim() || null,
-        status: "active"
+        status: "active",
+        workspace_id: activeWorkspaceId,
       })
       .select("id, name")
       .single();

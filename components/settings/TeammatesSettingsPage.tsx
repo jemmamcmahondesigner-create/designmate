@@ -20,9 +20,13 @@ import {
   Modal,
   Select,
   Table,
+  Tag,
   type ColumnDef,
 } from "@/components/ui/ds";
+import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { sendWorkspaceInvite } from "@/lib/workspace/invite-client";
+import { inviteToastMessage } from "@/lib/workspace/invite-toast";
 
 type Teammate = {
   id: string;
@@ -32,6 +36,8 @@ type Teammate = {
   roleName: string | null;
   permissionLevel: "admin" | "editor" | "reviewer";
   isPaid: boolean;
+  isPending?: boolean;
+  memberId?: string;
 };
 
 type RoleOption = { id: string; name: string };
@@ -40,8 +46,7 @@ type FormState = {
   name: string;
   email: string;
   roleId: string;
-  /** Derived from role in UI; only editor | reviewer are persisted from modals. */
-  permissionLevel: "editor" | "reviewer";
+  permissionLevel: "admin" | "editor" | "reviewer";
 };
 
 const PAGE_SIZE = 10;
@@ -55,9 +60,13 @@ function permissionLevelFromRoleName(roleName: string | null | undefined): "edit
 export function TeammatesSettingsPage({
   initialTeammates,
   initialContributorRoles = [],
+  activeWorkspaceId = null,
+  noWorkspace = false,
 }: {
   initialTeammates: Teammate[];
   initialContributorRoles?: RoleOption[];
+  activeWorkspaceId?: string | null;
+  noWorkspace?: boolean;
 }) {
   const [teammates, setTeammates] = useState(initialTeammates);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
@@ -68,6 +77,8 @@ export function TeammatesSettingsPage({
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
   const roleOptionsRef = useRef<RoleOption[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const router = useRouter();
 
   const [addOpen, setAddOpen] = useState(false);
   const [editRow, setEditRow] = useState<Teammate | null>(null);
@@ -80,6 +91,24 @@ export function TeammatesSettingsPage({
     roleId: "",
     permissionLevel: "reviewer",
   });
+
+  useEffect(() => {
+    if (!activeWorkspaceId) return;
+    const supabase = createSupabaseBrowserClient();
+    void (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase
+        .from("workspace_members")
+        .select("role")
+        .eq("workspace_id", activeWorkspaceId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      setIsAdmin(String((data as { role?: string } | null)?.role ?? "") === "admin");
+    })();
+  }, [activeWorkspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -245,9 +274,12 @@ export function TeammatesSettingsPage({
       label: "Permission",
       width: "flex",
       cellType: "status",
-      render: (row) => (
-        <span style={permissionPillStyle}>{labelPermission(row.permissionLevel)}</span>
-      ),
+      render: (row) =>
+        row.isPending ? (
+          <Tag label="Pending" variant="neutral" size="sm" />
+        ) : (
+          <span style={permissionPillStyle}>{labelPermission(row.permissionLevel)}</span>
+        ),
     },
     {
       key: "paid",
@@ -266,40 +298,42 @@ export function TeammatesSettingsPage({
       label: "",
       width: 40,
       cellType: "kebab",
-      render: (row) => (
-        <>
-          <IconSquareButton
-            ref={(el) => {
-              actionRefs.current[row.id] = el;
-            }}
-            variant="ghost"
-            icon="kebab"
-            label="Teammate actions"
-            onClick={() => setOpenMenuId((prev) => (prev === row.id ? null : row.id))}
-          />
-          <Menu
-            open={openMenuId === row.id}
-            onClose={() => setOpenMenuId(null)}
-            anchorRef={{ current: actionRefs.current[row.id] as HTMLElement | null }}
-            align="left"
-            portal
-            portalZIndex={100}
-          >
-            <MenuItem label="Edit" onClick={() => openEdit(row)} />
-            <MenuItem
-              label="Remove"
-              onClick={() => {
-                setOpenMenuId(null);
-                setRemoveRow(row);
+      render: (row) =>
+        row.isPending ? null : (
+          <>
+            <IconSquareButton
+              ref={(el) => {
+                actionRefs.current[row.id] = el;
               }}
+              variant="ghost"
+              icon="kebab"
+              label="Teammate actions"
+              onClick={() => setOpenMenuId((prev) => (prev === row.id ? null : row.id))}
             />
-          </Menu>
-        </>
-      ),
+            <Menu
+              open={openMenuId === row.id}
+              onClose={() => setOpenMenuId(null)}
+              anchorRef={{ current: actionRefs.current[row.id] as HTMLElement | null }}
+              align="left"
+              portal
+              portalZIndex={100}
+            >
+              <MenuItem label="Edit" onClick={() => openEdit(row)} />
+              <MenuItem
+                label="Remove"
+                onClick={() => {
+                  setOpenMenuId(null);
+                  setRemoveRow(row);
+                }}
+              />
+            </Menu>
+          </>
+        ),
     },
   ];
 
   const permissionOptions = [
+    { value: "admin", label: "Admin" },
     { value: "editor", label: "Editor" },
     { value: "reviewer", label: "Reviewer" },
   ];
@@ -317,7 +351,7 @@ export function TeammatesSettingsPage({
       name: row.name,
       email: row.email ?? "",
       roleId: row.roleId ?? "",
-      permissionLevel: permissionLevelFromRoleName(roleName),
+      permissionLevel: row.permissionLevel,
     });
     setEditRow(row);
     setOpenMenuId(null);
@@ -351,44 +385,39 @@ export function TeammatesSettingsPage({
   };
 
   const createTeammate = async () => {
-    if (!form.name.trim()) return;
+    if (!form.name.trim() || !form.email.trim()) return;
     setFormError(null);
-    const supabase = createSupabaseBrowserClient();
+    if (!activeWorkspaceId) {
+      setFormError("No workspace found. Complete onboarding to add teammates.");
+      return;
+    }
+
     const roleName = roleOptionsRef.current.find((r) => r.id === form.roleId)?.name ?? null;
-    const permission_level = permissionLevelFromRoleName(roleName);
-    const payload = {
+    const result = await sendWorkspaceInvite({
+      workspace_id: activeWorkspaceId,
+      email: form.email.trim(),
       name: form.name.trim(),
-      email: form.email.trim() || null,
-      role: roleName ?? null,
-      role_id: form.roleId || null,
-      permission_level,
-      is_paid: true,
-      project_id: null as string | null, // TODO: wire to workspace_id when workspace model is implemented
-    };
-    const { data, error } = await supabase
-      .from("contributors")
-      .insert(payload)
-      .select("id, name, email, role, role_id, permission_level, is_paid, contributor_roles(name)")
-      .single();
-    if (error) {
-      setFormError(error.message || "Could not add teammate.");
+      role: roleName ?? "member",
+    });
+
+    if (result.status === "error") {
+      setFormError(result.message);
       return;
     }
-    if (!data) {
-      setFormError("Could not add teammate.");
-      return;
-    }
-    upsertTeammate(mapTeammateRow(data as Record<string, unknown>));
+
+    showToast(
+      inviteToastMessage(result, form.name.trim(), form.email.trim()),
+    );
     setAddOpen(false);
-    showToast("Changes saved");
+    router.refresh();
   };
 
   const updateTeammate = async () => {
-    if (!editRow || !form.name.trim()) return;
+    if (!editRow || !form.name.trim() || editRow.isPending) return;
     setFormError(null);
     const supabase = createSupabaseBrowserClient();
     const roleName = roleOptionsRef.current.find((r) => r.id === form.roleId)?.name ?? null;
-    const permission_level = permissionLevelFromRoleName(roleName);
+    const permission_level = form.permissionLevel;
     const { data, error } = await supabase
       .from("contributors")
       .update({
@@ -409,6 +438,15 @@ export function TeammatesSettingsPage({
       setFormError("Could not save teammate.");
       return;
     }
+
+    if (isAdmin && editRow.memberId) {
+      const workspaceMemberRole = permission_level === "admin" ? "admin" : "member";
+      await supabase
+        .from("workspace_members")
+        .update({ role: workspaceMemberRole })
+        .eq("id", editRow.memberId);
+    }
+
     upsertTeammate(mapTeammateRow(data as Record<string, unknown>));
     setEditRow(null);
     showToast("Changes saved");
@@ -446,7 +484,9 @@ export function TeammatesSettingsPage({
           onRowClick={(row) => setSelectedRowId(row.id)}
           emptyState={
             <span style={{ color: "var(--text/secondary, #6b5e55)" }}>
-              No teammates yet - add your first teammate to start collaborating.
+              {noWorkspace
+                ? "No workspace found"
+                : "No teammates yet - add your first teammate to start collaborating."}
             </span>
           }
           pagination={{
@@ -472,7 +512,7 @@ export function TeammatesSettingsPage({
         }}
         footer={formFooter({
           primaryLabel: "Add Teammate",
-          primaryDisabled: !form.name.trim(),
+          primaryDisabled: !form.name.trim() || !form.email.trim(),
           onCancel: () => requestCloseForm("add"),
           onPrimary: () => void createTeammate(),
         })}
@@ -515,14 +555,6 @@ export function TeammatesSettingsPage({
           creatable
           onCreateOption={handleCreateRoleOption}
           portaled
-        />
-        <Select
-          label="Permission Level"
-          options={permissionOptions}
-          value={form.roleId ? form.permissionLevel : undefined}
-          placeholder="Derived from role"
-          disabled
-          size="sm"
         />
       </Modal>
 
@@ -586,9 +618,16 @@ export function TeammatesSettingsPage({
         <Select
           label="Permission Level"
           options={permissionOptions}
-          value={form.roleId ? form.permissionLevel : undefined}
-          placeholder="Derived from role"
-          disabled
+          value={form.permissionLevel}
+          onChange={(value) => {
+            setFormError(null);
+            setForm((prev) => ({
+              ...prev,
+              permissionLevel: value as "admin" | "editor" | "reviewer",
+            }));
+          }}
+          placeholder="Select permission"
+          disabled={!isAdmin}
           size="sm"
         />
       </Modal>

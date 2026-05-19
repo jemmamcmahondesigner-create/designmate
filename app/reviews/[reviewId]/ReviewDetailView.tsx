@@ -80,6 +80,9 @@ import {
 import { contactNameFromMap } from '@/lib/contacts/fetchContactDisplayNames';
 import { FixedToastPortal } from '@/components/FixedToastPortal';
 import { useToast } from '@/components/Toast';
+import { getActiveWorkspaceId } from '@/lib/workspace/activeWorkspace';
+import { sendWorkspaceInvite } from '@/lib/workspace/invite-client';
+import { inviteToastMessage } from '@/lib/workspace/invite-toast';
 import { SubmitFeedbackDrawer } from './SubmitFeedbackDrawer';
 import { ActivityTab } from './ActivityTab';
 import { EditReviewDrawer } from './EditReviewDrawer';
@@ -2930,7 +2933,7 @@ export function ReviewDetailView({
             <div style={{ flex: 1, minWidth: 0 }}>
               <Checkbox
                 id="include-teammate-in-team"
-                label="Include person within the project team."
+                label="Include person within the project team"
                 checked={includeInTeam}
                 onChange={setIncludeInTeam}
               />
@@ -2952,20 +2955,44 @@ export function ReviewDetailView({
               }
               onClick={async () => {
                 const name = newReviewerName.trim();
+                const email = newReviewerEmail.trim();
                 if (!name || reviewerEmailExistsError || isCreatingTeammate) return;
                 if (!projectId.trim()) return;
                 setIsCreatingTeammate(true);
+
+                if (includeInTeam && email) {
+                  const supabase = createSupabaseBrowserClient();
+                  const activeWorkspaceId = await getActiveWorkspaceId(supabase);
+                  if (activeWorkspaceId) {
+                    const inviteResult = await sendWorkspaceInvite({
+                      workspace_id: activeWorkspaceId,
+                      email,
+                      name,
+                      role: 'viewer',
+                    });
+                    if (inviteResult.status === 'error') {
+                      setIsCreatingTeammate(false);
+                      showToast(inviteToastMessage(inviteResult, name, email));
+                      return;
+                    }
+                    showToast(inviteToastMessage(inviteResult, name, email));
+                  }
+                }
+
                 const { error } = await createTeammateFromReviewAction({
                   reviewId,
                   projectId,
                   name,
-                  email: newReviewerEmail.trim() || null,
+                  email: email || null,
                   role: newReviewerRole.trim() || 'Stakeholder',
                   requireDecisionMaker,
+                  includeInWorkspace: includeInTeam,
                 });
                 setIsCreatingTeammate(false);
                 if (error) return;
-                showToast('Changes saved');
+                if (!includeInTeam || !email) {
+                  showToast('Changes saved');
+                }
                 closeReviewerModal();
                 router.refresh();
               }}
