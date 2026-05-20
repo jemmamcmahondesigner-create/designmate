@@ -10,6 +10,8 @@ import {
 } from "react";
 import teammateKebabStyles from "./TeammatesSettingsPage.module.css";
 import { DiscardChangesModal } from "@/components/DiscardChangesModal";
+import { SpinnerIcon } from "@/components/auth/SpinnerIcon";
+import buttonStyles from "@/components/ui/ds/Button.module.css";
 import { useToast } from "@/components/Toast";
 import {
   Alert,
@@ -29,12 +31,13 @@ import {
 import { useRouter } from "next/navigation";
 import { useWorkspacePermission } from "@/hooks/useWorkspacePermission";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { sendWorkspaceInvite } from "@/lib/workspace/invite-client";
+import { cancelWorkspaceInvite, sendWorkspaceInvite } from "@/lib/workspace/invite-client";
 import { inviteToastMessage } from "@/lib/workspace/invite-toast";
 import {
   canAddTeammates,
   canEditTeammatePermission,
   canShowTeammateKebabMenu,
+  isOwnTeammateRow,
   isPaidPermissionLevel,
   normalizeWorkspacePermission,
 } from "@/lib/workspace/permissions";
@@ -48,9 +51,13 @@ type Teammate = {
   permissionLevel: "admin" | "editor" | "reviewer";
   isPaid: boolean;
   isPending?: boolean;
+  isPendingInvite?: boolean;
+  inviteCode?: string;
   memberId?: string;
   userId?: string | null;
 };
+
+const NAME_REQUIRED_MESSAGE = "Please enter the teammate's first and last name.";
 
 type RoleOption = { id: string; name: string };
 
@@ -92,6 +99,11 @@ export function TeammatesSettingsPage({
   noWorkspace?: boolean;
 }) {
   const [teammates, setTeammates] = useState(initialTeammates);
+
+  useEffect(() => {
+    setTeammates(initialTeammates);
+  }, [initialTeammates]);
+
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -100,6 +112,7 @@ export function TeammatesSettingsPage({
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
   const roleOptionsRef = useRef<RoleOption[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
   const router = useRouter();
   const { permissionLevel, userId: currentUserId, loading: permissionLoading } =
     useWorkspacePermission(activeWorkspaceId);
@@ -107,7 +120,10 @@ export function TeammatesSettingsPage({
   const canEditPermission = canEditTeammatePermission(permissionLevel);
 
   const [addOpen, setAddOpen] = useState(false);
+  const [addSubmitting, setAddSubmitting] = useState(false);
   const [editRow, setEditRow] = useState<Teammate | null>(null);
+  const editingOwnRow = isOwnTeammateRow(editRow?.userId, currentUserId);
+  const showPermissionFieldInEdit = canEditPermission && !editingOwnRow;
   const [removeRow, setRemoveRow] = useState<Teammate | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [pendingClose, setPendingClose] = useState<null | "add" | "edit">(null);
@@ -240,6 +256,35 @@ export function TeammatesSettingsPage({
     return undefined;
   };
 
+  const resendInvite = async (row: Teammate) => {
+    if (!row.isPendingInvite || !row.email?.trim() || !activeWorkspaceId) return;
+    setOpenMenuId(null);
+    const result = await sendWorkspaceInvite({
+      workspace_id: activeWorkspaceId,
+      email: row.email.trim(),
+      permission_level: row.permissionLevel,
+    });
+    if (result.status === "error") {
+      showToast(result.message);
+      return;
+    }
+    showToast(`Invite resent to ${row.email.trim()}`);
+    router.refresh();
+  };
+
+  const cancelInvite = async (row: Teammate) => {
+    if (!row.isPendingInvite || !row.inviteCode) return;
+    setOpenMenuId(null);
+    const result = await cancelWorkspaceInvite(row.inviteCode);
+    if (!result.success) {
+      showToast(result.message ?? "Could not cancel invite.");
+      return;
+    }
+    setTeammates((prev) => prev.filter((item) => item.id !== row.id));
+    setSelectedRowId((prev) => (prev === row.id ? null : prev));
+    showToast("Invite cancelled");
+  };
+
   const columns: ColumnDef<Teammate>[] = [
     {
       key: "avatar",
@@ -247,7 +292,15 @@ export function TeammatesSettingsPage({
       width: 56,
       cellType: "avatar",
       render: (row) => (
-        <div style={teammateAvatarStyle}>{nameInitialsForTeammate(row.name)}</div>
+        <div
+          style={
+            row.isPendingInvite ? pendingInviteAvatarStyle : teammateAvatarStyle
+          }
+        >
+          {row.isPendingInvite
+            ? emailInitialForPendingInvite(row.email)
+            : nameInitialsForTeammate(row.name)}
+        </div>
       ),
     },
     {
@@ -255,7 +308,12 @@ export function TeammatesSettingsPage({
       label: "Name",
       width: "flex",
       cellType: "text-bold",
-      render: (row) => row.name,
+      render: (row) =>
+        row.isPendingInvite ? (
+          <span style={pendingInviteNameStyle}>{row.email}</span>
+        ) : (
+          row.name
+        ),
     },
     {
       key: "role",
@@ -276,9 +334,14 @@ export function TeammatesSettingsPage({
       cellType: "custom",
       render: (row) =>
         row.email ? (
-          <a href={`mailto:${row.email}`} className="text-link">
-            {row.email}
-          </a>
+          <span style={emailCellStyle}>
+            <a href={`mailto:${row.email}`} className="text-link">
+              {row.email}
+            </a>
+            {row.isPendingInvite ? (
+              <Tag label="Pending" variant="neutral" size="sm" />
+            ) : null}
+          </span>
         ) : (
           <span style={EMPTY_CELL_STYLE}>—</span>
         ),
@@ -289,7 +352,7 @@ export function TeammatesSettingsPage({
       width: "flex",
       cellType: "status",
       render: (row) =>
-        row.isPending ? (
+        row.isPending && !row.isPendingInvite ? (
           <Tag label="Pending" variant="neutral" size="sm" />
         ) : (
           <Tooltip
@@ -323,12 +386,19 @@ export function TeammatesSettingsPage({
       width: 40,
       align: "center",
       cellType: "custom",
-      render: (row) =>
-        row.isPending ||
-        !canShowTeammateKebabMenu(permissionLevel, {
-          rowUserId: row.userId ?? null,
-          currentUserId,
-        }) ? null : (
+      render: (row) => {
+        const isOwnRow = isOwnTeammateRow(row.userId, currentUserId);
+        const showKebab = row.isPendingInvite
+          ? canManageTeammates
+          : !row.isPending &&
+            canShowTeammateKebabMenu(permissionLevel, {
+              rowUserId: row.userId ?? null,
+              currentUserId,
+            });
+
+        if (!showKebab) return null;
+
+        return (
           <span className={teammateKebabStyles.teammateKebabCell}>
             <IconSquareButton
               ref={(el) => {
@@ -350,17 +420,35 @@ export function TeammatesSettingsPage({
               portal
               portalZIndex={100}
             >
-              <MenuItem label="Edit" onClick={() => openEdit(row)} />
-              <MenuItem
-                label="Remove"
-                onClick={() => {
-                  setOpenMenuId(null);
-                  setRemoveRow(row);
-                }}
-              />
+              {row.isPendingInvite ? (
+                <>
+                  <MenuItem
+                    label="Resend invite"
+                    onClick={() => void resendInvite(row)}
+                  />
+                  <MenuItem
+                    label="Cancel invite"
+                    onClick={() => void cancelInvite(row)}
+                  />
+                </>
+              ) : (
+                <>
+                  <MenuItem label="Edit" onClick={() => openEdit(row)} />
+                  {!isOwnRow ? (
+                    <MenuItem
+                      label="Remove"
+                      onClick={() => {
+                        setOpenMenuId(null);
+                        setRemoveRow(row);
+                      }}
+                    />
+                  ) : null}
+                </>
+              )}
             </Menu>
           </span>
-        ),
+        );
+      },
     },
   ];
 
@@ -371,7 +459,9 @@ export function TeammatesSettingsPage({
   ];
 
   const openAdd = () => {
+    setAddSubmitting(false);
     setFormError(null);
+    setNameError(null);
     setForm({ name: "", email: "", roleId: "", permissionLevel: "reviewer" });
     setAddOpen(true);
   };
@@ -412,8 +502,13 @@ export function TeammatesSettingsPage({
   };
 
   const createTeammate = async () => {
-    if (!form.name.trim() || !form.email.trim()) return;
+    if (!form.name.trim()) {
+      setNameError(NAME_REQUIRED_MESSAGE);
+      return;
+    }
+    if (!form.email.trim()) return;
     setFormError(null);
+    setNameError(null);
     if (!activeWorkspaceId) {
       setFormError("No workspace found. Complete onboarding to add teammates.");
       return;
@@ -425,28 +520,33 @@ export function TeammatesSettingsPage({
       return;
     }
 
-    const result = await sendWorkspaceInvite({
-      workspace_id: activeWorkspaceId,
-      email: form.email.trim(),
-      name: form.name.trim(),
-      role: roleName ?? undefined,
-      permission_level: form.permissionLevel,
-    });
+    setAddSubmitting(true);
+    try {
+      const result = await sendWorkspaceInvite({
+        workspace_id: activeWorkspaceId,
+        email: form.email.trim(),
+        name: form.name.trim(),
+        role: roleName ?? undefined,
+        permission_level: form.permissionLevel,
+      });
 
-    if (result.status === "error") {
-      setFormError(result.message);
-      return;
+      if (result.status === "error") {
+        setFormError(result.message);
+        return;
+      }
+
+      showToast(
+        inviteToastMessage(result, form.name.trim(), form.email.trim()),
+      );
+      setAddOpen(false);
+      router.refresh();
+    } finally {
+      setAddSubmitting(false);
     }
-
-    showToast(
-      inviteToastMessage(result, form.name.trim(), form.email.trim()),
-    );
-    setAddOpen(false);
-    router.refresh();
   };
 
   const updateTeammate = async () => {
-    if (!editRow || !form.name.trim() || editRow.isPending) return;
+    if (!editRow || !form.name.trim() || editRow.isPending || editRow.isPendingInvite) return;
     setFormError(null);
     const supabase = createSupabaseBrowserClient();
     const roleName = roleOptionsRef.current.find((r) => r.id === form.roleId)?.name ?? null;
@@ -472,7 +572,7 @@ export function TeammatesSettingsPage({
       return;
     }
 
-    if (canEditPermission && editRow.memberId) {
+    if (canEditPermission && !editingOwnRow && editRow.memberId) {
       const workspaceMemberRole = permission_level === "admin" ? "admin" : "member";
       await supabase
         .from("workspace_members")
@@ -553,8 +653,9 @@ export function TeammatesSettingsPage({
         }}
         footer={formFooter({
           primaryLabel: "Add Teammate",
-          primaryDisabled:
-            !canManageTeammates || !form.name.trim() || !form.email.trim(),
+          primaryLoading: addSubmitting,
+          primaryLoadingLabel: "Sending...",
+          primaryDisabled: !canManageTeammates || !form.email.trim() || addSubmitting,
           onCancel: () => requestCloseForm("add"),
           onPrimary: () => void createTeammate(),
         })}
@@ -577,10 +678,14 @@ export function TeammatesSettingsPage({
         ) : null}
         <Input
           label="Name"
-          required
+          placeholder="First and last name"
           value={form.name}
+          error={Boolean(nameError)}
+          errorMessage={nameError ?? undefined}
+          showHelper={false}
           onChange={(e) => {
             setFormError(null);
+            setNameError(null);
             setForm((prev) => ({ ...prev, name: e.target.value }));
           }}
           size="sm"
@@ -622,6 +727,7 @@ export function TeammatesSettingsPage({
           }}
           placeholder="Select permission"
           size="sm"
+          portaled
         />
       </Modal>
 
@@ -685,7 +791,7 @@ export function TeammatesSettingsPage({
           onCreateOption={handleCreateRoleOption}
           portaled
         />
-        {canEditPermission ? (
+        {showPermissionFieldInEdit ? (
           <Select
             label="Permission Level"
             options={permissionOptions}
@@ -700,7 +806,7 @@ export function TeammatesSettingsPage({
             placeholder="Select permission"
             size="sm"
           />
-        ) : (
+        ) : editingOwnRow ? null : (
           <Tooltip
             label="Only admins can change permission levels."
             position="top"
@@ -785,6 +891,11 @@ function labelPermission(value: Teammate["permissionLevel"]) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function emailInitialForPendingInvite(email: string | null) {
+  const local = (email ?? "").split("@")[0]?.trim() ?? "";
+  return local[0]?.toUpperCase() ?? "?";
+}
+
 function nameInitialsForTeammate(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "U";
@@ -802,20 +913,58 @@ function nameInitialsForTeammate(name: string) {
 function formFooter({
   primaryLabel,
   primaryDisabled,
+  primaryLoading,
+  primaryLoadingLabel,
   primaryVariant = "primary",
   onCancel,
   onPrimary,
 }: {
   primaryLabel: string;
   primaryDisabled?: boolean;
+  primaryLoading?: boolean;
+  primaryLoadingLabel?: string;
   primaryVariant?: "primary" | "destructive";
   onCancel: () => void;
   onPrimary: () => void;
 }) {
+  const primaryVariantClass =
+    primaryVariant === "destructive" ? "destructive" : "primary";
+
   return (
     <div style={{ display: "flex", width: "100%", justifyContent: "flex-end", gap: 8 }}>
-      <Button label="Cancel" variant="secondary" size="sm" onClick={onCancel} />
-      <Button label={primaryLabel} variant={primaryVariant === "destructive" ? "destructive" : "primary"} size="sm" disabled={primaryDisabled} onClick={onPrimary} />
+      <Button
+        label="Cancel"
+        variant="secondary"
+        size="sm"
+        onClick={onCancel}
+        disabled={primaryLoading}
+      />
+      {primaryLoading ? (
+        <button
+          type="button"
+          className={[
+            buttonStyles.root,
+            buttonStyles[`variant-${primaryVariantClass}`],
+            buttonStyles["size-sm"],
+          ].join(" ")}
+          disabled
+          aria-busy="true"
+          aria-label={primaryLoadingLabel ?? primaryLabel}
+        >
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <SpinnerIcon size={14} className="animate-spin" />
+            {primaryLoadingLabel ?? "Sending..."}
+          </span>
+        </button>
+      ) : (
+        <Button
+          label={primaryLabel}
+          variant={primaryVariant === "destructive" ? "destructive" : "primary"}
+          size="sm"
+          disabled={primaryDisabled}
+          onClick={onPrimary}
+        />
+      )}
     </div>
   );
 }
@@ -832,6 +981,24 @@ const teammateAvatarStyle: CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
   fontFamily: "'Plus Jakarta Sans', sans-serif",
+};
+
+const pendingInviteAvatarStyle: CSSProperties = {
+  ...teammateAvatarStyle,
+  background: "var(--neutral-200, #e8e4df)",
+  color: "var(--text-secondary, #6b5e55)",
+};
+
+const pendingInviteNameStyle: CSSProperties = {
+  color: "var(--text-secondary, #6b5e55)",
+  fontSize: 13,
+};
+
+const emailCellStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 8,
+  flexWrap: "wrap",
 };
 
 const permissionPillStyle: CSSProperties = {

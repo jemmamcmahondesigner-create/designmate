@@ -39,8 +39,22 @@ export function canShowTeammateKebabMenu(
   level: WorkspacePermissionLevel | null,
   options: { rowUserId: string | null; currentUserId: string | null },
 ): boolean {
+  if (
+    options.currentUserId &&
+    options.rowUserId &&
+    options.currentUserId === options.rowUserId
+  ) {
+    return true;
+  }
   if (!level || level === "reviewer") return false;
   if (level === "admin") return true;
   if (!options.currentUserId || !options.rowUserId) return true;
   return options.rowUserId !== options.currentUserId;
+}
+
+export function isOwnTeammateRow(
+  rowUserId: string | null | undefined,
+  currentUserId: string | null | undefined,
+): boolean {
+  return Boolean(rowUserId && currentUserId && rowUserId === currentUserId);
 }

@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
 import { AuthMark } from "@/components/auth/AuthMark";
 import { Button, Input, Select, Textarea } from "@/components/ui/ds";
@@ -8,6 +16,10 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { generateInviteCode } from "@/lib/workspace/utils";
 import { ensureContributorProfile } from "@/lib/workspace/ensureContributorProfile";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
+import {
+  mapInvitePermissionLevel,
+  type WorkspacePermissionLevel,
+} from "@/lib/workspace/permissions";
 import {
   acceptWorkspaceInvite,
   fetchInviteDetails,
@@ -61,6 +73,10 @@ function firstNameFrom(fullName: string) {
   const trimmed = fullName.trim();
   if (!trimmed) return "";
   return trimmed.split(/\s+/)[0] ?? "";
+}
+
+function permissionLevelLabel(level: WorkspacePermissionLevel): string {
+  return level.charAt(0).toUpperCase() + level.slice(1);
 }
 
 function ProgressBar({ step, total }: { step: number; total: number }) {
@@ -130,6 +146,8 @@ export function OnboardingFlow({
   const [isInvited, setIsInvited] = useState(false);
   const [inviteWorkspaceId, setInviteWorkspaceId] = useState<string | null>(null);
   const [inviteWorkspaceName, setInviteWorkspaceName] = useState("your team");
+  const [invitePermissionLevel, setInvitePermissionLevel] =
+    useState<WorkspacePermissionLevel>("reviewer");
   const [invitedJoinError, setInvitedJoinError] = useState(false);
 
   const [phase, setPhase] = useState<Phase>("intro");
@@ -208,9 +226,20 @@ export function OnboardingFlow({
         setInviteLink(effectiveInviteCode);
 
         const details = await fetchInviteDetails(effectiveInviteCode);
-        if (details?.workspace_name) {
-          setInviteWorkspaceName(details.workspace_name);
-          setCompany(details.workspace_name);
+        if (details) {
+          if (details.workspace_name) {
+            setInviteWorkspaceName(details.workspace_name);
+            setCompany(details.workspace_name);
+          }
+          setInvitePermissionLevel(mapInvitePermissionLevel(details.role));
+          const prefilledName = details.invited_name?.trim();
+          if (prefilledName) {
+            setName(prefilledName);
+          }
+          const prefilledRole = details.job_role?.trim();
+          if (prefilledRole) {
+            setRole(prefilledRole);
+          }
         }
       } else {
         const invitedId = user.user_metadata?.invite_workspace_id as string | undefined;
@@ -277,7 +306,8 @@ export function OnboardingFlow({
           role: role.trim() || null,
           company: company.trim() || null,
           designer_type: designLabel || null,
-          work_environment: envLabel || null,
+          design_type: designType.trim() || null,
+          work_environment: workEnv.trim() || envLabel || null,
           design_context: designContext.trim() || null,
           ...(resolvedWorkspaceId
             ? {
@@ -451,7 +481,7 @@ export function OnboardingFlow({
 
       await persistProfile({
         workspaceId: result.workspace_id,
-        permissionLevel: "reviewer",
+        permissionLevel: invitePermissionLevel,
       });
 
       window.localStorage.removeItem(INVITE_CODE_STORAGE_KEY);
@@ -504,34 +534,41 @@ export function OnboardingFlow({
   }
 
   const invitedConfirmationStep = isInvited && step === 3;
+  const inviteHeadingRef = useRef<HTMLHeadingElement>(null);
+  const [inviteDashTop, setInviteDashTop] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    if (!invitedConfirmationStep) {
+      setInviteDashTop(null);
+      return;
+    }
+
+    const updateDashPosition = () => {
+      const heading = inviteHeadingRef.current;
+      if (!heading) return;
+      setInviteDashTop(heading.getBoundingClientRect().top);
+    };
+
+    updateDashPosition();
+    window.addEventListener("resize", updateDashPosition);
+    return () => window.removeEventListener("resize", updateDashPosition);
+  }, [invitedConfirmationStep, step, inviteWorkspaceName]);
 
   return (
     <main className="onboarding-steps-enter relative flex min-h-screen w-screen flex-col overflow-hidden">
-      {invitedConfirmationStep ? (
+      {invitedConfirmationStep && inviteDashTop !== null ? (
         <div
-          style={{
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            right: 0,
-            height: 0,
-            borderTop: "2px dashed #e4ddd3",
-            transform: "translateY(-50%)",
-            pointerEvents: "none",
-            zIndex: 0,
-          }}
+          className="onboarding-invite-dash"
+          style={{ top: inviteDashTop }}
           aria-hidden
         />
       ) : null}
       <div className="flex min-h-0 flex-1 w-full">
       <div
-        className="relative z-[1] flex min-h-screen w-1/2 shrink-0 flex-col items-center justify-center px-16"
+        className="relative z-[1] flex min-h-screen min-w-0 flex-1 basis-0 flex-col items-center justify-center pl-16 pr-16"
         style={{ background: "var(--surface-page, #faf8f6)" }}
       >
-        <AuthMark
-          className={`absolute left-16 ${isInvited ? "top-0" : "top-16"}`}
-          height={48}
-        />
+        <AuthMark className="absolute left-16 top-16" height={48} />
 
         <div className="w-full">
           {step === 1 && (
@@ -615,6 +652,7 @@ export function OnboardingFlow({
             <>
               <LeftHeading>
                 <h1
+                  ref={inviteHeadingRef}
                   className="m-0"
                   style={{
                     margin: 0,
@@ -683,13 +721,13 @@ export function OnboardingFlow({
 
       {invitedConfirmationStep ? (
         <div
-          className="flex w-1/2 min-h-screen flex-col"
+          className="flex min-h-screen min-w-0 flex-1 basis-0 flex-col"
           style={{ background: "var(--surface-page, #faf8f6)" }}
         >
           <ProgressBar step={step} total={totalSteps} />
         </div>
       ) : (
-        <div className="flex w-1/2 min-h-screen flex-col bg-white">
+        <div className="flex min-h-screen min-w-0 flex-1 basis-0 flex-col bg-white">
           <ProgressBar step={step} total={totalSteps} />
 
           <div className="flex flex-1 flex-col justify-between px-8 py-8">
@@ -725,7 +763,7 @@ export function OnboardingFlow({
                         value={company || inviteWorkspaceName}
                         disabled
                         trailingAction={<InputLockIcon />}
-                        helperText="You're joining this workspace as a member."
+                        helperText={`You're joining this workspace as a ${permissionLevelLabel(invitePermissionLevel).toLowerCase()}.`}
                         showHelper
                         onChange={() => {}}
                         className="w-full"

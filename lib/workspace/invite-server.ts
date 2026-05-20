@@ -182,20 +182,24 @@ export async function createWorkspaceInvite({
 
   const inviteCode = crypto.randomUUID().replace(/-/g, "").slice(0, 32);
 
+  const invitedName = name?.trim() || null;
+  const jobRole = role?.trim() || null;
+
+  const inviteRow: Record<string, unknown> = {
+    workspace_id: workspaceId,
+    email: normalizedEmail,
+    role: permissionLevel,
+    invited_by: invitedByUserId,
+    invite_code: inviteCode,
+    status: "pending",
+    expires_at: expiresAt,
+  };
+  if (invitedName) inviteRow.invited_name = invitedName;
+  if (jobRole) inviteRow.job_role = jobRole;
+
   const { data: invite, error: inviteError } = await service
     .from("workspace_invites")
-    .upsert(
-      {
-        workspace_id: workspaceId,
-        email: normalizedEmail,
-        role: permissionLevel,
-        invited_by: invitedByUserId,
-        invite_code: inviteCode,
-        status: "pending",
-        expires_at: expiresAt,
-      },
-      { onConflict: "workspace_id,email" },
-    )
+    .upsert(inviteRow, { onConflict: "workspace_id,email" })
     .select("invite_code, email")
     .single();
 
@@ -215,6 +219,5 @@ export async function createWorkspaceInvite({
     return { status: "error", message: "Invite created but email could not be sent." };
   }
 
-  void name;
   return { status: "invited" };
 }

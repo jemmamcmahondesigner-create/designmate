@@ -1,5 +1,6 @@
 import {
   isPaidPermissionLevel,
+  mapInvitePermissionLevel,
   normalizeWorkspacePermission,
   type WorkspacePermissionLevel,
 } from "@/lib/workspace/permissions";
@@ -13,8 +14,18 @@ export type WorkspaceTeammate = {
   permissionLevel: WorkspacePermissionLevel;
   isPaid: boolean;
   isPending: boolean;
+  /** Pending row from workspace_invites (not yet accepted). */
+  isPendingInvite?: boolean;
+  inviteCode?: string;
   memberId?: string;
   userId?: string | null;
+};
+
+export type PendingWorkspaceInviteRow = {
+  id: string;
+  email: string;
+  role: string;
+  invite_code: string;
 };
 
 type WorkspaceMemberRow = {
@@ -140,4 +151,45 @@ export function buildWorkspaceTeammates(
   }
 
   return teammates;
+}
+
+export function mapPendingWorkspaceInvites(
+  rows: PendingWorkspaceInviteRow[],
+): WorkspaceTeammate[] {
+  return rows.map((row) => {
+    const email = String(row.email ?? "").trim();
+    const permissionLevel = mapInvitePermissionLevel(row.role);
+    return {
+      id: `invite-${row.id}`,
+      name: email,
+      email,
+      roleId: null,
+      roleName: null,
+      permissionLevel,
+      isPaid: false,
+      isPending: true,
+      isPendingInvite: true,
+      inviteCode: String(row.invite_code ?? ""),
+    };
+  });
+}
+
+export function appendPendingWorkspaceInvites(
+  teammates: WorkspaceTeammate[],
+  pendingInvites: WorkspaceTeammate[],
+): WorkspaceTeammate[] {
+  if (pendingInvites.length === 0) return teammates;
+
+  const existingEmails = new Set(
+    teammates
+      .map((row) => row.email?.trim().toLowerCase())
+      .filter((email): email is string => Boolean(email)),
+  );
+
+  const uniquePending = pendingInvites.filter((row) => {
+    const email = row.email?.trim().toLowerCase();
+    return email && !existingEmails.has(email);
+  });
+
+  return [...teammates, ...uniquePending];
 }

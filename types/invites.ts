@@ -19,6 +19,10 @@ export type InviteApiResponse =
 export type InviteDetails = {
   workspace_name: string;
   inviter_name: string;
+  /** Permission level: admin | editor | reviewer */
   role: string;
   expires_at: string;
+  email?: string;
+  invited_name?: string | null;
+  job_role?: string | null;
 };

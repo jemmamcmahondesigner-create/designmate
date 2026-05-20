@@ -56,4 +56,23 @@ export async function acceptWorkspaceInvite(inviteCode: string): Promise<{
   };
 }
 
+export async function cancelWorkspaceInvite(inviteCode: string): Promise<{
+  success: boolean;
+  message?: string;
+}> {
+  const response = await fetch("/api/workspace/invite/cancel", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ invite_code: inviteCode }),
+  });
+
+  const data = (await response.json()) as { success?: boolean; message?: string };
+
+  if (!response.ok) {
+    return { success: false, message: data.message ?? "Could not cancel invite." };
+  }
+
+  return { success: Boolean(data.success), message: data.message };
+}
+
 export const INVITE_CODE_STORAGE_KEY = "dt_invite_code";

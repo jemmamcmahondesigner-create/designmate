@@ -36,12 +36,20 @@ body.auth-route {
 }
 
 .auth-text-link {
-  color: var(--text-link, #6b1e2e);
-  font-size: 15px;
+  color: var(--text-secondary, #6b5e55);
+  font-size: 13px;
   font-weight: 400;
   line-height: 1.5;
   text-decoration: none;
   border-radius: 4px;
+}
+
+.auth-footer-text {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary, #6b5e55);
 }
 
 .auth-text-link:hover {

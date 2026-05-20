@@ -81,12 +81,12 @@ function SlideSub({ children }: { children: ReactNode }) {
   );
 }
 
-function WelcomeHeading() {
+function WelcomeHeading({ centered = false }: { centered?: boolean }) {
   return (
     <h1
-      className="m-0 whitespace-nowrap font-extrabold"
+      className={`m-0 whitespace-nowrap font-extrabold ${centered ? "onboarding-welcome-heading-centered" : "onboarding-welcome-heading-split"}`}
       style={{
-        fontSize: HEADING_FONT_WELCOME,
+        fontSize: "48px",
         lineHeight: 1.15,
         letterSpacing: "-1.44px",
         color: "var(--text-heading, #6b1e2e)",
@@ -259,7 +259,7 @@ function ImagePanelColumn({
   onWipeTransitionEnd: (event: TransitionEvent<HTMLDivElement>) => void;
 }) {
   return (
-    <div className="relative h-full w-1/2 shrink-0 overflow-hidden">
+    <div className="relative h-full min-w-0 flex-1 basis-0 overflow-hidden">
       <div className="relative h-full w-full overflow-hidden bg-[#1a0810]">
         <ImagePanelContent
           activeSlideIndex={slideIndex}
@@ -290,6 +290,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const [copyVisible, setCopyVisible] = useState(false);
   const [copyFadingOut, setCopyFadingOut] = useState(false);
   const [slide1Mounted, setSlide1Mounted] = useState(false);
+  const [welcomeImageLoaded, setWelcomeImageLoaded] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
 
   const slide = SLIDES[slideIndex];
@@ -298,9 +299,21 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const buttonsOnDarkPanel = !slide.imageOnLeft;
 
   useEffect(() => {
-    SLIDE_IMAGES.forEach(({ src }) => {
-      const img = new Image();
-      img.src = src;
+    const firstSrc = SLIDE_IMAGES[0]?.src;
+    if (!firstSrc) return;
+
+    const img = new Image();
+    const markLoaded = () => setWelcomeImageLoaded(true);
+    img.onload = markLoaded;
+    img.onerror = markLoaded;
+    img.src = firstSrc;
+    if (img.complete) {
+      markLoaded();
+    }
+
+    SLIDE_IMAGES.slice(1).forEach(({ src }) => {
+      const preload = new Image();
+      preload.src = src;
     });
   }, []);
 
@@ -311,10 +324,10 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   }, [reducedMotion, onComplete]);
 
   useEffect(() => {
-    if (slideIndex === 0 && !reducedMotion) {
+    if (slideIndex === 0 && !reducedMotion && welcomeImageLoaded) {
       setSlide1Mounted(true);
     }
-  }, [slideIndex, reducedMotion]);
+  }, [slideIndex, reducedMotion, welcomeImageLoaded]);
 
   const completeIntro = useCallback(() => {
     if (isCompleting) return;
@@ -526,6 +539,9 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const overlayClassName =
     slide.showImageOverlay && slide1Mounted ? "onboarding-slide1-overlay-enter" : "";
 
+  const isWelcomeSlide = slideIndex === 0;
+  const showWelcomeSplit = isWelcomeSlide && welcomeImageLoaded;
+
   const imageColumn = (
     <ImagePanelColumn
       key="intro-image-panel"
@@ -541,7 +557,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const textColumn = (
     <div
       key="intro-text-panel"
-      className="flex h-full w-1/2 shrink-0 items-center px-16"
+      className="flex h-full min-w-0 flex-1 basis-0 items-center px-16"
       style={{ background: "var(--surface-page, #faf8f6)" }}
     >
       <div className={`w-full text-left ${copyClassName}`.trim()}>{slide.text}</div>
@@ -560,19 +576,40 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
         aria-hidden
       />
 
-      <div className="flex h-full w-full">
-        {slide.imageOnLeft ? (
-          <>
-            {imageColumn}
-            {textColumn}
-          </>
-        ) : (
-          <>
-            {textColumn}
-            {imageColumn}
-          </>
-        )}
-      </div>
+      {isWelcomeSlide && !showWelcomeSplit ? (
+        <div className="onboarding-welcome-fullscreen flex h-full w-full items-center justify-center">
+          <WelcomeHeading centered />
+        </div>
+      ) : (
+        <div className="flex h-full w-full">
+          {isWelcomeSlide ? (
+            <>
+              <div className="flex h-full min-w-0 flex-1 basis-0 items-center px-16 onboarding-welcome-fullscreen">
+                <WelcomeHeading />
+              </div>
+              <div
+                className={`onboarding-welcome-image-panel relative h-full min-w-0 flex-1 basis-0 overflow-hidden ${showWelcomeSplit ? "is-visible" : ""}`}
+              >
+                <ImagePanelContent
+                  activeSlideIndex={0}
+                  showOverlay={slide.showImageOverlay}
+                  overlayClassName={overlayClassName}
+                />
+              </div>
+            </>
+          ) : slide.imageOnLeft ? (
+            <>
+              {imageColumn}
+              {textColumn}
+            </>
+          ) : (
+            <>
+              {textColumn}
+              {imageColumn}
+            </>
+          )}
+        </div>
+      )}
 
       <div className="fixed bottom-8 right-8 z-50 flex flex-row items-center gap-2">
         {!isLastSlide ? (

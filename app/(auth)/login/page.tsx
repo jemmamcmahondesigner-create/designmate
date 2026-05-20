@@ -141,8 +141,8 @@ export default function LoginPage() {
           Reset Password
         </AuthTextLink>
 
-        <p className="m-0 text-center text-[15px] leading-normal">
-          <span style={{ color: "var(--text-tertiary, #998c82)" }}>No account?</span>
+        <p className="auth-footer-text">
+          No account?
           <AuthTextLink href="/new-account"> Create one</AuthTextLink>
         </p>
       </div>

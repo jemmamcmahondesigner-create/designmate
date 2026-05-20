@@ -197,7 +197,7 @@ function NewAccountPageContent() {
         {inviteCode ? (
           <div className="w-full">
             <Alert
-              sentiment="base"
+              sentiment="success"
               prominence="low"
               title="You've been invited to join a workspace. Create your account to accept."
               dismissible={false}
@@ -270,10 +270,8 @@ function NewAccountPageContent() {
           <AuthSubmitButton label="Continue with email" loading={isLoading} />
         </form>
 
-        <p className="m-0 text-center text-[15px] leading-normal">
-          <span style={{ color: "var(--text-tertiary, #998c82)" }}>
-            Have an account already?
-          </span>
+        <p className="auth-footer-text">
+          Have an account already?
           <AuthTextLink href="/login"> Log in</AuthTextLink>
         </p>
       </div>

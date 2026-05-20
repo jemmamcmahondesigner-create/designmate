@@ -81,6 +81,52 @@
   pointer-events: none;
 }
 
+/* Welcome slide — progressive image load */
+.onboarding-welcome-fullscreen {
+  background: #faf8f6;
+}
+
+.onboarding-welcome-heading-centered {
+  opacity: 1;
+  transform: translate(0, 0);
+  transition:
+    opacity 0.4s ease,
+    transform 0.4s ease;
+}
+
+.onboarding-welcome-heading-split {
+  opacity: 1;
+  transform: translate(0, 0);
+  transition:
+    opacity 0.4s ease,
+    transform 0.4s ease;
+}
+
+.onboarding-welcome-image-panel {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.onboarding-welcome-image-panel.is-visible {
+  opacity: 1;
+}
+
+.onboarding-invite-dash {
+  position: absolute;
+  left: 50%;
+  right: 0;
+  height: 14px;
+  pointer-events: none;
+  z-index: 0;
+  background-image: repeating-linear-gradient(
+    to right,
+    #a0384f 0px,
+    #a0384f 14px,
+    transparent 14px,
+    transparent 38px
+  );
+}
+
 @media (prefers-reduced-motion: reduce) {
   .onboarding-copy-enter,
   .onboarding-slide1-heading-enter,

@@ -1,5 +1,9 @@
 import { TeammatesSettingsPage } from "@/components/settings/TeammatesSettingsPage";
-import { buildWorkspaceTeammates } from "@/lib/workspace/teammates";
+import {
+  appendPendingWorkspaceInvites,
+  buildWorkspaceTeammates,
+  mapPendingWorkspaceInvites,
+} from "@/lib/workspace/teammates";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createClient } from "@supabase/supabase-js";
@@ -70,10 +74,22 @@ export default async function SettingsTeammatesPage() {
       const visible = ((retry.data ?? []) as Record<string, unknown>[]).filter(
         (item) => !("deleted_at" in item) || item.deleted_at == null,
       );
-      const initialTeammates = buildWorkspaceTeammates(
+      const teammates = buildWorkspaceTeammates(
         (members ?? []) as Parameters<typeof buildWorkspaceTeammates>[0],
         visible,
       );
+
+      const { data: pendingInvites } = await supabase
+        .from("workspace_invites")
+        .select("id, email, role, created_at, invite_code")
+        .eq("workspace_id", activeWorkspaceId)
+        .eq("status", "pending");
+
+      const initialTeammates = appendPendingWorkspaceInvites(
+        teammates,
+        mapPendingWorkspaceInvites((pendingInvites ?? []) as Parameters<typeof mapPendingWorkspaceInvites>[0]),
+      );
+
       return (
         <TeammatesSettingsPage
           initialTeammates={initialTeammates}
@@ -88,9 +104,20 @@ export default async function SettingsTeammatesPage() {
     (item) => !("deleted_at" in item) || item.deleted_at == null,
   );
 
-  const initialTeammates = buildWorkspaceTeammates(
+  const teammates = buildWorkspaceTeammates(
     (members ?? []) as Parameters<typeof buildWorkspaceTeammates>[0],
     visibleContributors,
+  );
+
+  const { data: pendingInvites } = await supabase
+    .from("workspace_invites")
+    .select("id, email, role, created_at, invite_code")
+    .eq("workspace_id", activeWorkspaceId)
+    .eq("status", "pending");
+
+  const initialTeammates = appendPendingWorkspaceInvites(
+    teammates,
+    mapPendingWorkspaceInvites((pendingInvites ?? []) as Parameters<typeof mapPendingWorkspaceInvites>[0]),
   );
 
   return (
