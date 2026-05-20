@@ -33,7 +33,7 @@ export interface AlertProps {
 // Sentiment icon names from the DS Icon component
 const SENTIMENT_ICONS: Record<AlertSentiment, IconName> = {
   base: 'info',
-  success: 'check',
+  success: 'check-circle-fill',
   danger: 'status-blocked',
   warning: 'status-blocked',
 };

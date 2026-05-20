@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type TransitionEvent,
 } from "react";
+import { AuthMark } from "@/components/auth/AuthMark";
 import { Button } from "@/components/ui/ds";
 import { DesignTraceName } from "./DesignTraceName";
 import "./onboarding.css";
@@ -300,10 +301,17 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
 
   useEffect(() => {
     const firstSrc = SLIDE_IMAGES[0]?.src;
-    if (!firstSrc) return;
+    if (!firstSrc) {
+      setWelcomeImageLoaded(true);
+      return;
+    }
+
+    let cancelled = false;
+    const markLoaded = () => {
+      if (!cancelled) setWelcomeImageLoaded(true);
+    };
 
     const img = new Image();
-    const markLoaded = () => setWelcomeImageLoaded(true);
     img.onload = markLoaded;
     img.onerror = markLoaded;
     img.src = firstSrc;
@@ -311,10 +319,17 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       markLoaded();
     }
 
+    const timer = window.setTimeout(markLoaded, 2000);
+
     SLIDE_IMAGES.slice(1).forEach(({ src }) => {
       const preload = new Image();
       preload.src = src;
     });
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -577,7 +592,8 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       />
 
       {isWelcomeSlide && !showWelcomeSplit ? (
-        <div className="onboarding-welcome-fullscreen flex h-full w-full items-center justify-center">
+        <div className="onboarding-welcome-fullscreen flex h-full w-full flex-col items-center justify-center gap-8">
+          <AuthMark height={80} squareBlink />
           <WelcomeHeading centered />
         </div>
       ) : (

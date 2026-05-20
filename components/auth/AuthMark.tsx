@@ -2,12 +2,14 @@ export type AuthMarkProps = {
   className?: string;
   /** Visual height in px (default 80). */
   height?: number;
+  /** Subtle blink on the rose square while loading (onboarding intro). */
+  squareBlink?: boolean;
 };
 
 /**
  * DesignTrace DT mark — inline SVG for future animation.
  */
-export function AuthMark({ className, height = 80 }: AuthMarkProps) {
+export function AuthMark({ className, height = 80, squareBlink = false }: AuthMarkProps) {
   const width = Math.round((400 / 398) * height);
 
   return (
@@ -25,6 +27,7 @@ export function AuthMark({ className, height = 80 }: AuthMarkProps) {
         fill="#6B1E2E"
       />
       <path
+        className={squareBlink ? "logo-mark-square" : undefined}
         d="M332.941 112.256H400V179.375H332.941V112.256Z"
         fill="#A0384F"
       />

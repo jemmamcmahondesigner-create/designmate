@@ -577,7 +577,7 @@ export function OnboardingFlow({
         className="flex min-h-screen w-full items-center justify-center"
         style={{ background: "var(--surface-page, #faf8f6)" }}
       >
-        <AuthMark />
+        <AuthMark squareBlink />
       </main>
     );
   }

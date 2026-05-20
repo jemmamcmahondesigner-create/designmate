@@ -6,6 +6,11 @@ export type InviteEmailProps = {
   inviteUrl: string;
 };
 
+function getInviteLogoUrl(): string {
+  const base = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+  return `${base}/assets/logo/wordmark-expanded-default.svg`;
+}
+
 export function getInviteEmailHtml({
   inviterName,
   workspaceName,
@@ -14,6 +19,7 @@ export function getInviteEmailHtml({
   const safeInviter = escapeHtml(inviterName);
   const safeWorkspace = escapeHtml(workspaceName);
   const safeUrl = escapeHtml(inviteUrl);
+  const logoUrl = escapeHtml(getInviteLogoUrl());
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -29,8 +35,14 @@ export function getInviteEmailHtml({
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;width:100%;">
           <tr>
             <td style="background-color:#ffffff;border:1px solid #ede8e0;border-radius:12px;padding:32px 40px;">
-              <p style="margin:0 0 16px;font-size:20px;line-height:1.3;">
-                <span style="font-weight:800;color:#6b1e2e;">Design</span><span style="font-weight:300;color:#a0384f;">Trace</span>
+              <p style="margin:0 0 16px;">
+                <img
+                  src="${logoUrl}"
+                  alt="DesignTrace"
+                  width="140"
+                  height="32"
+                  style="display:block;border:0;"
+                />
               </p>
               <hr style="border:none;border-top:1px solid #ede8e0;margin:0 0 24px;" />
               <h1 style="margin:0 0 16px;font-size:24px;font-weight:700;line-height:1.3;color:#6b1e2e;">

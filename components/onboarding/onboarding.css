@@ -81,6 +81,20 @@
   pointer-events: none;
 }
 
+@keyframes dt-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.logo-mark-square {
+  animation: dt-blink 1.2s ease-in-out infinite;
+}
+
 /* Welcome slide — progressive image load */
 .onboarding-welcome-fullscreen {
   background: #faf8f6;
