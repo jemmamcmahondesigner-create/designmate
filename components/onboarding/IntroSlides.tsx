@@ -37,8 +37,122 @@ const SUB_FONT = "clamp(16px, 2vw, 28px)";
 const INTRO_LOADING_MS = 3000;
 const INTRO_WELCOME_ANIM_MS = 800;
 const INTRO_WELCOME_SETTLE_MS = 1200;
-const INTRO_SPLIT_MS = 900;
+/** Right-panel slide-in duration (Phase 3). */
+const INTRO_SPLIT_MS = 1000;
 const INTRO_CONTENT_PAUSE_MS = 600;
+
+/** Scoped intro overrides (single-file edit); avoids relying on stale onboarding.css selectors. */
+const INTRO_UI_CSS = `
+@keyframes intro-logo-bounce-up {
+  0%   { transform: translateY(0px); }
+  45%  { transform: translateY(-72px); }
+  65%  { transform: translateY(-44px); }
+  80%  { transform: translateY(-60px); }
+  90%  { transform: translateY(-52px); }
+  100% { transform: translateY(-56px); }
+}
+
+.intro-ui-split {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  position: relative;
+  z-index: 2;
+}
+
+.intro-ui-left {
+  flex: 0 0 50%;
+  min-width: 0;
+  overflow: hidden;
+  background: #faf8f6;
+  display: flex;
+  align-items: center;
+  padding-left: 64px;
+  padding-right: 64px;
+}
+
+.intro-ui-heading-wrap {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 800ms ease, transform 800ms ease;
+}
+
+[data-intro-ui-phase="welcome-appear"] .intro-ui-heading-wrap,
+[data-intro-ui-phase="welcome-settle"] .intro-ui-heading-wrap,
+[data-intro-ui-phase="split"] .intro-ui-heading-wrap,
+[data-intro-ui-phase="content-ready"] .intro-ui-heading-wrap {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.intro-ui-right {
+  position: relative;
+  flex: 0 0 50%;
+  min-width: 0;
+  overflow: hidden;
+  background: #1a0810;
+  transform: translateX(100%);
+  opacity: 0;
+  transition: transform 1000ms cubic-bezier(0.25, 0.1, 0.25, 1), opacity 300ms ease;
+}
+
+[data-intro-ui-phase="split"] .intro-ui-right,
+[data-intro-ui-phase="content-ready"] .intro-ui-right {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.intro-ui-logo-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.intro-ui-logo-shift {
+  display: flex;
+  justify-content: center;
+}
+
+[data-intro-ui-phase="welcome-appear"] .intro-ui-logo-shift {
+  animation: intro-logo-bounce-up 1100ms ease-in-out forwards;
+}
+
+[data-intro-ui-phase="welcome-settle"] .intro-ui-logo-shift {
+  transform: translateY(-56px);
+}
+
+[data-intro-ui-phase="split"] .intro-ui-logo-shift,
+[data-intro-ui-phase="content-ready"] .intro-ui-logo-shift {
+  animation: none;
+  transform: translateY(-56px);
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.intro-ui-overlay-copy {
+  position: absolute;
+  top: 50%;
+  left: 40px;
+  right: 40px;
+  transform: translateY(-50%);
+  z-index: 1;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+[data-intro-ui-phase="content-ready"] .intro-ui-overlay-copy {
+  opacity: 1;
+  transition: opacity 500ms ease;
+}
+`;
 
 type TransitionState = "idle" | "wiping-in" | "revealing";
 
@@ -114,7 +228,7 @@ function ImageOverlayText({ className }: { className?: string }) {
     <h1
       className={`m-0 text-white ${className ?? ""}`}
       style={{
-        fontSize: 32,
+        fontSize: 48,
         fontWeight: 700,
         lineHeight: 1.15,
         letterSpacing: "-1.44px",
@@ -206,11 +320,12 @@ const SLIDE_COUNT = SLIDES.length;
 function ImagePanelContent({
   activeSlideIndex,
   showOverlay,
-  overlayClassName,
+  overlayWrapperClassName,
 }: {
   activeSlideIndex: number;
   showOverlay: boolean;
-  overlayClassName?: string;
+  /** Wrapper around overlay copy (intro uses layout-specific positioning). */
+  overlayWrapperClassName?: string;
 }) {
   const [failedIndices, setFailedIndices] = useState<Set<number>>(() => new Set());
 
@@ -254,7 +369,7 @@ function ImagePanelContent({
         );
       })}
       {showOverlay ? (
-        <div className={`intro-overlay-copy ${overlayClassName ?? ""}`.trim()}>
+        <div className={overlayWrapperClassName ?? "intro-overlay-copy"}>
           <ImageOverlayText />
         </div>
       ) : null}
@@ -265,14 +380,14 @@ function ImagePanelContent({
 function ImagePanelColumn({
   slideIndex,
   showOverlay,
-  overlayClassName,
+  overlayWrapperClassName,
   wipeAnchor,
   wipeWidth,
   onWipeTransitionEnd,
 }: {
   slideIndex: number;
   showOverlay: boolean;
-  overlayClassName?: string;
+  overlayWrapperClassName?: string;
   wipeAnchor: "left" | "right";
   wipeWidth: "0%" | "100%";
   onWipeTransitionEnd: (event: TransitionEvent<HTMLDivElement>) => void;
@@ -283,7 +398,7 @@ function ImagePanelColumn({
         <ImagePanelContent
           activeSlideIndex={slideIndex}
           showOverlay={showOverlay}
-          overlayClassName={overlayClassName}
+          overlayWrapperClassName={overlayWrapperClassName}
         />
         <div
           className={`onboarding-wipe onboarding-wipe-anchor-${wipeAnchor}`}
@@ -428,11 +543,14 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       setTransitionState("wiping-in");
       setWipeAnchor(currentSlide.imageOnLeft ? "right" : "left");
       setWipeWidth("0%");
+      if (slideIndex === 0) {
+        setSlideIndex(nextIndex);
+      }
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setWipeWidth("100%"));
       });
     },
-    [isTransitioning, isCompleting, reducedMotion, slideIndex, startCopyEnter],
+    [isTransitioning, isCompleting, reducedMotion, slideIndex],
   );
 
   const handleNext = useCallback(() => {
@@ -582,8 +700,8 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     .filter(Boolean)
     .join(" ");
 
-  const isWelcomeSlide = slideIndex === 0;
-  const introControlsVisible = !isWelcomeSlide || introPhase === "content-ready";
+  const isWelcomeIntroLayout = slideIndex === 0 && transitionState === "idle";
+  const introControlsVisible = !isWelcomeIntroLayout || introPhase === "content-ready";
   const introSlideButtonDisabled = isCompleting;
   const slideButtonDisabled = isTransitioning || isCompleting;
 
@@ -608,12 +726,14 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     </div>
   );
 
+  const introTrailHidden =
+    slideIndex === 0 && (introPhase === "split" || introPhase === "content-ready");
+
   return (
     <div
       ref={containerRef}
       className={[
         "fixed inset-0 z-50 h-screen w-screen cursor-auto",
-        `intro-phase-${introPhase}`,
         exiting || isCompleting ? "onboarding-intro-exit" : "",
       ]
         .filter(Boolean)
@@ -622,30 +742,37 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       <canvas
         ref={canvasRef}
         className="onboarding-cursor-trail-canvas"
-        style={{ zIndex: isWelcomeSlide ? 0 : 15 }}
+        style={{
+          zIndex: slideIndex === 0 ? 0 : 15,
+          opacity: introTrailHidden ? 0 : 1,
+          visibility: introTrailHidden ? "hidden" : "visible",
+        }}
         aria-hidden
       />
 
-      {isWelcomeSlide ? (
+      {isWelcomeIntroLayout ? (
         <>
-          <div className="intro-split-layout">
-            <div className="intro-split-left" aria-hidden />
-            <div className="intro-split-right bg-[#1a0810]">
-              <ImagePanelContent
-                activeSlideIndex={0}
-                showOverlay={slide.showImageOverlay}
-              />
-            </div>
-          </div>
-          <div className="intro-center-stage">
-            <div className="intro-logo-anchor">
-              <AuthMark height={80} squareBlink={introPhase === "loading"} />
-            </div>
-            {introPhase !== "loading" ? (
-              <div className="intro-welcome-anchor">
-                <WelcomeHeading />
+          <style dangerouslySetInnerHTML={{ __html: INTRO_UI_CSS }} />
+          <div data-intro-ui-phase={introPhase}>
+            <div className="intro-ui-split">
+              <div className="intro-ui-left">
+                <div className="intro-ui-heading-wrap">
+                  <WelcomeHeading />
+                </div>
               </div>
-            ) : null}
+              <div className="intro-ui-right">
+                <ImagePanelContent
+                  activeSlideIndex={0}
+                  showOverlay={slide.showImageOverlay}
+                  overlayWrapperClassName="intro-ui-overlay-copy"
+                />
+              </div>
+            </div>
+            <div className="intro-ui-logo-layer">
+              <div className="intro-ui-logo-shift">
+                <AuthMark height={80} squareBlink={introPhase === "loading"} />
+              </div>
+            </div>
           </div>
         </>
       ) : (
@@ -682,7 +809,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
             variant={buttonsOnDarkPanel ? "ghost-on-dark" : "ghost"}
             size="lg"
             label="Skip intro"
-            disabled={isWelcomeSlide ? introSlideButtonDisabled : slideButtonDisabled}
+            disabled={isWelcomeIntroLayout ? introSlideButtonDisabled : slideButtonDisabled}
             onClick={completeIntro}
             style={
               buttonsOnDarkPanel
@@ -697,8 +824,13 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
           label={isLastSlide ? "Get Started" : "Next"}
           icon="trailing"
           iconName="chevron-right"
-          disabled={isWelcomeSlide ? introSlideButtonDisabled : slideButtonDisabled}
-          onClick={handleNext}
+          disabled={isWelcomeIntroLayout ? introSlideButtonDisabled : slideButtonDisabled}
+          onClick={() => {
+            if (slideIndex === 0 && !isLastSlide) {
+              console.log("intro next clicked");
+            }
+            handleNext();
+          }}
           style={
             buttonsOnDarkPanel
               ? undefined
