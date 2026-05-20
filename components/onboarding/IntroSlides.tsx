@@ -46,11 +46,11 @@ const INTRO_CONTENT_PAUSE_MS = 600;
 const INTRO_UI_CSS = `
 @keyframes intro-logo-bounce-up {
   0%   { transform: translate(-50%, -50%) translateY(0px); }
-  45%  { transform: translate(-50%, -50%) translateY(-72px); }
-  65%  { transform: translate(-50%, -50%) translateY(-44px); }
-  80%  { transform: translate(-50%, -50%) translateY(-60px); }
-  90%  { transform: translate(-50%, -50%) translateY(-52px); }
-  100% { transform: translate(-50%, -50%) translateY(-56px); }
+  45%  { transform: translate(-50%, -50%) translateY(-100px); }
+  65%  { transform: translate(-50%, -50%) translateY(-65px); }
+  80%  { transform: translate(-50%, -50%) translateY(-88px); }
+  90%  { transform: translate(-50%, -50%) translateY(-78px); }
+  100% { transform: translate(-50%, -50%) translateY(-81px); }
 }
 
 /* ── STATE A: full-screen cream (loading → welcome-settle) ── */
@@ -75,7 +75,14 @@ const INTRO_UI_CSS = `
 }
 
 [data-intro-ui-phase="welcome-settle"] .intro-state-a-logo {
-  transform: translate(-50%, -50%) translateY(-56px);
+  transform: translate(-50%, -50%) translateY(-81px);
+}
+
+[data-intro-ui-phase="split"] .intro-state-a-logo {
+  opacity: 0;
+  transform: translate(-50%, -50%) translateY(-81px);
+  animation: none;
+  transition: opacity 300ms ease;
 }
 
 .intro-state-a-heading {
@@ -86,7 +93,7 @@ const INTRO_UI_CSS = `
   margin: 0;
   opacity: 0;
   transform: translate(-50%, calc(-50% + 20px));
-  transition: opacity 800ms ease, transform 800ms ease;
+  transition: opacity 800ms ease, transform 800ms ease, left 900ms cubic-bezier(0.25, 0.1, 0.25, 1);
   pointer-events: none;
   max-width: none;
   white-space: normal;
@@ -98,6 +105,12 @@ const INTRO_UI_CSS = `
 [data-intro-ui-phase="welcome-settle"] .intro-state-a-heading {
   opacity: 1;
   transform: translate(-50%, -50%);
+}
+
+[data-intro-ui-phase="split"] .intro-state-a-heading {
+  opacity: 1;
+  left: 64px;
+  transform: translate(0, -50%);
 }
 
 /* ── STATE B: two-panel (split → content-ready) ── */
@@ -114,15 +127,19 @@ const INTRO_UI_CSS = `
   overflow: hidden;
   background: #faf8f6;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   padding-left: 64px;
+  padding-right: 64px;
 }
 
 .intro-state-b-left h1 {
   font-size: 48px;
+  width: 100%;
   max-width: none;
   min-width: 0;
+  text-align: left;
   white-space: normal;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -142,7 +159,33 @@ const INTRO_UI_CSS = `
     opacity 300ms ease;
 }
 
-.intro-state-b-right.is-open {
+.intro-state-b-right.is-open,
+.intro-state-b-right.is-open-immediate {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.intro-state-b-right.is-open-immediate {
+  transition: none;
+}
+
+.intro-split-right-peek {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 50vw;
+  height: 100vh;
+  z-index: 3;
+  overflow: hidden;
+  background: #1a0810;
+  transform: translateX(100%);
+  opacity: 0;
+  transition:
+    transform 900ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    opacity 300ms ease;
+}
+
+.intro-split-right-peek.is-open {
   transform: translateX(0);
   opacity: 1;
 }
@@ -150,13 +193,14 @@ const INTRO_UI_CSS = `
 .intro-state-b-overlay {
   position: absolute;
   top: 50%;
-  left: 40px;
-  right: 40px;
-  transform: translateY(-50%);
+  left: 50%;
+  width: calc(100% - 80px);
+  transform: translate(-50%, -50%);
   z-index: 1;
   margin: 0;
   opacity: 0;
   pointer-events: none;
+  text-align: left;
   white-space: normal;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -252,7 +296,7 @@ function ImageOverlayText({ className }: { className?: string }) {
       className={`m-0 text-white ${className ?? ""}`}
       style={{
         fontSize: 48,
-        fontWeight: 700,
+        fontWeight: 400,
         lineHeight: 1.15,
         letterSpacing: "-1.44px",
         textShadow: "0 2px 12px rgba(0,0,0,0.4)",
@@ -262,11 +306,9 @@ function ImageOverlayText({ className }: { className?: string }) {
         flexShrink: 0,
       }}
     >
-      <span className="font-extrabold">your </span>
-      <span className="font-light" style={{ color: "#ebc5ed" }}>
-        ai
-      </span>
-      <span className="font-extrabold"> design memory</span>
+      <span style={{ fontWeight: 400 }}>your </span>
+      <span style={{ fontWeight: 400, color: "#ebc5ed" }}>ai </span>
+      <span style={{ fontWeight: 700 }}>design memory</span>
     </h1>
   );
 }
@@ -448,6 +490,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const [copyFadingOut, setCopyFadingOut] = useState(false);
   const [introPhase, setIntroPhase] = useState<IntroPhase>("loading");
   const [splitRightPanelOpen, setSplitRightPanelOpen] = useState(false);
+  const [splitLayoutReady, setSplitLayoutReady] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
 
   const slide = SLIDES[slideIndex];
@@ -491,14 +534,22 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   }, [reducedMotion]);
 
   useEffect(() => {
-    if (introPhase !== "split" && introPhase !== "content-ready") {
+    if (introPhase !== "split") {
       setSplitRightPanelOpen(false);
+      setSplitLayoutReady(false);
       return;
     }
+    setSplitLayoutReady(false);
     const frame = requestAnimationFrame(() => {
       requestAnimationFrame(() => setSplitRightPanelOpen(true));
     });
-    return () => cancelAnimationFrame(frame);
+    const layoutTimer = window.setTimeout(() => {
+      setSplitLayoutReady(true);
+    }, INTRO_SPLIT_MS);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(layoutTimer);
+    };
   }, [introPhase]);
 
   useEffect(() => {
@@ -673,12 +724,6 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
 
   const handleMouseMove = useCallback(
     (e: MouseEvent) => {
-      if (
-        slideIndex === 0 &&
-        (introPhase === "split" || introPhase === "content-ready")
-      ) {
-        return;
-      }
       const points = trailPointsRef.current;
       const last = points[points.length - 1];
       if (last) {
@@ -694,7 +739,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       }
       scheduleTrailDraw();
     },
-    [scheduleTrailDraw, slideIndex, introPhase],
+    [scheduleTrailDraw],
   );
 
   useEffect(() => {
@@ -708,13 +753,6 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     trailPointsRef.current = [];
     drawTrail();
   }, [slideIndex, drawTrail]);
-
-  useEffect(() => {
-    if (introPhase === "split" || introPhase === "content-ready") {
-      trailPointsRef.current = [];
-      drawTrail();
-    }
-  }, [introPhase, drawTrail]);
 
   useEffect(() => {
     if (transitionState !== "revealing" || reducedMotion) return;
@@ -739,8 +777,11 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const introStateA =
     introPhase === "loading" ||
     introPhase === "welcome-appear" ||
-    introPhase === "welcome-settle";
-  const introStateB = introPhase === "split" || introPhase === "content-ready";
+    introPhase === "welcome-settle" ||
+    (introPhase === "split" && !splitLayoutReady);
+  const introStateB = splitLayoutReady || introPhase === "content-ready";
+  const introSplitTransition =
+    introPhase === "split" && !splitLayoutReady;
   const introControlsVisible = !isWelcomeIntroLayout || introPhase === "content-ready";
   const introSlideButtonDisabled = isCompleting;
   const slideButtonDisabled = isTransitioning || isCompleting;
@@ -766,9 +807,6 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     </div>
   );
 
-  const introTrailHidden =
-    slideIndex === 0 && (introPhase === "split" || introPhase === "content-ready");
-
   return (
     <div
       ref={containerRef}
@@ -783,11 +821,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       <canvas
         ref={canvasRef}
         className="onboarding-cursor-trail-canvas"
-        style={{
-          zIndex: slideIndex === 0 ? 0 : 15,
-          opacity: introTrailHidden ? 0 : 1,
-          visibility: introTrailHidden ? "hidden" : "visible",
-        }}
+        style={{ zIndex: 15 }}
         aria-hidden
       />
 
@@ -807,19 +841,24 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
                 ) : null}
               </div>
             ) : null}
+            {introSplitTransition ? (
+              <div
+                className={[
+                  "intro-split-right-peek",
+                  splitRightPanelOpen ? "is-open" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
+                <ImagePanelContent activeSlideIndex={0} showOverlay={false} />
+              </div>
+            ) : null}
             {introStateB ? (
               <div className="intro-state-b">
                 <div className="intro-state-b-left">
                   <WelcomeHeading />
                 </div>
-                <div
-                  className={[
-                    "intro-state-b-right",
-                    splitRightPanelOpen ? "is-open" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                >
+                <div className="intro-state-b-right is-open-immediate">
                   <ImagePanelContent
                     activeSlideIndex={0}
                     showOverlay={slide.showImageOverlay}
