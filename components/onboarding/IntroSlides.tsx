@@ -35,10 +35,10 @@ const HEADING_FONT_WELCOME = "clamp(28px, 3.5vw, 48px)";
 const SUB_FONT = "clamp(16px, 2vw, 28px)";
 
 const INTRO_LOADING_MS = 3000;
-const INTRO_WELCOME_ANIM_MS = 600;
-const INTRO_WELCOME_SETTLE_MS = 800;
-const INTRO_SPLIT_MS = 700;
-const INTRO_CONTENT_PAUSE_MS = 500;
+const INTRO_WELCOME_ANIM_MS = 800;
+const INTRO_WELCOME_SETTLE_MS = 1200;
+const INTRO_SPLIT_MS = 900;
+const INTRO_CONTENT_PAUSE_MS = 600;
 
 type TransitionState = "idle" | "wiping-in" | "revealing";
 
@@ -520,6 +520,12 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
 
   const handleMouseMove = useCallback(
     (e: MouseEvent) => {
+      if (
+        slideIndex === 0 &&
+        (introPhase === "split" || introPhase === "content-ready")
+      ) {
+        return;
+      }
       const points = trailPointsRef.current;
       const last = points[points.length - 1];
       if (last) {
@@ -535,7 +541,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       }
       scheduleTrailDraw();
     },
-    [scheduleTrailDraw],
+    [scheduleTrailDraw, slideIndex, introPhase],
   );
 
   useEffect(() => {
@@ -549,6 +555,13 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     trailPointsRef.current = [];
     drawTrail();
   }, [slideIndex, drawTrail]);
+
+  useEffect(() => {
+    if (introPhase === "split" || introPhase === "content-ready") {
+      trailPointsRef.current = [];
+      drawTrail();
+    }
+  }, [introPhase, drawTrail]);
 
   useEffect(() => {
     if (transitionState !== "revealing" || reducedMotion) return;
@@ -571,6 +584,8 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
 
   const isWelcomeSlide = slideIndex === 0;
   const introControlsVisible = !isWelcomeSlide || introPhase === "content-ready";
+  const introSlideButtonDisabled = isCompleting;
+  const slideButtonDisabled = isTransitioning || isCompleting;
 
   const imageColumn = (
     <ImagePanelColumn
@@ -607,7 +622,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       <canvas
         ref={canvasRef}
         className="onboarding-cursor-trail-canvas"
-        style={{ zIndex: 0 }}
+        style={{ zIndex: isWelcomeSlide ? 0 : 15 }}
         aria-hidden
       />
 
@@ -667,7 +682,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
             variant={buttonsOnDarkPanel ? "ghost-on-dark" : "ghost"}
             size="lg"
             label="Skip intro"
-            disabled={isTransitioning || isCompleting}
+            disabled={isWelcomeSlide ? introSlideButtonDisabled : slideButtonDisabled}
             onClick={completeIntro}
             style={
               buttonsOnDarkPanel
@@ -682,7 +697,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
           label={isLastSlide ? "Get Started" : "Next"}
           icon="trailing"
           iconName="chevron-right"
-          disabled={isTransitioning || isCompleting}
+          disabled={isWelcomeSlide ? introSlideButtonDisabled : slideButtonDisabled}
           onClick={handleNext}
           style={
             buttonsOnDarkPanel
