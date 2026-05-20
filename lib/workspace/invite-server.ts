@@ -1,5 +1,10 @@
 import { createServiceClient } from "@/lib/supabase/admin";
 import { DESIGN_TRACE_RESEND_FROM, getInviteEmailHtml } from "@/lib/emails/invite-email";
+import {
+  isPaidPermissionLevel,
+  mapInvitePermissionLevel,
+  mapWorkspaceMemberRole,
+} from "@/lib/workspace/permissions";
 import type { InviteApiResponse } from "@/types/invites";
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -8,11 +13,9 @@ export function normalizeInviteEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/** @deprecated Use mapInvitePermissionLevel + mapWorkspaceMemberRole */
 export function mapInviteRole(role?: string | null): string {
-  const value = String(role ?? "member").trim().toLowerCase();
-  if (value === "admin") return "admin";
-  if (value === "viewer" || value === "reviewer") return "member";
-  return "member";
+  return mapWorkspaceMemberRole(mapInvitePermissionLevel(role));
 }
 
 export function getAppOrigin(): string {
@@ -87,6 +90,7 @@ export async function createWorkspaceInvite({
   email,
   name,
   role,
+  permissionLevel: permissionLevelInput,
   invitedByUserId,
   inviterName,
 }: {
@@ -94,12 +98,14 @@ export async function createWorkspaceInvite({
   email: string;
   name?: string;
   role?: string;
+  permissionLevel?: string;
   invitedByUserId: string;
   inviterName: string;
 }): Promise<InviteApiResponse> {
   const service = createServiceClient();
   const normalizedEmail = normalizeInviteEmail(email);
-  const memberRole = mapInviteRole(role);
+  const permissionLevel = mapInvitePermissionLevel(permissionLevelInput ?? role);
+  const memberRole = mapWorkspaceMemberRole(permissionLevel);
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();
 
   const { data: workspace } = await service
@@ -137,6 +143,40 @@ export async function createWorkspaceInvite({
       return { status: "error", message: memberError.message };
     }
 
+    const displayName =
+      (existingUser.user_metadata?.display_name as string | undefined)?.trim() ||
+      (existingUser.user_metadata?.full_name as string | undefined)?.trim() ||
+      name?.trim() ||
+      existingUser.email?.split("@")[0] ||
+      "Team member";
+
+    const { data: existingContributor } = await service
+      .from("contributors")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", existingUser.id)
+      .maybeSingle();
+
+    const contributorPayload = {
+      workspace_id: workspaceId,
+      user_id: existingUser.id,
+      name: displayName,
+      email: normalizedEmail,
+      role: role?.trim() || null,
+      permission_level: permissionLevel,
+      is_paid: isPaidPermissionLevel(permissionLevel),
+      project_id: null as string | null,
+    };
+
+    if (existingContributor?.id) {
+      await service
+        .from("contributors")
+        .update(contributorPayload)
+        .eq("id", existingContributor.id);
+    } else {
+      await service.from("contributors").insert(contributorPayload);
+    }
+
     return { status: "added", user_id: existingUser.id };
   }
 
@@ -148,7 +188,7 @@ export async function createWorkspaceInvite({
       {
         workspace_id: workspaceId,
         email: normalizedEmail,
-        role: memberRole,
+        role: permissionLevel,
         invited_by: invitedByUserId,
         invite_code: inviteCode,
         status: "pending",

@@ -1,0 +1,54 @@
+/* Teammates table — kebab trigger (overrides Table .kebabCell button resets) */
+
+.teammateKebabCell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 4px;
+  box-sizing: border-box;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+:global(tr:hover) .teammateKebabCell,
+:global(tr[class*="rowSelected"]) .teammateKebabCell {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.teammateKebabCell :global(button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #2e1c1c;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  font-family: "Plus Jakarta Sans", sans-serif;
+}
+
+.teammateKebabCell :global(button:hover:not(:disabled)) {
+  background: var(--surface-card-recessed, #f3efe9);
+}
+
+.teammateKebabCell :global(button:active:not(:disabled)) {
+  background: #e4ddd3;
+}
+
+.teammateKebabCell :global(button:focus-visible) {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(107, 30, 46, 0.12);
+}
+
+.teammateKebabCell :global(button:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

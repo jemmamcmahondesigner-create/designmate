@@ -1,4 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  isPaidPermissionLevel,
+  type WorkspacePermissionLevel,
+} from "@/lib/workspace/permissions";
 
 type EnsureContributorProfileInput = {
   userId: string;
@@ -6,18 +10,27 @@ type EnsureContributorProfileInput = {
   displayName: string;
   role: string | null;
   activeWorkspaceId: string | null;
+  permissionLevel?: WorkspacePermissionLevel;
 };
 
 export async function ensureContributorProfile(
   supabase: SupabaseClient,
   input: EnsureContributorProfileInput,
 ): Promise<void> {
-  const { userId, email, displayName, role, activeWorkspaceId } = input;
+  const {
+    userId,
+    email,
+    displayName,
+    role,
+    activeWorkspaceId,
+    permissionLevel = "admin",
+  } = input;
   if (!activeWorkspaceId || !displayName.trim()) return;
 
   const name = displayName.trim();
   const roleValue = role?.trim() || null;
   const emailValue = email?.trim() || null;
+  const isPaid = isPaidPermissionLevel(permissionLevel);
 
   let existingId: string | null = null;
 
@@ -49,8 +62,8 @@ export async function ensureContributorProfile(
     email: emailValue,
     role: roleValue,
     project_id: null as string | null,
-    permission_level: "admin" as const,
-    is_paid: true,
+    permission_level: permissionLevel,
+    is_paid: isPaid,
   };
 
   if (existingId) {

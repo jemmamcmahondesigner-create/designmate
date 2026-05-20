@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Avatar,
   Button,
   Checkbox,
@@ -11,8 +12,10 @@ import {
   Select,
 } from "@/components/ui/ds";
 import { useToast } from "@/components/Toast";
+import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
+import { canAddTeammates } from "@/lib/workspace/permissions";
 import { sendWorkspaceInvite } from "@/lib/workspace/invite-client";
 import { inviteToastMessage } from "@/lib/workspace/invite-toast";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
@@ -32,6 +35,8 @@ export function ContributorsSection({
   initialContributors,
 }: ContributorsSectionProps) {
   const { showToast } = useToast();
+  const { permissionLevel, loading: permissionLoading } = useActiveWorkspacePermission();
+  const canManageTeammates = canAddTeammates(permissionLevel);
   const [contributors, setContributors] =
     useState<ProjectContributor[]>(initialContributors);
   const [allContributors, setAllContributors] =
@@ -243,6 +248,7 @@ export function ContributorsSection({
         }}
         ref={anchorRef}
       >
+        {canManageTeammates ? (
         <button
           type="button"
           onClick={() => setMenuOpen((prev) => !prev)}
@@ -269,8 +275,9 @@ export function ContributorsSection({
           <Icon name="plus" size={14} />
           Add a contributor
         </button>
+        ) : null}
 
-        {menuOpen && (
+        {canManageTeammates && menuOpen && (
           <div
             style={{
               flex: 1,
@@ -386,6 +393,7 @@ export function ContributorsSection({
                 <button
                   type="button"
                   onClick={() => {
+                    if (!canManageTeammates) return;
                     setMenuOpen(false);
                     setContributorModalOpen(true);
                   }}
@@ -458,6 +466,7 @@ export function ContributorsSection({
               size="sm"
               label="Create"
               disabled={
+                !canManageTeammates ||
                 !newContributorName.trim() ||
                 isSaving ||
                 Boolean(emailExistsError)
@@ -466,6 +475,7 @@ export function ContributorsSection({
                 const name = newContributorName.trim();
                 const email = newContributorEmail.trim();
                 if (!name || isSaving || emailExistsError) return;
+                if (!canManageTeammates) return;
                 setIsSaving(true);
                 const supabase = createSupabaseBrowserClient();
                 const activeWorkspaceId = await getActiveWorkspaceId(supabase);
@@ -475,7 +485,8 @@ export function ContributorsSection({
                     workspace_id: activeWorkspaceId,
                     email,
                     name,
-                    role: "viewer",
+                    role: newContributorRole.trim() || undefined,
+                    permission_level: "reviewer",
                   });
                   if (inviteResult.status === "error") {
                     setIsSaving(false);
@@ -529,6 +540,14 @@ export function ContributorsSection({
           </div>
         }
       >
+        {!canManageTeammates && !permissionLoading ? (
+          <Alert
+            sentiment="warning"
+            prominence="low"
+            title="Only editors and admins can add new teammates."
+            dismissible={false}
+          />
+        ) : null}
         <Input
           label="Name"
           size="sm"

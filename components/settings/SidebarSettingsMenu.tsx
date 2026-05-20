@@ -160,7 +160,7 @@ export function SidebarSettingsMenu({
         <div style={footerIdentityRowStyle}>
           <div style={{ minWidth: 0, flex: "1 1 0" }}>
             <p style={footerNameStyle}>{displayName}</p>
-            <p style={footerRoleStyle}>{roleLabel}</p>
+            {roleLabel.trim() ? <p style={footerRoleStyle}>{roleLabel}</p> : null}
           </div>
           <span aria-hidden="true">
             <Avatar name={displayName} size="lg" />

@@ -1,13 +1,20 @@
+import {
+  isPaidPermissionLevel,
+  normalizeWorkspacePermission,
+  type WorkspacePermissionLevel,
+} from "@/lib/workspace/permissions";
+
 export type WorkspaceTeammate = {
   id: string;
   name: string;
   email: string | null;
   roleId: string | null;
   roleName: string | null;
-  permissionLevel: "admin" | "editor" | "reviewer";
+  permissionLevel: WorkspacePermissionLevel;
   isPaid: boolean;
   isPending: boolean;
   memberId?: string;
+  userId?: string | null;
 };
 
 type WorkspaceMemberRow = {
@@ -23,9 +30,7 @@ type ContributorRow = Record<string, unknown>;
 
 function mapContributorToTeammate(item: ContributorRow): Omit<WorkspaceTeammate, "isPending" | "memberId"> {
   const roleJoin = item.contributor_roles as { name?: string } | null;
-  const permission = String(item.permission_level ?? "editor").toLowerCase();
-  const permissionLevel: "admin" | "editor" | "reviewer" =
-    permission === "admin" || permission === "reviewer" ? permission : "editor";
+  const permissionLevel = normalizeWorkspacePermission(item.permission_level);
   const roleNameFromJoin = roleJoin?.name ?? null;
   const roleName =
     roleNameFromJoin && String(roleNameFromJoin).trim() !== ""
@@ -41,12 +46,13 @@ function mapContributorToTeammate(item: ContributorRow): Omit<WorkspaceTeammate,
     roleId: item.role_id == null ? null : String(item.role_id),
     roleName,
     permissionLevel,
-    isPaid: item.is_paid == null ? true : Boolean(item.is_paid),
+    isPaid: isPaidPermissionLevel(permissionLevel),
+    userId: item.user_id == null ? null : String(item.user_id),
   };
 }
 
-function memberPermissionLevel(memberRole: string): "admin" | "editor" | "reviewer" {
-  return memberRole === "admin" ? "admin" : "editor";
+function memberPermissionLevel(memberRole: string): WorkspacePermissionLevel {
+  return memberRole === "admin" ? "admin" : "reviewer";
 }
 
 export function buildWorkspaceTeammates(
@@ -104,6 +110,7 @@ export function buildWorkspaceTeammates(
         ...mapped,
         isPending: false,
         memberId: member.id,
+        userId,
       });
       continue;
     }
@@ -111,12 +118,13 @@ export function buildWorkspaceTeammates(
     teammates.push({
       id: `member-${member.id}`,
       memberId: member.id,
+      userId,
       name: "Team member",
       email: member.invite_email,
       roleId: null,
       roleName: null,
       permissionLevel: memberPermissionLevel(member.role),
-      isPaid: false,
+      isPaid: isPaidPermissionLevel(memberPermissionLevel(member.role)),
       isPending: false,
     });
   }

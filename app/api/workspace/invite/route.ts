@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createWorkspaceInvite } from "@/lib/workspace/invite-server";
+import { assertCanManageTeammates } from "@/lib/workspace/assertCanManageTeammates";
 import type { InviteApiResponse } from "@/types/invites";
 
 export async function POST(request: Request) {
@@ -9,6 +10,7 @@ export async function POST(request: Request) {
     email?: string;
     name?: string;
     role?: string;
+    permission_level?: string;
   };
 
   try {
@@ -36,17 +38,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ status: "error", message: "Unauthorized." }, { status: 401 });
   }
 
-  const { data: adminMember } = await supabase
-    .from("workspace_members")
-    .select("role")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", user.id)
-    .eq("role", "admin")
-    .maybeSingle();
-
-  if (!adminMember) {
+  const access = await assertCanManageTeammates(supabase, user.id, workspaceId);
+  if (!access.allowed) {
     return NextResponse.json(
-      { status: "error", message: "Only workspace admins can send invites." },
+      { status: "error", message: access.message ?? "Forbidden." },
       { status: 403 },
     );
   }
@@ -61,6 +56,7 @@ export async function POST(request: Request) {
     email,
     name: body.name,
     role: body.role,
+    permissionLevel: body.permission_level,
     invitedByUserId: user.id,
     inviterName,
   });

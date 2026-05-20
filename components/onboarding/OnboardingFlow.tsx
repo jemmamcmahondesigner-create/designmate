@@ -206,7 +206,6 @@ export function OnboardingFlow({
         setStoredInviteCode(effectiveInviteCode);
         setIsInvited(true);
         setInviteLink(effectiveInviteCode);
-        setPhase("steps");
 
         const details = await fetchInviteDetails(effectiveInviteCode);
         if (details?.workspace_name) {
@@ -218,7 +217,6 @@ export function OnboardingFlow({
         if (invitedId) {
           setIsInvited(true);
           setInviteWorkspaceId(invitedId);
-          setPhase("steps");
 
           const { data: ws } = await supabase
             .from("workspaces")
@@ -248,43 +246,61 @@ export function OnboardingFlow({
     }
   }, [step, isInHouseTeam, company]);
 
-  const persistProfile = useCallback(async () => {
-    const supabase = createSupabaseBrowserClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    const designLabel =
-      DESIGN_WORK_OPTIONS.find((o) => o.value === designType)?.label ?? "";
-    const envLabel = WORK_ENV_OPTIONS.find((o) => o.value === workEnv)?.label ?? "";
+  const persistProfile = useCallback(
+    async (options?: {
+      workspaceId?: string;
+      permissionLevel?: "admin" | "editor" | "reviewer";
+    }) => {
+      const supabase = createSupabaseBrowserClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const designLabel =
+        DESIGN_WORK_OPTIONS.find((o) => o.value === designType)?.label ?? "";
+      const envLabel = WORK_ENV_OPTIONS.find((o) => o.value === workEnv)?.label ?? "";
 
-    const resolvedWorkspaceId =
-      activeWorkspaceId ??
-      getActiveWorkspaceIdFromUser(user) ??
-      (user?.user_metadata?.workspace_id as string | undefined) ??
-      null;
+      const resolvedWorkspaceId =
+        options?.workspaceId ??
+        activeWorkspaceId ??
+        getActiveWorkspaceIdFromUser(user) ??
+        (user?.user_metadata?.workspace_id as string | undefined) ??
+        null;
 
-    await supabase.auth.updateUser({
-      data: {
-        onboarding_complete: true,
-        display_name: name.trim(),
-        role: role.trim() || null,
-        company: company.trim() || null,
-        designer_type: designLabel || null,
-        work_environment: envLabel || null,
-        design_context: designContext.trim() || null,
-      },
-    });
+      const trimmedName = name.trim();
+      const permissionLevel = options?.permissionLevel ?? "admin";
 
-    if (user?.id) {
-      await ensureContributorProfile(supabase, {
-        userId: user.id,
-        email: user.email ?? inviteEmail ?? email ?? null,
-        displayName: name.trim(),
-        role: role.trim() || null,
-        activeWorkspaceId: resolvedWorkspaceId,
+      await supabase.auth.updateUser({
+        data: {
+          onboarding_complete: true,
+          display_name: trimmedName,
+          full_name: trimmedName,
+          role: role.trim() || null,
+          company: company.trim() || null,
+          designer_type: designLabel || null,
+          work_environment: envLabel || null,
+          design_context: designContext.trim() || null,
+          ...(resolvedWorkspaceId
+            ? {
+                active_workspace_id: resolvedWorkspaceId,
+                workspace_id: resolvedWorkspaceId,
+              }
+            : {}),
+        },
       });
-    }
-  }, [name, role, company, designType, workEnv, designContext, activeWorkspaceId, inviteEmail, email]);
+
+      if (user?.id && resolvedWorkspaceId) {
+        await ensureContributorProfile(supabase, {
+          userId: user.id,
+          email: user.email ?? inviteEmail ?? email ?? null,
+          displayName: trimmedName,
+          role: role.trim() || null,
+          activeWorkspaceId: resolvedWorkspaceId,
+          permissionLevel,
+        });
+      }
+    },
+    [name, role, company, designType, workEnv, designContext, activeWorkspaceId, inviteEmail, email],
+  );
 
   const joinWorkspace = useCallback(
     async (inviteCode: string) => {
@@ -427,12 +443,17 @@ export function OnboardingFlow({
     }
 
     try {
-      await persistProfile();
       const result = await acceptWorkspaceInvite(inviteCode);
-      if (!result.success) {
+      if (!result.success || !result.workspace_id) {
         setInvitedJoinError(true);
         return;
       }
+
+      await persistProfile({
+        workspaceId: result.workspace_id,
+        permissionLevel: "reviewer",
+      });
+
       window.localStorage.removeItem(INVITE_CODE_STORAGE_KEY);
       router.push("/projects");
     } finally {
@@ -473,7 +494,7 @@ export function OnboardingFlow({
     );
   }
 
-  if (phase === "intro" && !isInvited) {
+  if (phase === "intro") {
     return (
       <IntroSlides
         reducedMotion={reducedMotion}
@@ -482,18 +503,18 @@ export function OnboardingFlow({
     );
   }
 
-  const invitedStep3Only = isInvited && step === 3;
+  const invitedConfirmationStep = isInvited && step === 3;
 
   return (
     <main className="onboarding-steps-enter relative flex min-h-screen w-screen flex-col overflow-hidden">
-      {isInvited && step === 3 ? (
+      {invitedConfirmationStep ? (
         <div
           style={{
             position: "absolute",
             left: "50%",
             top: "50%",
             right: 0,
-            height: "2px",
+            height: 0,
             borderTop: "2px dashed #e4ddd3",
             transform: "translateY(-50%)",
             pointerEvents: "none",
@@ -502,15 +523,15 @@ export function OnboardingFlow({
           aria-hidden
         />
       ) : null}
-      {invitedStep3Only ? <ProgressBar step={step} total={totalSteps} /> : null}
       <div className="flex min-h-0 flex-1 w-full">
       <div
-        className={`relative flex min-h-screen shrink-0 flex-col items-center justify-center px-16 ${
-          invitedStep3Only ? "w-full" : "w-1/2"
-        }`}
+        className="relative z-[1] flex min-h-screen w-1/2 shrink-0 flex-col items-center justify-center px-16"
         style={{ background: "var(--surface-page, #faf8f6)" }}
       >
-        <AuthMark className="absolute left-16 top-16" height={48} />
+        <AuthMark
+          className={`absolute left-16 ${isInvited ? "top-0" : "top-16"}`}
+          height={48}
+        />
 
         <div className="w-full">
           {step === 1 && (
@@ -596,10 +617,12 @@ export function OnboardingFlow({
                 <h1
                   className="m-0"
                   style={{
+                    margin: 0,
                     fontSize: 48,
+                    fontWeight: 400,
                     lineHeight: 1.15,
                     letterSpacing: "-1.44px",
-                    color: "var(--text-heading, #6b1e2e)",
+                    color: "#6b1e2e",
                   }}
                 >
                   <span style={{ fontWeight: 800 }}>You&apos;ve been invited to join </span>
@@ -611,7 +634,7 @@ export function OnboardingFlow({
                 Your team is already building a shared design memory. Join the workspace to access
                 projects, reviews, feedback and decisions.
               </LeftSub>
-              <div className="mt-10 flex flex-col gap-3">
+              <div className="mt-10 flex flex-col items-start gap-3">
                 {invitedJoinError ? (
                   <p
                     className="m-0 text-[12px] leading-[1.5]"
@@ -623,9 +646,11 @@ export function OnboardingFlow({
                 <Button
                   variant="accent"
                   size="lg"
-                  label="Let's Go!"
+                  label={submitting ? "Joining..." : "Let's Go!"}
                   disabled={submitting}
                   onClick={() => void handleInvitedJoin()}
+                  className="w-fit"
+                  style={{ width: "fit-content" }}
                 />
               </div>
             </>
@@ -656,7 +681,14 @@ export function OnboardingFlow({
         </div>
       </div>
 
-      {!invitedStep3Only ? (
+      {invitedConfirmationStep ? (
+        <div
+          className="flex w-1/2 min-h-screen flex-col"
+          style={{ background: "var(--surface-page, #faf8f6)" }}
+        >
+          <ProgressBar step={step} total={totalSteps} />
+        </div>
+      ) : (
         <div className="flex w-1/2 min-h-screen flex-col bg-white">
           <ProgressBar step={step} total={totalSteps} />
 
@@ -984,7 +1016,7 @@ export function OnboardingFlow({
             </div>
           </div>
         </div>
-      ) : null}
+      )}
       </div>
     </main>
   );

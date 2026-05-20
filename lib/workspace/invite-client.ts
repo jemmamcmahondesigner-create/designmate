@@ -5,6 +5,7 @@ export async function sendWorkspaceInvite(payload: {
   email: string;
   name?: string;
   role?: string;
+  permission_level?: string;
 }): Promise<InviteApiResponse> {
   const response = await fetch("/api/workspace/invite", {
     method: "POST",

@@ -8,9 +8,11 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import teammateKebabStyles from "./TeammatesSettingsPage.module.css";
 import { DiscardChangesModal } from "@/components/DiscardChangesModal";
 import { useToast } from "@/components/Toast";
 import {
+  Alert,
   Button,
   Icon,
   IconSquareButton,
@@ -21,12 +23,21 @@ import {
   Select,
   Table,
   Tag,
+  Tooltip,
   type ColumnDef,
 } from "@/components/ui/ds";
 import { useRouter } from "next/navigation";
+import { useWorkspacePermission } from "@/hooks/useWorkspacePermission";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { sendWorkspaceInvite } from "@/lib/workspace/invite-client";
 import { inviteToastMessage } from "@/lib/workspace/invite-toast";
+import {
+  canAddTeammates,
+  canEditTeammatePermission,
+  canShowTeammateKebabMenu,
+  isPaidPermissionLevel,
+  normalizeWorkspacePermission,
+} from "@/lib/workspace/permissions";
 
 type Teammate = {
   id: string;
@@ -38,6 +49,7 @@ type Teammate = {
   isPaid: boolean;
   isPending?: boolean;
   memberId?: string;
+  userId?: string | null;
 };
 
 type RoleOption = { id: string; name: string };
@@ -51,11 +63,22 @@ type FormState = {
 
 const PAGE_SIZE = 10;
 
-/** Designer → editor; any other role → reviewer */
-function permissionLevelFromRoleName(roleName: string | null | undefined): "editor" | "reviewer" {
-  const n = String(roleName ?? "").trim().toLowerCase();
-  return n === "designer" ? "editor" : "reviewer";
-}
+const PAID_SEAT_TOOLTIP =
+  "Admin and Editor seats will require a paid subscription in a future update. Reviewer access is always free.";
+
+const PERMISSION_TOOLTIPS: Record<Teammate["permissionLevel"], string> = {
+  admin:
+    "Full access. Can manage teammates, projects, reviews, and workspace settings.",
+  editor:
+    "Can create and edit projects and reviews. Cannot manage workspace settings.",
+  reviewer:
+    "Can view and provide feedback on reviews. Cannot create projects or invite teammates.",
+};
+
+const EMPTY_CELL_STYLE: CSSProperties = {
+  color: "var(--text-disabled, #c9c0b4)",
+  fontSize: 13,
+};
 
 export function TeammatesSettingsPage({
   initialTeammates,
@@ -77,8 +100,11 @@ export function TeammatesSettingsPage({
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
   const roleOptionsRef = useRef<RoleOption[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
   const router = useRouter();
+  const { permissionLevel, userId: currentUserId, loading: permissionLoading } =
+    useWorkspacePermission(activeWorkspaceId);
+  const canManageTeammates = canAddTeammates(permissionLevel);
+  const canEditPermission = canEditTeammatePermission(permissionLevel);
 
   const [addOpen, setAddOpen] = useState(false);
   const [editRow, setEditRow] = useState<Teammate | null>(null);
@@ -91,24 +117,6 @@ export function TeammatesSettingsPage({
     roleId: "",
     permissionLevel: "reviewer",
   });
-
-  useEffect(() => {
-    if (!activeWorkspaceId) return;
-    const supabase = createSupabaseBrowserClient();
-    void (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase
-        .from("workspace_members")
-        .select("role")
-        .eq("workspace_id", activeWorkspaceId)
-        .eq("user_id", user.id)
-        .maybeSingle();
-      setIsAdmin(String((data as { role?: string } | null)?.role ?? "") === "admin");
-    })();
-  }, [activeWorkspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -163,7 +171,8 @@ export function TeammatesSettingsPage({
       return (
         form.name.trim() !== editRow.name ||
         form.email.trim() !== (editRow.email ?? "") ||
-        form.roleId !== (editRow.roleId ?? "")
+        form.roleId !== (editRow.roleId ?? "") ||
+        form.permissionLevel !== editRow.permissionLevel
       );
     }
     return false;
@@ -253,7 +262,12 @@ export function TeammatesSettingsPage({
       label: "Role",
       width: "flex",
       cellType: "text",
-      render: (row) => row.roleName ?? "—",
+      render: (row) =>
+        row.roleName?.trim() ? (
+          row.roleName
+        ) : (
+          <span style={EMPTY_CELL_STYLE}>—</span>
+        ),
     },
     {
       key: "email",
@@ -266,7 +280,7 @@ export function TeammatesSettingsPage({
             {row.email}
           </a>
         ) : (
-          <span style={{ color: "var(--text-disabled, #c9c0b4)", fontSize: 13 }}>—</span>
+          <span style={EMPTY_CELL_STYLE}>—</span>
         ),
     },
     {
@@ -278,7 +292,15 @@ export function TeammatesSettingsPage({
         row.isPending ? (
           <Tag label="Pending" variant="neutral" size="sm" />
         ) : (
-          <span style={permissionPillStyle}>{labelPermission(row.permissionLevel)}</span>
+          <Tooltip
+            label={PERMISSION_TOOLTIPS[row.permissionLevel]}
+            position="top"
+            passThroughFocus
+          >
+            <span style={permissionPillStyle} tabIndex={0}>
+              {labelPermission(row.permissionLevel)}
+            </span>
+          </Tooltip>
         ),
     },
     {
@@ -288,33 +310,43 @@ export function TeammatesSettingsPage({
       cellType: "badge",
       render: (row) =>
         row.isPaid ? (
-          <span style={paidIconWrapStyle}>
-            <Icon name="check-circle-fill" size={16} aria-hidden />
-          </span>
+          <Tooltip label={PAID_SEAT_TOOLTIP} position="left" passThroughFocus>
+            <span style={paidIconWrapStyle} tabIndex={0}>
+              <Icon name="check-circle-fill" size={16} aria-hidden />
+            </span>
+          </Tooltip>
         ) : null,
     },
     {
       key: "actions",
       label: "",
       width: 40,
-      cellType: "kebab",
+      align: "center",
+      cellType: "custom",
       render: (row) =>
-        row.isPending ? null : (
-          <>
+        row.isPending ||
+        !canShowTeammateKebabMenu(permissionLevel, {
+          rowUserId: row.userId ?? null,
+          currentUserId,
+        }) ? null : (
+          <span className={teammateKebabStyles.teammateKebabCell}>
             <IconSquareButton
               ref={(el) => {
                 actionRefs.current[row.id] = el;
               }}
               variant="ghost"
               icon="kebab"
+              iconSize={16}
               label="Teammate actions"
+              aria-expanded={openMenuId === row.id}
+              aria-haspopup="menu"
               onClick={() => setOpenMenuId((prev) => (prev === row.id ? null : row.id))}
             />
             <Menu
               open={openMenuId === row.id}
               onClose={() => setOpenMenuId(null)}
               anchorRef={{ current: actionRefs.current[row.id] as HTMLElement | null }}
-              align="left"
+              align="right"
               portal
               portalZIndex={100}
             >
@@ -327,15 +359,15 @@ export function TeammatesSettingsPage({
                 }}
               />
             </Menu>
-          </>
+          </span>
         ),
     },
   ];
 
   const permissionOptions = [
-    { value: "admin", label: "Admin" },
-    { value: "editor", label: "Editor" },
     { value: "reviewer", label: "Reviewer" },
+    { value: "editor", label: "Editor" },
+    { value: "admin", label: "Admin" },
   ];
 
   const openAdd = () => {
@@ -358,12 +390,7 @@ export function TeammatesSettingsPage({
   };
 
   const applyRoleIdToForm = (roleId: string) => {
-    const name = roleOptionsRef.current.find((r) => r.id === roleId)?.name ?? null;
-    setForm((prev) => ({
-      ...prev,
-      roleId,
-      permissionLevel: permissionLevelFromRoleName(name),
-    }));
+    setForm((prev) => ({ ...prev, roleId }));
   };
 
   const requestCloseForm = (mode: "add" | "edit") => {
@@ -393,11 +420,17 @@ export function TeammatesSettingsPage({
     }
 
     const roleName = roleOptionsRef.current.find((r) => r.id === form.roleId)?.name ?? null;
+    if (!canManageTeammates) {
+      setFormError("Only editors and admins can add new teammates.");
+      return;
+    }
+
     const result = await sendWorkspaceInvite({
       workspace_id: activeWorkspaceId,
       email: form.email.trim(),
       name: form.name.trim(),
-      role: roleName ?? "member",
+      role: roleName ?? undefined,
+      permission_level: form.permissionLevel,
     });
 
     if (result.status === "error") {
@@ -439,13 +472,19 @@ export function TeammatesSettingsPage({
       return;
     }
 
-    if (isAdmin && editRow.memberId) {
+    if (canEditPermission && editRow.memberId) {
       const workspaceMemberRole = permission_level === "admin" ? "admin" : "member";
       await supabase
         .from("workspace_members")
         .update({ role: workspaceMemberRole })
         .eq("id", editRow.memberId);
     }
+
+    const { error: paidError } = await supabase
+      .from("contributors")
+      .update({ is_paid: isPaidPermissionLevel(permission_level) })
+      .eq("id", editRow.id);
+    void paidError;
 
     upsertTeammate(mapTeammateRow(data as Record<string, unknown>));
     setEditRow(null);
@@ -474,7 +513,9 @@ export function TeammatesSettingsPage({
               Vital for working towards project goals and contributing to reviews.
             </p>
           </div>
-          <Button label="+ Teammate" variant="primary" size="sm" onClick={openAdd} />
+          {canManageTeammates ? (
+            <Button label="+ Teammate" variant="primary" size="sm" onClick={openAdd} />
+          ) : null}
         </div>
 
         <Table
@@ -512,74 +553,27 @@ export function TeammatesSettingsPage({
         }}
         footer={formFooter({
           primaryLabel: "Add Teammate",
-          primaryDisabled: !form.name.trim() || !form.email.trim(),
+          primaryDisabled:
+            !canManageTeammates || !form.name.trim() || !form.email.trim(),
           onCancel: () => requestCloseForm("add"),
           onPrimary: () => void createTeammate(),
         })}
       >
-        {formError ? (
-          <p role="alert" style={{ margin: 0, fontSize: 13, color: "#8b2020" }}>
-            {formError}
-          </p>
+        {!canManageTeammates && !permissionLoading ? (
+          <Alert
+            sentiment="warning"
+            prominence="low"
+            title="Only editors and admins can add new teammates."
+            dismissible={false}
+          />
         ) : null}
-        <Input
-          label="Name"
-          required
-          value={form.name}
-          onChange={(e) => {
-            setFormError(null);
-            setForm((prev) => ({ ...prev, name: e.target.value }));
-          }}
-          size="sm"
-        />
-        <Input
-          label="Email"
-          value={form.email}
-          onChange={(e) => {
-            setFormError(null);
-            setForm((prev) => ({ ...prev, email: e.target.value }));
-          }}
-          size="sm"
-        />
-        <Select
-          label="Role"
-          options={roleSelectOptions}
-          value={form.roleId || undefined}
-          onChange={(value) => {
-            setFormError(null);
-            applyRoleIdToForm(value);
-          }}
-          placeholder="Select role"
-          size="sm"
-          searchable={false}
-          creatable
-          onCreateOption={handleCreateRoleOption}
-          portaled
-        />
-      </Modal>
-
-      <Modal
-        open={Boolean(editRow)}
-        type="form"
-        size="md"
-        title="Edit Teammate"
-        onClose={() => requestCloseForm("edit")}
-        backdropClosable={!formDirty}
-        onEscapeWhenBackdropBlocked={() => {
-          setPendingClose("edit");
-          setDiscardOpen(true);
-        }}
-        footer={formFooter({
-          primaryLabel: "Save",
-          primaryDisabled: !form.name.trim(),
-          onCancel: () => requestCloseForm("edit"),
-          onPrimary: () => void updateTeammate(),
-        })}
-      >
-        {formError ? (
-          <p role="alert" style={{ margin: 0, fontSize: 13, color: "#8b2020" }}>
-            {formError}
-          </p>
+        {formError && canManageTeammates ? (
+          <Alert
+            sentiment="warning"
+            prominence="low"
+            title={formError}
+            dismissible={false}
+          />
         ) : null}
         <Input
           label="Name"
@@ -627,9 +621,102 @@ export function TeammatesSettingsPage({
             }));
           }}
           placeholder="Select permission"
-          disabled={!isAdmin}
           size="sm"
         />
+      </Modal>
+
+      <Modal
+        open={Boolean(editRow)}
+        type="form"
+        size="md"
+        title="Edit Teammate"
+        onClose={() => requestCloseForm("edit")}
+        backdropClosable={!formDirty}
+        onEscapeWhenBackdropBlocked={() => {
+          setPendingClose("edit");
+          setDiscardOpen(true);
+        }}
+        footer={formFooter({
+          primaryLabel: "Save",
+          primaryDisabled: !form.name.trim(),
+          onCancel: () => requestCloseForm("edit"),
+          onPrimary: () => void updateTeammate(),
+        })}
+      >
+        {formError ? (
+          <Alert
+            sentiment="warning"
+            prominence="low"
+            title={formError}
+            dismissible={false}
+          />
+        ) : null}
+        <Input
+          label="Name"
+          required
+          value={form.name}
+          onChange={(e) => {
+            setFormError(null);
+            setForm((prev) => ({ ...prev, name: e.target.value }));
+          }}
+          size="sm"
+        />
+        <Input
+          label="Email"
+          value={form.email}
+          onChange={(e) => {
+            setFormError(null);
+            setForm((prev) => ({ ...prev, email: e.target.value }));
+          }}
+          size="sm"
+        />
+        <Select
+          label="Role"
+          options={roleSelectOptions}
+          value={form.roleId || undefined}
+          onChange={(value) => {
+            setFormError(null);
+            applyRoleIdToForm(value);
+          }}
+          placeholder="Select role"
+          size="sm"
+          searchable={false}
+          creatable
+          onCreateOption={handleCreateRoleOption}
+          portaled
+        />
+        {canEditPermission ? (
+          <Select
+            label="Permission Level"
+            options={permissionOptions}
+            value={form.permissionLevel}
+            onChange={(value) => {
+              setFormError(null);
+              setForm((prev) => ({
+                ...prev,
+                permissionLevel: value as "admin" | "editor" | "reviewer",
+              }));
+            }}
+            placeholder="Select permission"
+            size="sm"
+          />
+        ) : (
+          <Tooltip
+            label="Only admins can change permission levels."
+            position="top"
+            passThroughFocus
+          >
+            <Select
+              label="Permission Level"
+              options={permissionOptions}
+              value={form.permissionLevel}
+              onChange={() => {}}
+              placeholder="Select permission"
+              disabled
+              size="sm"
+            />
+          </Tooltip>
+        )}
       </Modal>
 
       <Modal
@@ -688,15 +775,10 @@ function mapTeammateRow(raw: Record<string, unknown>): Teammate {
     email: raw.email == null ? null : String(raw.email),
     roleId: raw.role_id == null ? null : String(raw.role_id),
     roleName: roleJoin?.name ?? (raw.role == null ? null : String(raw.role)),
-    permissionLevel: normalizePermission(raw.permission_level),
-    isPaid: raw.is_paid == null ? true : Boolean(raw.is_paid),
+    permissionLevel: normalizeWorkspacePermission(raw.permission_level),
+    isPaid: isPaidPermissionLevel(normalizeWorkspacePermission(raw.permission_level)),
+    userId: raw.user_id == null ? null : String(raw.user_id),
   };
-}
-
-function normalizePermission(value: unknown): Teammate["permissionLevel"] {
-  const normalized = String(value ?? "editor").toLowerCase();
-  if (normalized === "admin" || normalized === "reviewer") return normalized;
-  return "editor";
 }
 
 function labelPermission(value: Teammate["permissionLevel"]) {

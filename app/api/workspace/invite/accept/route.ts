@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
-import { mapInviteRole } from "@/lib/workspace/invite-server";
+import {
+  isPaidPermissionLevel,
+  mapInvitePermissionLevel,
+  mapWorkspaceMemberRole,
+} from "@/lib/workspace/permissions";
 
 export async function POST(request: Request) {
   let body: { invite_code?: string };
@@ -52,11 +56,14 @@ export async function POST(request: Request) {
     .eq("user_id", user.id)
     .maybeSingle();
 
+  const permissionLevel = mapInvitePermissionLevel(invite.role);
+  const memberRole = mapWorkspaceMemberRole(permissionLevel);
+
   if (!existingMember) {
     const { error: memberError } = await service.from("workspace_members").insert({
       workspace_id: invite.workspace_id,
       user_id: user.id,
-      role: mapInviteRole(invite.role),
+      role: memberRole,
       status: "active",
       invite_email: invite.email,
     });
@@ -67,6 +74,39 @@ export async function POST(request: Request) {
   }
 
   await service.from("workspace_invites").update({ status: "accepted" }).eq("id", invite.id);
+
+  const displayName =
+    (user.user_metadata?.display_name as string | undefined)?.trim() ||
+    (user.user_metadata?.full_name as string | undefined)?.trim() ||
+    user.email?.split("@")[0] ||
+    "Team member";
+
+  const { data: existingContributor } = await service
+    .from("contributors")
+    .select("id")
+    .eq("workspace_id", invite.workspace_id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  const contributorPayload = {
+    workspace_id: invite.workspace_id,
+    user_id: user.id,
+    name: displayName,
+    email: invite.email,
+    role: (user.user_metadata?.role as string | undefined)?.trim() || null,
+    permission_level: permissionLevel,
+    is_paid: isPaidPermissionLevel(permissionLevel),
+    project_id: null as string | null,
+  };
+
+  if (existingContributor?.id) {
+    await service
+      .from("contributors")
+      .update(contributorPayload)
+      .eq("id", existingContributor.id);
+  } else {
+    await service.from("contributors").insert(contributorPayload);
+  }
 
   const { error: metadataError } = await service.auth.admin.updateUserById(user.id, {
     user_metadata: {
