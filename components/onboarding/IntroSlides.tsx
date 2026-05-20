@@ -291,7 +291,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const [copyVisible, setCopyVisible] = useState(false);
   const [copyFadingOut, setCopyFadingOut] = useState(false);
   const [slide1Mounted, setSlide1Mounted] = useState(false);
-  const [welcomeImageLoaded, setWelcomeImageLoaded] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
 
   const slide = SLIDES[slideIndex];
@@ -300,36 +300,10 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const buttonsOnDarkPanel = !slide.imageOnLeft;
 
   useEffect(() => {
-    const firstSrc = SLIDE_IMAGES[0]?.src;
-    if (!firstSrc) {
-      setWelcomeImageLoaded(true);
-      return;
-    }
-
-    let cancelled = false;
-    const markLoaded = () => {
-      if (!cancelled) setWelcomeImageLoaded(true);
-    };
-
-    const img = new Image();
-    img.onload = markLoaded;
-    img.onerror = markLoaded;
-    img.src = firstSrc;
-    if (img.complete) {
-      markLoaded();
-    }
-
-    const timer = window.setTimeout(markLoaded, 2000);
-
-    SLIDE_IMAGES.slice(1).forEach(({ src }) => {
-      const preload = new Image();
-      preload.src = src;
-    });
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
+    const timer = window.setTimeout(() => {
+      setImageLoaded(true);
+    }, 300);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -339,10 +313,10 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   }, [reducedMotion, onComplete]);
 
   useEffect(() => {
-    if (slideIndex === 0 && !reducedMotion && welcomeImageLoaded) {
+    if (slideIndex === 0 && !reducedMotion && imageLoaded) {
       setSlide1Mounted(true);
     }
-  }, [slideIndex, reducedMotion, welcomeImageLoaded]);
+  }, [slideIndex, reducedMotion, imageLoaded]);
 
   const completeIntro = useCallback(() => {
     if (isCompleting) return;
@@ -555,7 +529,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     slide.showImageOverlay && slide1Mounted ? "onboarding-slide1-overlay-enter" : "";
 
   const isWelcomeSlide = slideIndex === 0;
-  const showWelcomeSplit = isWelcomeSlide && welcomeImageLoaded;
+  const showWelcomeSplit = isWelcomeSlide && imageLoaded;
 
   const imageColumn = (
     <ImagePanelColumn

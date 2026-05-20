@@ -4,7 +4,10 @@ import { ToastProvider } from "@/components/Toast";
 
 export const metadata: Metadata = {
   title: "DesignTrace",
-  description: "Multi-tenant B2B SaaS starter"
+  description: "Multi-tenant B2B SaaS starter",
+  icons: {
+    icon: "/assets/logo/mark-collapsed.svg",
+  },
 };
 
 export default function RootLayout({
