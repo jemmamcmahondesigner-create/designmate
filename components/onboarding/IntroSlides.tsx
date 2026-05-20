@@ -25,7 +25,6 @@ const SLIDE_IMAGES = [
 const IMAGE_FALLBACK_BACKGROUND =
   "radial-gradient(ellipse at 30% 50%, #a0384f 0%, #6b1e2e 40%, #2a0812 100%)";
 
-const SLIDE_COUNT = SLIDE_IMAGES.length;
 const MAX_TRAIL_POINTS = 40;
 const TRAIL_MIN_DISTANCE_PX = 24;
 const TRAIL_SQUARE_SIZE = 16;
@@ -185,6 +184,8 @@ const SLIDES: SlideConfig[] = [
   },
 ];
 
+const SLIDE_COUNT = SLIDES.length;
+
 function ImagePanelContent({
   activeSlideIndex,
   showOverlay,
@@ -223,7 +224,7 @@ function ImagePanelContent({
             key={image.src}
             src={image.src}
             alt={image.alt}
-            className="absolute inset-0 h-full w-full object-cover"
+            className="onboarding-slide-image absolute inset-0 h-full w-full object-cover"
             style={{
               opacity: isActive ? 1 : 0,
               pointerEvents: "none",
@@ -312,12 +313,6 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     }
   }, [reducedMotion, onComplete]);
 
-  useEffect(() => {
-    if (slideIndex === 0 && !reducedMotion && imageLoaded) {
-      setSlide1Mounted(true);
-    }
-  }, [slideIndex, reducedMotion, imageLoaded]);
-
   const completeIntro = useCallback(() => {
     if (isCompleting) return;
     setIsCompleting(true);
@@ -337,6 +332,13 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       setCopyVisible(true);
     });
   }, []);
+
+  useEffect(() => {
+    if (slideIndex === 0 && !reducedMotion && imageLoaded) {
+      setSlide1Mounted(true);
+      startCopyEnter();
+    }
+  }, [slideIndex, reducedMotion, imageLoaded, startCopyEnter]);
 
   const handleWipeTransitionEnd = useCallback(
     (event: TransitionEvent<HTMLDivElement>) => {
@@ -378,6 +380,18 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
         return;
       }
 
+      if (slideIndex === 0 && nextIndex > 0) {
+        setCopyFadingOut(true);
+        window.setTimeout(() => {
+          setSlideIndex(nextIndex);
+          setCopyFadingOut(false);
+          pendingSlideRef.current = null;
+          setTransitionState("idle");
+          startCopyEnter();
+        }, 300);
+        return;
+      }
+
       pendingSlideRef.current = nextIndex;
       setCopyFadingOut(true);
       setTransitionState("wiping-in");
@@ -387,7 +401,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
         requestAnimationFrame(() => setWipeWidth("100%"));
       });
     },
-    [isTransitioning, isCompleting, reducedMotion, slideIndex],
+    [isTransitioning, isCompleting, reducedMotion, slideIndex, startCopyEnter],
   );
 
   const handleNext = useCallback(() => {

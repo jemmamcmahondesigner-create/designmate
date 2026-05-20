@@ -125,6 +125,17 @@
   opacity: 1;
 }
 
+.onboarding-slide-image {
+  transition: opacity 300ms ease;
+}
+
+.onboarding-left-heading {
+  width: 100%;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
 .onboarding-invite-dash {
   position: absolute;
   left: 50%;

@@ -114,7 +114,7 @@ function StepLabel({ step, name }: { step: number; name: string }) {
 }
 
 function LeftHeading({ children }: { children: ReactNode }) {
-  return <div className="flex flex-col gap-0">{children}</div>;
+  return <div className="onboarding-left-heading flex flex-col gap-0">{children}</div>;
 }
 
 function LeftSub({ children }: { children: ReactNode }) {
@@ -607,7 +607,7 @@ export function OnboardingFlow({
       >
         <AuthMark className="absolute left-16 top-16" height={48} />
 
-        <div className="w-full">
+        <div className="w-full min-w-0">
           {step === 1 && (
             <>
               <LeftHeading>
@@ -1005,7 +1005,7 @@ export function OnboardingFlow({
                   label="Next"
                   icon="trailing"
                   iconName="chevron-right"
-                  disabled={!name.trim() || submitting}
+                  disabled={name.length === 0 || submitting}
                   onClick={() => setStep(2)}
                   className="w-full"
                   style={{ width: "100%" }}

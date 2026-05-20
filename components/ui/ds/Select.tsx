@@ -438,11 +438,9 @@ export function Select({
             </span>
           )}
           <Icon
-            name="chevron-down"
+            name={open ? 'chevron-up' : 'chevron-down'}
             size={size === 'sm' ? 14 : size === 'md' ? 16 : 18}
-            className={[styles.chevron, open ? styles.chevronOpen : '']
-              .filter(Boolean)
-              .join(' ')}
+            className={styles.chevron}
             aria-hidden="true"
           />
         </button>

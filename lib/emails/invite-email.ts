@@ -22,46 +22,35 @@ export function getInviteEmailHtml({
   const logoUrl = escapeHtml(getInviteLogoUrl());
 
   return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DesignTrace invitation</title>
-</head>
-<body style="margin:0;padding:0;background-color:#faf8f6;font-family:'Plus Jakarta Sans',Arial,sans-serif;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#faf8f6;">
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#faf8f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0">
     <tr>
-      <td align="center" style="padding:32px 16px;">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;width:100%;">
+      <td align="center" style="padding:40px 20px;">
+        <table width="560" cellpadding="0" cellspacing="0" style="background:white;border-radius:12px;border:1px solid #ede8e0;max-width:560px;">
           <tr>
-            <td style="background-color:#ffffff;border:1px solid #ede8e0;border-radius:12px;padding:32px 40px;">
-              <p style="margin:0 0 16px;">
-                <img
-                  src="${logoUrl}"
-                  alt="DesignTrace"
-                  width="140"
-                  height="32"
-                  style="display:block;border:0;"
-                />
-              </p>
-              <hr style="border:none;border-top:1px solid #ede8e0;margin:0 0 24px;" />
-              <h1 style="margin:0 0 16px;font-size:24px;font-weight:700;line-height:1.3;color:#6b1e2e;">
+            <td style="padding:32px 40px 24px;">
+              <img src="${logoUrl}" alt="DesignTrace" width="148" height="25" style="display:block;border:0;"/>
+              <hr style="border:none;border-top:1px solid #ede8e0;margin:20px 0;"/>
+              <h2 style="margin:0 0 16px;font-size:20px;font-weight:700;color:#6b1e2e;line-height:1.3;">
                 ${safeInviter} has invited you to join ${safeWorkspace}
-              </h1>
-              <p style="margin:0 0 24px;font-size:15px;font-weight:400;line-height:1.5;color:#6b5e55;">
-                You&apos;ve been invited to collaborate on design reviews, feedback, and decisions.
-                Join the workspace to access projects and contribute to the team&apos;s design process.
+              </h2>
+              <p style="margin:0 0 24px;font-size:15px;color:#6b5e55;line-height:1.6;">
+                You've been invited to collaborate on design reviews, feedback, and decisions. Join the workspace to access projects and contribute to the team's design process.
               </p>
-              <p style="margin:0 0 24px;">
-                <a href="${safeUrl}" style="display:inline-block;background-color:#ffe96c;color:#2a221b;font-weight:600;font-size:15px;text-decoration:none;border-radius:8px;padding:12px 24px;">
-                  Accept Invitation
-                </a>
-              </p>
-              <p style="margin:0 0 24px;font-size:12px;line-height:1.5;color:#998c82;">
+              <a href="${safeUrl}" style="display:inline-block;background:#ffe96c;color:#2a221b;font-size:15px;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:8px;">
+                Accept Invitation
+              </a>
+              <p style="margin:24px 0 0;font-size:12px;color:#998c82;">
                 This invitation expires in 7 days.
               </p>
-              <p style="margin:0;font-size:12px;line-height:1.5;color:#c9c0b4;text-align:center;">
-                If you weren&apos;t expecting this invitation, you can safely ignore this email.
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 40px;border-top:1px solid #ede8e0;">
+              <p style="margin:0;font-size:12px;color:#c9c0b4;text-align:center;">
+                If you weren't expecting this invitation, you can safely ignore this email.
               </p>
             </td>
           </tr>
