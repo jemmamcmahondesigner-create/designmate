@@ -95,34 +95,8 @@
   animation: dt-blink 1.2s ease-in-out infinite;
 }
 
-/* Welcome slide — progressive image load */
 .onboarding-welcome-fullscreen {
   background: #faf8f6;
-}
-
-.onboarding-welcome-heading-centered {
-  opacity: 1;
-  transform: translate(0, 0);
-  transition:
-    opacity 0.4s ease,
-    transform 0.4s ease;
-}
-
-.onboarding-welcome-heading-split {
-  opacity: 1;
-  transform: translate(0, 0);
-  transition:
-    opacity 0.4s ease,
-    transform 0.4s ease;
-}
-
-.onboarding-welcome-image-panel {
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-
-.onboarding-welcome-image-panel.is-visible {
-  opacity: 1;
 }
 
 .onboarding-slide-image {
@@ -144,63 +118,96 @@
   overflow-wrap: break-word;
 }
 
-/* Intro splash — 4-phase sequence */
-.intro-splash-fullscreen {
+/* ─── Intro splash sequence ─── */
+
+@keyframes logo-bounce-up {
+  0% {
+    transform: translate(-50%, -50%) translateY(0px);
+  }
+  60% {
+    transform: translate(-50%, -50%) translateY(-56px);
+  }
+  80% {
+    transform: translate(-50%, -50%) translateY(-44px);
+  }
+  90% {
+    transform: translate(-50%, -50%) translateY(-50px);
+  }
+  100% {
+    transform: translate(-50%, -50%) translateY(-48px);
+  }
+}
+
+.intro-center-stage {
   position: absolute;
   inset: 0;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 32px;
+  z-index: 3;
   background: #faf8f6;
   pointer-events: none;
 }
 
-.intro-splash-logo {
-  transition: transform 600ms ease;
+.intro-phase-split .intro-center-stage,
+.intro-phase-content-ready .intro-center-stage {
+  background: transparent;
 }
 
-.intro-phase-loading .intro-splash-logo,
-.intro-phase-welcome-appear .intro-splash-logo {
-  transform: translateY(0);
+.intro-logo-anchor {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
 }
 
-.intro-phase-welcome-appear .intro-splash-logo,
-.intro-phase-split-transition .intro-splash-logo,
-.intro-phase-content-ready .intro-splash-logo {
-  transform: translateY(-32px);
+.intro-phase-welcome-appear .intro-logo-anchor {
+  animation: logo-bounce-up 700ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
-.intro-phase-split-transition .intro-splash-logo,
-.intro-phase-content-ready .intro-splash-logo {
+.intro-phase-welcome-settle .intro-logo-anchor,
+.intro-phase-split .intro-logo-anchor,
+.intro-phase-content-ready .intro-logo-anchor {
+  transform: translate(-50%, -50%) translateY(-48px);
+}
+
+.intro-phase-split .intro-logo-anchor,
+.intro-phase-content-ready .intro-logo-anchor {
   opacity: 0;
-  transition:
-    transform 600ms ease,
-    opacity 300ms ease;
+  transition: opacity 300ms ease;
 }
 
-.intro-splash-welcome {
+.intro-welcome-anchor {
+  position: fixed;
+  left: 50%;
+  top: calc(50% + 24px);
+  z-index: 4;
+  margin: 0;
+  padding: 0;
   opacity: 0;
-  transform: translateY(20px);
+  transform: translate(-50%, 30px);
   transition:
     opacity 600ms ease,
-    transform 600ms ease;
+    transform 600ms ease,
+    left 700ms cubic-bezier(0.4, 0, 0.2, 1),
+    top 0s,
+    translate 700ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.intro-phase-welcome-appear .intro-splash-welcome,
-.intro-phase-split-transition .intro-splash-welcome,
-.intro-phase-content-ready .intro-splash-welcome {
+.intro-phase-welcome-appear .intro-welcome-anchor,
+.intro-phase-welcome-settle .intro-welcome-anchor {
   opacity: 1;
-  transform: translateY(0);
+  transform: translate(-50%, 0);
 }
 
-.intro-phase-split-transition .intro-splash-fullscreen,
-.intro-phase-content-ready .intro-splash-fullscreen {
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 300ms ease, visibility 0s linear 300ms;
+.intro-phase-split .intro-welcome-anchor,
+.intro-phase-content-ready .intro-welcome-anchor {
+  left: 64px;
+  top: 50%;
+  opacity: 1;
+  transform: translate(0, -50%);
+  transition:
+    left 700ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 700ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 300ms ease;
 }
 
 .intro-split-layout {
@@ -210,38 +217,48 @@
 }
 
 .intro-split-left {
-  display: flex;
+  flex: 0 0 50%;
   min-width: 0;
-  flex: 1 1 50%;
-  align-items: center;
-  padding-left: 4rem;
-  padding-right: 4rem;
+  overflow: hidden;
   background: #faf8f6;
-  opacity: 0;
-  transition: opacity 700ms ease;
-}
-
-.intro-phase-split-transition .intro-split-left,
-.intro-phase-content-ready .intro-split-left {
-  opacity: 1;
 }
 
 .intro-split-right {
   position: relative;
+  flex: 0 0 50%;
   min-width: 0;
-  flex: 1 1 50%;
   overflow: hidden;
-  opacity: 0;
   transform: translateX(100%);
+  opacity: 0;
   transition:
-    transform 700ms ease,
-    opacity 700ms ease;
+    transform 700ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 300ms ease;
 }
 
-.intro-phase-split-transition .intro-split-right,
+.intro-phase-split .intro-split-right,
 .intro-phase-content-ready .intro-split-right {
-  opacity: 1;
   transform: translateX(0);
+  opacity: 1;
+}
+
+.intro-overlay-copy {
+  position: absolute;
+  bottom: 15%;
+  left: 40px;
+  right: 40px;
+  z-index: 1;
+  flex-shrink: 0;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.intro-phase-content-ready .intro-overlay-copy {
+  opacity: 1;
+  transition: opacity 400ms ease;
 }
 
 .intro-content-fade {
@@ -253,9 +270,9 @@
   opacity: 1;
 }
 
-.onboarding-welcome-heading-split {
-  width: fit-content;
-  max-width: 100%;
+.onboarding-welcome-heading-split,
+.onboarding-welcome-heading-centered {
+  max-width: none;
   white-space: normal;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -283,7 +300,12 @@
   .onboarding-slide1-overlay-enter,
   .onboarding-intro-exit,
   .onboarding-steps-enter,
-  .onboarding-wipe {
+  .onboarding-wipe,
+  .intro-logo-anchor,
+  .intro-welcome-anchor,
+  .intro-split-right,
+  .intro-overlay-copy,
+  .intro-content-fade {
     animation: none !important;
     transition: none !important;
     opacity: 1 !important;

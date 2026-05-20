@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -771,25 +772,14 @@ export function TeammatesSettingsPage({
           }}
           size="sm"
         />
-        <Select
-          label="Role"
+        <AddTeammateRoleSelect
+          active={addOpen}
           options={addRoleSelectOptions}
           value={form.roleId || undefined}
           onChange={(value) => {
             setFormError(null);
             applyRoleIdToForm(value);
           }}
-          placeholder="Select role"
-          size="sm"
-          searchable
-          creatable
-          creatableOptionLabel={(typed) => `Add '${typed}'`}
-          onCreatableSelect={(typed) => {
-            const name = titleCaseRoleName(typed);
-            if (!name) return undefined;
-            return customRoleValue(name);
-          }}
-          portaled
         />
         <Select
           label="Permission Level"
@@ -934,6 +924,117 @@ export function TeammatesSettingsPage({
         }}
       />
     </>
+  );
+}
+
+const ADD_TEAMMATE_ROLE_SEARCH_INPUT = 'input[aria-label="Search options"]';
+const ADD_TEAMMATE_ROLE_MENU = 'ul[role="listbox"][aria-label="Role"]';
+
+type AddTeammateRoleSelectProps = {
+  active: boolean;
+  options: { value: string; label: string }[];
+  value?: string;
+  onChange: (roleId: string) => void;
+};
+
+function AddTeammateRoleSelect({
+  active,
+  options,
+  value,
+  onChange,
+}: AddTeammateRoleSelectProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const confirmTypedRole = useCallback(
+    (raw: string) => {
+      const typed = raw.trim();
+      if (!typed) return;
+
+      const existing = options.find(
+        (o) =>
+          o.label.toLowerCase() === typed.toLowerCase() ||
+          o.value.toLowerCase() === typed.toLowerCase(),
+      );
+      if (existing) {
+        onChange(existing.value);
+        return;
+      }
+
+      const name = titleCaseRoleName(typed);
+      if (!name) return;
+      onChange(customRoleValue(name));
+    },
+    [options, onChange],
+  );
+
+  useEffect(() => {
+    if (!active) return;
+    const root = rootRef.current;
+    if (!root) return;
+
+    const getSearchInput = () =>
+      root.querySelector<HTMLInputElement>(ADD_TEAMMATE_ROLE_SEARCH_INPUT);
+
+    const isRoleMenuTarget = (target: Node) => {
+      const menu = document.querySelector(ADD_TEAMMATE_ROLE_MENU);
+      return menu?.contains(target) ?? false;
+    };
+
+    const onPointerDownCapture = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (root.contains(target) || isRoleMenuTarget(target)) return;
+      const input = getSearchInput();
+      if (!input) return;
+      confirmTypedRole(input.value);
+    };
+
+    const onFocusOutCapture = (e: FocusEvent) => {
+      const next = e.relatedTarget as Node | null;
+      if (next && (root.contains(next) || isRoleMenuTarget(next))) return;
+      const input = getSearchInput();
+      if (!input) return;
+      confirmTypedRole(input.value);
+    };
+
+    const onKeyDownCapture = (e: KeyboardEvent) => {
+      const input = getSearchInput();
+      if (!input || document.activeElement !== input) return;
+      if (e.key !== "Enter" && e.key !== "Tab") return;
+      if (!input.value.trim()) return;
+      if (e.key === "Enter") e.preventDefault();
+      confirmTypedRole(input.value);
+    };
+
+    document.addEventListener("pointerdown", onPointerDownCapture, true);
+    root.addEventListener("focusout", onFocusOutCapture, true);
+    root.addEventListener("keydown", onKeyDownCapture, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDownCapture, true);
+      root.removeEventListener("focusout", onFocusOutCapture, true);
+      root.removeEventListener("keydown", onKeyDownCapture, true);
+    };
+  }, [active, confirmTypedRole]);
+
+  return (
+    <div ref={rootRef}>
+      <Select
+        label="Role"
+        options={options}
+        value={value}
+        onChange={onChange}
+        placeholder="Select role"
+        size="sm"
+        searchable
+        creatable
+        creatableOptionLabel={(typed) => `Add '${typed}'`}
+        onCreatableSelect={(typed) => {
+          const name = titleCaseRoleName(typed);
+          if (!name) return undefined;
+          return customRoleValue(name);
+        }}
+        portaled
+      />
+    </div>
   );
 }
 

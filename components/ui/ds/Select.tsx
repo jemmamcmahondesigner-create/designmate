@@ -94,7 +94,10 @@ export function Select({
     value?.startsWith(CREATE_PREFIX) && !selectedOption
       ? decodeURIComponent(value.slice(CREATE_PREFIX.length))
       : null;
-  const displayLabel = selectedOption?.label ?? customSelectedLabel ?? '';
+  const unmatchedValueLabel =
+    value && !selectedOption && !value.startsWith(CREATE_PREFIX) ? value : null;
+  const displayLabel =
+    selectedOption?.label ?? customSelectedLabel ?? unmatchedValueLabel ?? '';
   const hasError = !!errorText;
   const isFilled = !!value;
 
@@ -197,52 +200,67 @@ export function Select({
     };
   }, [open, portaled, updatePortalPosition]);
 
-  const finishSelect = useCallback((optValue: string) => {
-    onChange?.(optValue);
-    setOpen(false);
-    setSearchTerm('');
-    triggerRef.current?.focus();
-  }, [onChange]);
+  const finishSelect = useCallback(
+    (optValue: string, options?: { focusTrigger?: boolean }) => {
+      onChange?.(optValue);
+      setOpen(false);
+      setSearchTerm('');
+      if (options?.focusTrigger !== false) {
+        triggerRef.current?.focus();
+      }
+    },
+    [onChange],
+  );
 
-  const confirmTypedSearch = useCallback(() => {
-    if (!creatable || !searchable) return false;
-    const typed = searchTerm.trim();
-    if (!typed) return false;
+  const confirmTypedSearch = useCallback(
+    (finishOpts?: { focusTrigger?: boolean }) => {
+      if (!creatable || !searchable) return false;
+      const typed = searchTerm.trim();
+      if (!typed) return false;
 
-    const exactOption = options.find(
-      (o) => o.label.toLowerCase() === typed.toLowerCase(),
-    );
-    if (exactOption) {
-      finishSelect(exactOption.value);
-      return true;
-    }
-
-    if (onCreatableSelect) {
-      const nextValue = onCreatableSelect(typed);
-      if (nextValue) {
-        finishSelect(nextValue);
+      const exactOption = options.find(
+        (o) =>
+          o.label.toLowerCase() === typed.toLowerCase() ||
+          o.value.toLowerCase() === typed.toLowerCase(),
+      );
+      if (exactOption) {
+        finishSelect(exactOption.value, finishOpts);
         return true;
       }
-    }
 
-    if (onCreateOption) {
-      void (async () => {
-        const newId = await onCreateOption(typed);
-        if (newId) finishSelect(newId);
-      })();
-      return true;
-    }
+      if (onCreatableSelect) {
+        const nextValue = onCreatableSelect(typed);
+        if (nextValue) {
+          finishSelect(nextValue, finishOpts);
+          return true;
+        }
+      }
 
-    return false;
-  }, [
-    creatable,
-    searchable,
-    searchTerm,
-    options,
-    onCreatableSelect,
-    onCreateOption,
-    finishSelect,
-  ]);
+      if (onCreateOption) {
+        void (async () => {
+          const newId = await onCreateOption(typed);
+          if (newId) finishSelect(newId, finishOpts);
+        })();
+        return true;
+      }
+
+      if (creatable) {
+        finishSelect(`${CREATE_PREFIX}${encodeURIComponent(typed)}`, finishOpts);
+        return true;
+      }
+
+      return false;
+    },
+    [
+      creatable,
+      searchable,
+      searchTerm,
+      options,
+      onCreatableSelect,
+      onCreateOption,
+      finishSelect,
+    ],
+  );
 
   const closeMenu = useCallback(
     (confirmCustom = false) => {
@@ -319,7 +337,7 @@ export function Select({
     }
 
     if (e.key === 'Tab') {
-      if (confirmTypedSearch()) return;
+      if (confirmTypedSearch({ focusTrigger: false })) return;
       closeMenu(false);
       return;
     }
@@ -475,8 +493,8 @@ export function Select({
                 handleSearchKeyDown(e);
               }}
               onBlur={() => {
-                if (confirmTypedSearch()) return;
-                closeMenu(false);
+                if (confirmTypedSearch({ focusTrigger: false })) return;
+                setOpen(false);
               }}
               autoFocus
               aria-label="Search options"

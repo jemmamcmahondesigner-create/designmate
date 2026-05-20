@@ -32,12 +32,22 @@ const TRAIL_SQUARE_OFFSET = TRAIL_SQUARE_SIZE / 2;
 
 const HEADING_FONT_MULTI = "clamp(28px, 3.5vw, 48px)";
 const HEADING_FONT_WELCOME = "clamp(28px, 3.5vw, 48px)";
-const HEADING_FONT_OVERLAY = "clamp(32px, 4vw, 56px)";
 const SUB_FONT = "clamp(16px, 2vw, 28px)";
+
+const INTRO_LOADING_MS = 3000;
+const INTRO_WELCOME_ANIM_MS = 600;
+const INTRO_WELCOME_SETTLE_MS = 800;
+const INTRO_SPLIT_MS = 700;
+const INTRO_CONTENT_PAUSE_MS = 500;
 
 type TransitionState = "idle" | "wiping-in" | "revealing";
 
-type IntroPhase = "loading" | "welcome-appear" | "split-transition" | "content-ready";
+type IntroPhase =
+  | "loading"
+  | "welcome-appear"
+  | "welcome-settle"
+  | "split"
+  | "content-ready";
 
 type IntroSlidesProps = {
   reducedMotion: boolean;
@@ -104,10 +114,15 @@ function ImageOverlayText({ className }: { className?: string }) {
     <h1
       className={`m-0 text-white ${className ?? ""}`}
       style={{
-        fontSize: HEADING_FONT_OVERLAY,
+        fontSize: 32,
+        fontWeight: 700,
         lineHeight: 1.15,
         letterSpacing: "-1.44px",
         textShadow: "0 2px 12px rgba(0,0,0,0.4)",
+        whiteSpace: "normal",
+        wordWrap: "break-word",
+        overflowWrap: "break-word",
+        flexShrink: 0,
       }}
     >
       <span className="font-extrabold">your </span>
@@ -239,8 +254,8 @@ function ImagePanelContent({
         );
       })}
       {showOverlay ? (
-        <div className="relative z-[1] flex h-full items-center justify-center px-8">
-          <ImageOverlayText className={overlayClassName} />
+        <div className={`intro-overlay-copy ${overlayClassName ?? ""}`.trim()}>
+          <ImageOverlayText />
         </div>
       ) : null}
     </>
@@ -310,18 +325,27 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   useEffect(() => {
     if (reducedMotion) return;
 
+    const welcomeAppearAt = INTRO_LOADING_MS;
+    const welcomeSettleAt = INTRO_LOADING_MS + INTRO_WELCOME_ANIM_MS;
+    const splitAt = INTRO_LOADING_MS + INTRO_WELCOME_ANIM_MS + INTRO_WELCOME_SETTLE_MS;
+    const contentReadyAt = splitAt + INTRO_SPLIT_MS + INTRO_CONTENT_PAUSE_MS;
+
     const welcomeTimer = window.setTimeout(() => {
       setIntroPhase("welcome-appear");
-    }, 3000);
+    }, welcomeAppearAt);
+    const settleTimer = window.setTimeout(() => {
+      setIntroPhase("welcome-settle");
+    }, welcomeSettleAt);
     const splitTimer = window.setTimeout(() => {
-      setIntroPhase("split-transition");
-    }, 3600);
+      setIntroPhase("split");
+    }, splitAt);
     const contentTimer = window.setTimeout(() => {
       setIntroPhase("content-ready");
-    }, 4800);
+    }, contentReadyAt);
 
     return () => {
       window.clearTimeout(welcomeTimer);
+      window.clearTimeout(settleTimer);
       window.clearTimeout(splitTimer);
       window.clearTimeout(contentTimer);
     };
@@ -396,18 +420,6 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       if (reducedMotion) {
         setSlideIndex(nextIndex);
         setCopyVisible(true);
-        return;
-      }
-
-      if (slideIndex === 0 && nextIndex > 0) {
-        setCopyFadingOut(true);
-        window.setTimeout(() => {
-          setSlideIndex(nextIndex);
-          setCopyFadingOut(false);
-          pendingSlideRef.current = null;
-          setTransitionState("idle");
-          startCopyEnter();
-        }, 300);
         return;
       }
 
@@ -557,9 +569,6 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     .filter(Boolean)
     .join(" ");
 
-  const overlayClassName =
-    slide.showImageOverlay && introPhase === "content-ready" ? "intro-content-fade" : "";
-
   const isWelcomeSlide = slideIndex === 0;
   const introControlsVisible = !isWelcomeSlide || introPhase === "content-ready";
 
@@ -568,7 +577,6 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       key="intro-image-panel"
       slideIndex={slideIndex}
       showOverlay={slide.showImageOverlay}
-      overlayClassName={overlayClassName}
       wipeAnchor={wipeAnchor}
       wipeWidth={wipeWidth}
       onWipeTransitionEnd={handleWipeTransitionEnd}
@@ -606,24 +614,21 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       {isWelcomeSlide ? (
         <>
           <div className="intro-split-layout">
-            <div className="intro-split-left">
-              <WelcomeHeading />
-            </div>
+            <div className="intro-split-left" aria-hidden />
             <div className="intro-split-right bg-[#1a0810]">
               <ImagePanelContent
                 activeSlideIndex={0}
                 showOverlay={slide.showImageOverlay}
-                overlayClassName={overlayClassName}
               />
             </div>
           </div>
-          <div className="intro-splash-fullscreen">
-            <div className="intro-splash-logo">
+          <div className="intro-center-stage">
+            <div className="intro-logo-anchor">
               <AuthMark height={80} squareBlink={introPhase === "loading"} />
             </div>
             {introPhase !== "loading" ? (
-              <div className="intro-splash-welcome">
-                <WelcomeHeading centered />
+              <div className="intro-welcome-anchor">
+                <WelcomeHeading />
               </div>
             ) : null}
           </div>
