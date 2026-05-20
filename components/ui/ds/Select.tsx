@@ -38,10 +38,15 @@ export interface SelectProps {
   /** Renders the menu open immediately (for searchable/autocomplete UX) */
   searchable?: boolean;
   /**
-   * When used with `searchable`, appends "Create …" for typed values with no exact
-   * name match (case-insensitive). Calls `onCreateOption` with the raw typed string.
+   * When used with `searchable`, appends an "Add …" row for typed values with no exact
+   * name match (case-insensitive).
    */
   creatable?: boolean;
+  /** Label for the add row (default: Add '[typed]'). */
+  creatableOptionLabel?: (typedLabel: string) => string;
+  /** Persists a custom value locally (return value id); does not call the server. */
+  onCreatableSelect?: (typedLabel: string) => string | undefined;
+  /** Creates a global option via async handler (e.g. reference table). */
   onCreateOption?: (typedLabel: string) => Promise<string | undefined>;
   id?: string;
   name?: string;
@@ -66,6 +71,8 @@ export function Select({
   disabled = false,
   searchable = false,
   creatable = false,
+  creatableOptionLabel,
+  onCreatableSelect,
   onCreateOption,
   id: idProp,
   name,
@@ -78,11 +85,16 @@ export function Select({
   const [searchTerm, setSearchTerm] = useState('');
   const [menuMaxHeight, setMenuMaxHeight] = useState<number>(240);
   const [portalStyle, setPortalStyle] = useState<CSSProperties>({});
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
 
   const selectedOption = options.find(o => o.value === value);
-  const displayLabel = selectedOption?.label ?? '';
+  const customSelectedLabel =
+    value?.startsWith(CREATE_PREFIX) && !selectedOption
+      ? decodeURIComponent(value.slice(CREATE_PREFIX.length))
+      : null;
+  const displayLabel = selectedOption?.label ?? customSelectedLabel ?? '';
   const hasError = !!errorText;
   const isFilled = !!value;
 
@@ -96,20 +108,22 @@ export function Select({
     trimmedSearch.length > 0 &&
     options.some(o => o.label.toLowerCase() === trimmedSearch.toLowerCase());
 
+  const canAddCustom =
+    creatable && searchable && trimmedSearch.length >= 2 && !hasExactMatch;
+
   const createValue =
-    creatable &&
-    searchable &&
-    onCreateOption &&
-    trimmedSearch.length > 0 &&
-    !hasExactMatch
+    canAddCustom && (onCreatableSelect || onCreateOption)
       ? `${CREATE_PREFIX}${encodeURIComponent(trimmedSearch)}`
       : null;
 
   const displayOptions: SelectOption[] = [...filteredOptions];
   if (createValue) {
+    const addLabel = creatableOptionLabel
+      ? creatableOptionLabel(trimmedSearch)
+      : `Add '${trimmedSearch}'`;
     displayOptions.push({
       value: createValue,
-      label: `Create role: ${trimmedSearch}`,
+      label: addLabel,
     });
   }
 
@@ -121,7 +135,7 @@ export function Select({
 
     const rect = trigger.getBoundingClientRect();
     const viewportPadding = 12;
-    const gap = 0;
+    const gap = 4;
     const spaceBelow = window.innerHeight - rect.bottom - viewportPadding - gap;
     const spaceAbove = rect.top - viewportPadding - gap;
     const prefersTop = spaceBelow < 200 && spaceAbove > spaceBelow;
@@ -183,15 +197,13 @@ export function Select({
     };
   }, [open, portaled, updatePortalPosition]);
 
-  // Close on outside click
+  // Close on outside mousedown only (not keyboard; mousedown fires before blur)
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (
-        triggerRef.current?.contains(e.target as Node) ||
-        menuRef.current?.contains(e.target as Node)
-      )
-        return;
+      const target = e.target as Node;
+      if (wrapperRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
       setOpen(false);
     };
     document.addEventListener('mousedown', handler);
@@ -207,8 +219,13 @@ export function Select({
 
   const handleSelect = (optValue: string) => {
     if (optValue.startsWith(CREATE_PREFIX)) {
-      if (!onCreateOption) return;
       const raw = decodeURIComponent(optValue.slice(CREATE_PREFIX.length));
+      if (onCreatableSelect) {
+        const nextValue = onCreatableSelect(raw);
+        if (nextValue) finishSelect(nextValue);
+        return;
+      }
+      if (!onCreateOption) return;
       void (async () => {
         const newId = await onCreateOption(raw);
         if (newId) finishSelect(newId);
@@ -219,6 +236,10 @@ export function Select({
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    if (searchable && open) {
+      return;
+    }
+
     if (e.key === 'Escape') {
       setOpen(false);
       triggerRef.current?.focus();
@@ -230,6 +251,43 @@ export function Select({
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setOpen(true);
+    }
+  };
+
+  const handleSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === ' ') {
+      e.stopPropagation();
+      e.nativeEvent.stopImmediatePropagation();
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+      return;
+    }
+
+    if (e.key === 'Tab') {
+      setOpen(false);
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (createValue) {
+        handleSelect(createValue);
+        return;
+      }
+      const first = displayOptions.find(o => !o.disabled);
+      if (first) {
+        handleSelect(first.value);
+        return;
+      }
+      if (creatable && onCreatableSelect && trimmedSearch.length >= 2) {
+        const nextValue = onCreatableSelect(trimmedSearch);
+        if (nextValue) finishSelect(nextValue);
+      }
     }
   };
 
@@ -329,7 +387,7 @@ export function Select({
       </select>
 
       {/* Custom control */}
-      <div className={styles.wrapper}>
+      <div ref={wrapperRef} className={styles.wrapper}>
         <button
           ref={triggerRef}
           id={id}
@@ -340,7 +398,15 @@ export function Select({
           aria-disabled={disabled}
           disabled={disabled}
           className={controlClass}
-          onClick={() => !disabled && setOpen(o => !o)}
+          onClick={(e) => {
+            if (disabled) return;
+            if (searchable && open && e.detail === 0) return;
+            if (searchable && e.target instanceof HTMLInputElement) {
+              if (!open) setOpen(true);
+              return;
+            }
+            setOpen(o => !o);
+          }}
           onKeyDown={handleKeyDown}
         >
           {searchable && open ? (
@@ -350,6 +416,17 @@ export function Select({
               placeholder={displayLabel || placeholder}
               onChange={e => setSearchTerm(e.target.value)}
               onClick={e => e.stopPropagation()}
+              onMouseDown={e => {
+                e.stopPropagation();
+                e.nativeEvent.stopImmediatePropagation();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === ' ') {
+                  e.stopPropagation();
+                  e.nativeEvent.stopImmediatePropagation();
+                }
+                handleSearchKeyDown(e);
+              }}
               autoFocus
               aria-label="Search options"
             />

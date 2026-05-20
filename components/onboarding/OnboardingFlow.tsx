@@ -15,6 +15,11 @@ import { Button, Input, Select, Textarea } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { generateInviteCode } from "@/lib/workspace/utils";
 import { ensureContributorProfile } from "@/lib/workspace/ensureContributorProfile";
+import {
+  ensureContributorRole,
+  fetchWorkspaceRoleOptions,
+  titleCaseRoleName,
+} from "@/lib/workspace/contributorRoles";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import {
   mapInvitePermissionLevel,
@@ -156,6 +161,9 @@ export function OnboardingFlow({
 
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
+  const [contributorRoleOptions, setContributorRoleOptions] = useState<
+    { id: string; name: string }[]
+  >([]);
   const [company, setCompany] = useState("");
   const [designType, setDesignType] = useState("");
   const [workEnv, setWorkEnv] = useState("");
@@ -296,6 +304,30 @@ export function OnboardingFlow({
     return () => window.removeEventListener("resize", updateDashPosition);
   }, [invitedConfirmationStep, step, inviteWorkspaceName]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadRoles = async () => {
+      const supabase = createSupabaseBrowserClient();
+      const workspaceId = activeWorkspaceId ?? inviteWorkspaceId;
+      const mapped = await fetchWorkspaceRoleOptions(supabase, workspaceId);
+      if (cancelled) return;
+      setContributorRoleOptions(mapped);
+    };
+    void loadRoles();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, inviteWorkspaceId]);
+
+  const roleSelectOptions = useMemo(
+    () =>
+      contributorRoleOptions.map((r) => ({
+        value: r.name,
+        label: r.name,
+      })),
+    [contributorRoleOptions],
+  );
+
   const persistProfile = useCallback(
     async (options?: {
       workspaceId?: string;
@@ -317,14 +349,19 @@ export function OnboardingFlow({
         null;
 
       const trimmedName = name.trim();
+      const trimmedRole = role.trim();
       const permissionLevel = options?.permissionLevel ?? "admin";
+
+      if (trimmedRole) {
+        await ensureContributorRole(supabase, trimmedRole);
+      }
 
       await supabase.auth.updateUser({
         data: {
           onboarding_complete: true,
           display_name: trimmedName,
           full_name: trimmedName,
-          role: role.trim() || null,
+          role: trimmedRole || null,
           company: company.trim() || null,
           designer_type: designLabel || null,
           design_type: designType.trim() || null,
@@ -344,7 +381,7 @@ export function OnboardingFlow({
           userId: user.id,
           email: user.email ?? inviteEmail ?? email ?? null,
           displayName: trimmedName,
-          role: role.trim() || null,
+          role: trimmedRole || null,
           activeWorkspaceId: resolvedWorkspaceId,
           permissionLevel,
         });
@@ -746,15 +783,23 @@ export function OnboardingFlow({
                       onChange={(e) => setName(e.target.value)}
                       className="w-full"
                     />
-                    <Input
+                    <Select
                       label="Role"
                       size="lg"
                       placeholder="i.e. Product Designer or Design Lead"
                       helperText="This helps DesignTrace tailor language, prompts, and review support to your role."
-                      showHelper
-                      value={role}
-                      onChange={(e) => setRole(e.target.value)}
+                      value={role || undefined}
+                      onChange={setRole}
+                      options={roleSelectOptions}
+                      searchable
+                      creatable
+                      creatableOptionLabel={(typed) => `Add '${typed}'`}
+                      onCreatableSelect={(typed) => {
+                        const name = titleCaseRoleName(typed);
+                        return name || undefined;
+                      }}
                       className="w-full"
+                      portaled
                     />
                     {isInvited ? (
                       <Input

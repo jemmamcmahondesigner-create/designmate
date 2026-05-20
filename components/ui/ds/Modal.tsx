@@ -173,8 +173,6 @@ export function Modal({
           </button>
         </div>
 
-        <div className={styles.divider} />
-
         {/* Body — DS Select dropdowns use a portaled menu; keep this scrollable, not overflow:hidden. */}
         <div ref={bodyRef} className={styles.body}>
           {children ?? (description && (

@@ -26,6 +26,8 @@ export type PendingWorkspaceInviteRow = {
   email: string;
   role: string;
   invite_code: string;
+  invited_name?: string | null;
+  job_role?: string | null;
 };
 
 type WorkspaceMemberRow = {
@@ -158,13 +160,16 @@ export function mapPendingWorkspaceInvites(
 ): WorkspaceTeammate[] {
   return rows.map((row) => {
     const email = String(row.email ?? "").trim();
+    const invitedName =
+      typeof row.invited_name === "string" ? row.invited_name.trim() : "";
+    const jobRole = typeof row.job_role === "string" ? row.job_role.trim() : "";
     const permissionLevel = mapInvitePermissionLevel(row.role);
     return {
       id: `invite-${row.id}`,
-      name: email,
+      name: invitedName,
       email,
       roleId: null,
-      roleName: null,
+      roleName: jobRole || null,
       permissionLevel,
       isPaid: false,
       isPending: true,

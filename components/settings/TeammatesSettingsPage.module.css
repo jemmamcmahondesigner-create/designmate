@@ -52,3 +52,44 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* Table pills — shared md body typography (Permission + Status columns) */
+.tablePillMd {
+  text-transform: none !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.26px !important;
+}
+
+.permissionPill {
+  background: #ffffff !important;
+  color: #2e1c1c !important;
+  border: 1px solid #e4ddd3 !important;
+  border-width: 1px !important;
+}
+
+.statusPillMuted {
+  background: #f3efe9 !important;
+  color: #6b5e55 !important;
+  border: 1px solid #e4ddd3 !important;
+  border-width: 1px !important;
+}
+
+.emailCell {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.emailCell :global(a) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.cellPillWrap {
+  flex-shrink: 0;
+}

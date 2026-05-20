@@ -117,6 +117,9 @@
   height: 52px;
   min-height: 52px;
   max-height: 52px;
+  overflow: hidden;
+  max-width: 0;
+  width: 100%;
 }
 
 .rowMuted td {
@@ -147,6 +150,17 @@
   text-align: center;
 }
 
+.cellText,
+.cellTextBold,
+.cellLink {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  min-width: 0;
+}
+
 .cellText {
   color: var(--text-primary, #2e1c1c);
   font-weight: 400;
@@ -168,16 +182,28 @@
 .row .cellLink {
   color: var(--text-link, #6b1e2e);
   font-weight: 400;
-  display: inline-flex;
-  align-items: center;
-  min-height: 100%;
 }
 
 .row .cellCustom {
   color: inherit;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.cellPill {
   display: flex;
   align-items: center;
-  min-height: 100%;
+  overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.cellPill > * {
+  flex-shrink: 0;
 }
 
 .kebabTd {
@@ -237,13 +263,39 @@
   border-top: 1px solid var(--border-default, #e4ddd3);
 }
 
-.footerRowsPerPage {
+.footerMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 32px;
+}
+
+.footerRowsPerPage,
+.footerRowsPerPageTrigger {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary, #6b5e55);
+  font-family: inherit;
+}
+
+.footerRowsPerPageTrigger {
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.footerRowsPerPageTrigger:hover {
+  color: var(--text-primary, #2e1c1c);
+}
+
+.footerRowsPerPageTrigger:focus-visible {
+  outline: 2px solid var(--brand-primary, #6b1e2e);
+  outline-offset: 2px;
 }
 
 .footerRange {

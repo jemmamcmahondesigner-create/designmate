@@ -81,7 +81,7 @@ export default async function SettingsTeammatesPage() {
 
       const { data: pendingInvites } = await supabase
         .from("workspace_invites")
-        .select("id, email, role, created_at, invite_code")
+        .select("id, email, role, created_at, invite_code, invited_name, job_role")
         .eq("workspace_id", activeWorkspaceId)
         .eq("status", "pending");
 
@@ -111,7 +111,7 @@ export default async function SettingsTeammatesPage() {
 
   const { data: pendingInvites } = await supabase
     .from("workspace_invites")
-    .select("id, email, role, created_at, invite_code")
+    .select("id, email, role, created_at, invite_code, invited_name, job_role")
     .eq("workspace_id", activeWorkspaceId)
     .eq("status", "pending");
 

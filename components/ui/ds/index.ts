@@ -122,6 +122,7 @@ export type {
   ColumnRenderContext,
   TableCellType,
   TablePagination,
+  TablePageSizeOption,
 } from './Table'
 
 export { Checkbox } from './Checkbox'

@@ -34,10 +34,10 @@
   width: 100%;
 }
 
-/* Inline dropdown: flush under trigger (sm = 32px), same width as control */
+/* Inline dropdown: aligned under trigger, same width as control */
 .menuAttached {
   position: absolute;
-  top: 100%;
+  top: calc(100% + 4px);
   left: 0;
   right: 0;
   width: 100%;

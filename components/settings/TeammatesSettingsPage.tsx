@@ -23,11 +23,18 @@ import {
   MenuItem,
   Modal,
   Select,
+  StatusPill,
   Table,
   Tag,
   Tooltip,
   type ColumnDef,
+  type TablePageSizeOption,
 } from "@/components/ui/ds";
+import {
+  ensureContributorRole,
+  fetchWorkspaceRoleOptions,
+  titleCaseRoleName,
+} from "@/lib/workspace/contributorRoles";
 import { useRouter } from "next/navigation";
 import { useWorkspacePermission } from "@/hooks/useWorkspacePermission";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -58,6 +65,7 @@ type Teammate = {
 };
 
 const NAME_REQUIRED_MESSAGE = "Please enter the teammate's first and last name.";
+const CUSTOM_ROLE_PREFIX = "__custom__:";
 
 type RoleOption = { id: string; name: string };
 
@@ -68,7 +76,21 @@ type FormState = {
   permissionLevel: "admin" | "editor" | "reviewer";
 };
 
-const PAGE_SIZE = 10;
+const ROWS_PER_PAGE_STORAGE_KEY = "dt_teammates_rows_per_page";
+const ROWS_PER_PAGE_OPTIONS: TablePageSizeOption[] = [10, 20, 40, 80, "all"];
+
+function readStoredRowsPerPage(): TablePageSizeOption {
+  if (typeof window === "undefined") return 10;
+  try {
+    const stored = localStorage.getItem(ROWS_PER_PAGE_STORAGE_KEY);
+    if (stored === "all") return "all";
+    const n = Number(stored);
+    if (n === 10 || n === 20 || n === 40 || n === 80) return n;
+  } catch {
+    /* ignore */
+  }
+  return 10;
+}
 
 const PAID_SEAT_TOOLTIP =
   "Admin and Editor seats will require a paid subscription in a future update. Reviewer access is always free.";
@@ -104,8 +126,13 @@ export function TeammatesSettingsPage({
     setTeammates(initialTeammates);
   }, [initialTeammates]);
 
+  useEffect(() => {
+    setRowsPerPage(readStoredRowsPerPage());
+  }, []);
+
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState<TablePageSizeOption>(10);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const { showToast } = useToast();
   /** Client-only overlay (browser fetch + newly created roles). Always merged with `initialContributorRoles` for the Select. */
@@ -137,26 +164,8 @@ export function TeammatesSettingsPage({
   useEffect(() => {
     let cancelled = false;
     const loadRoles = async () => {
-      if (process.env.NODE_ENV === "development") {
-        console.log("fetching roles");
-      }
       const supabase = createSupabaseBrowserClient();
-      const { data, error } = await supabase
-        .from("contributor_roles")
-        .select("id, name")
-        .order("name", { ascending: true });
-      if (process.env.NODE_ENV === "development") {
-        console.log("contributor_roles result:", data, error);
-      }
-      if (error) {
-        console.error("Roles fetch error:", error);
-        return;
-      }
-      const mapped =
-        data?.map((row) => {
-          const o = row as Record<string, unknown>;
-          return { id: String(o.id ?? ""), name: String(o.name ?? "") };
-        }).filter((r) => r.id.trim() !== "" && r.name.trim() !== "") ?? [];
+      const mapped = await fetchWorkspaceRoleOptions(supabase, activeWorkspaceId);
       if (cancelled) return;
       setRoleOptions(sortRoleOptions(mapped));
     };
@@ -164,16 +173,17 @@ export function TeammatesSettingsPage({
     return () => {
       cancelled = true;
     };
-  }, [addOpen, editRow]);
+  }, [addOpen, editRow, activeWorkspaceId]);
 
   const actionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const total = teammates.length;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const effectivePageSize =
+    rowsPerPage === "all" ? Math.max(total, 1) : rowsPerPage;
+  const pageCount = Math.max(1, Math.ceil(total / effectivePageSize));
   const safePage = Math.min(page, pageCount - 1);
-  const start = safePage * PAGE_SIZE;
-  const pagedRows = teammates.slice(start, start + PAGE_SIZE);
-  const end = Math.min(start + PAGE_SIZE, total);
+  const start = safePage * effectivePageSize;
+  const pagedRows = teammates.slice(start, start + effectivePageSize);
 
   const formDirty = useMemo(() => {
     if (addOpen) {
@@ -210,6 +220,15 @@ export function TeammatesSettingsPage({
     [mergedRoleOptions],
   );
 
+  const addRoleSelectOptions = useMemo(() => {
+    const opts = [...roleSelectOptions];
+    const customLabel = form.roleId ? parseCustomRoleValue(form.roleId) : null;
+    if (customLabel && !opts.some((o) => o.value === form.roleId)) {
+      opts.push({ value: form.roleId, label: customLabel });
+    }
+    return opts;
+  }, [roleSelectOptions, form.roleId]);
+
   useLayoutEffect(() => {
     roleOptionsRef.current = mergedRoleOptions;
   }, [mergedRoleOptions]);
@@ -220,40 +239,20 @@ export function TeammatesSettingsPage({
     }
   }, [roleSelectOptions]);
 
+  const mergeRoleIntoOptions = (id: string, name: string) => {
+    setRoleOptions((prev) => {
+      const next = sortRoleOptions([...prev.filter((r) => r.id !== id), { id, name }]);
+      roleOptionsRef.current = next;
+      return next;
+    });
+  };
+
   const handleCreateRoleOption = async (typed: string): Promise<string | undefined> => {
-    const name = titleCaseRoleName(typed);
-    if (!name) return undefined;
     const supabase = createSupabaseBrowserClient();
-    const { data, error } = await supabase.from("contributor_roles").insert({ name }).select("id").single();
-    if (!error && data && typeof data === "object" && "id" in data) {
-      const id = String((data as Record<string, unknown>).id ?? "");
-      if (id) {
-        setRoleOptions((prev) => {
-          const next = sortRoleOptions([...prev.filter((r) => r.id !== id), { id, name }]);
-          roleOptionsRef.current = next;
-          return next;
-        });
-        return id;
-      }
-    }
-    if (error && String((error as { code?: string }).code) === "23505") {
-      const { data: existing } = await supabase.from("contributor_roles").select("id, name").eq("name", name).maybeSingle();
-      if (existing && typeof existing === "object" && "id" in existing) {
-        const id = String((existing as Record<string, unknown>).id ?? "");
-        const label = String((existing as Record<string, unknown>).name ?? name);
-        if (id) {
-          setRoleOptions((prev) => {
-            const next = prev.some((r) => r.id === id)
-              ? sortRoleOptions(prev)
-              : sortRoleOptions([...prev, { id, name: label }]);
-            roleOptionsRef.current = next;
-            return next;
-          });
-          return id;
-        }
-      }
-    }
-    return undefined;
+    const created = await ensureContributorRole(supabase, typed);
+    if (!created) return undefined;
+    mergeRoleIntoOptions(created.id, created.name);
+    return created.id;
   };
 
   const resendInvite = async (row: Teammate) => {
@@ -298,7 +297,9 @@ export function TeammatesSettingsPage({
           }
         >
           {row.isPendingInvite
-            ? emailInitialForPendingInvite(row.email)
+            ? row.name.trim()
+              ? nameInitialsForTeammate(row.name)
+              : emailInitialForPendingInvite(row.email)
             : nameInitialsForTeammate(row.name)}
         </div>
       ),
@@ -310,7 +311,11 @@ export function TeammatesSettingsPage({
       cellType: "text-bold",
       render: (row) =>
         row.isPendingInvite ? (
-          <span style={pendingInviteNameStyle}>{row.email}</span>
+          row.name.trim() ? (
+            row.name
+          ) : (
+            <span style={invitedUserPlaceholderStyle}>Invited user</span>
+          )
         ) : (
           row.name
         ),
@@ -334,13 +339,10 @@ export function TeammatesSettingsPage({
       cellType: "custom",
       render: (row) =>
         row.email ? (
-          <span style={emailCellStyle}>
+          <span className={teammateKebabStyles.emailCell}>
             <a href={`mailto:${row.email}`} className="text-link">
               {row.email}
             </a>
-            {row.isPendingInvite ? (
-              <Tag label="Pending" variant="neutral" size="sm" />
-            ) : null}
           </span>
         ) : (
           <span style={EMPTY_CELL_STYLE}>—</span>
@@ -360,11 +362,56 @@ export function TeammatesSettingsPage({
             position="top"
             passThroughFocus
           >
-            <span style={permissionPillStyle} tabIndex={0}>
-              {labelPermission(row.permissionLevel)}
+            <span className={teammateKebabStyles.cellPillWrap} tabIndex={0}>
+              {renderPermissionPill(row.permissionLevel)}
             </span>
           </Tooltip>
         ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      width: "flex",
+      cellType: "status",
+      render: (row) => {
+        const status = teammateStatus(row);
+        if (status === "active") {
+          return (
+            <StatusPill
+              label="Active"
+              color="green"
+              appearance="filled"
+              size="md"
+              labelTypography="body"
+              className={teammateKebabStyles.tablePillMd}
+            />
+          );
+        }
+        if (status === "pending") {
+          return (
+            <StatusPill
+              label="Pending"
+              size="md"
+              labelTypography="body"
+              className={[
+                teammateKebabStyles.tablePillMd,
+                teammateKebabStyles.statusPillMuted,
+              ].join(" ")}
+            />
+          );
+        }
+        return (
+          <StatusPill
+            label="Inactive"
+            size="md"
+            labelTypography="body"
+            className={[
+              teammateKebabStyles.tablePillMd,
+              teammateKebabStyles.statusPillMuted,
+            ].join(" ")}
+          />
+        );
+      },
     },
     {
       key: "paid",
@@ -514,7 +561,11 @@ export function TeammatesSettingsPage({
       return;
     }
 
-    const roleName = roleOptionsRef.current.find((r) => r.id === form.roleId)?.name ?? null;
+    const customRole = parseCustomRoleValue(form.roleId);
+    const roleName =
+      customRole ??
+      roleOptionsRef.current.find((r) => r.id === form.roleId)?.name ??
+      null;
     if (!canManageTeammates) {
       setFormError("Only editors and admins can add new teammates.");
       return;
@@ -522,6 +573,11 @@ export function TeammatesSettingsPage({
 
     setAddSubmitting(true);
     try {
+      if (roleName) {
+        const supabase = createSupabaseBrowserClient();
+        await ensureContributorRole(supabase, roleName);
+      }
+
       const result = await sendWorkspaceInvite({
         workspace_id: activeWorkspaceId,
         email: form.email.trim(),
@@ -632,8 +688,19 @@ export function TeammatesSettingsPage({
           }
           pagination={{
             totalCount: total,
-            pageSize: PAGE_SIZE,
+            pageSize: effectivePageSize,
             pageIndex: safePage,
+            pageSizeOptions: ROWS_PER_PAGE_OPTIONS,
+            pageSizeValue: rowsPerPage,
+            onPageSizeChange: (size) => {
+              setRowsPerPage(size);
+              setPage(0);
+              try {
+                localStorage.setItem(ROWS_PER_PAGE_STORAGE_KEY, String(size));
+              } catch {
+                /* ignore */
+              }
+            },
             onPrev: () => setPage((p) => Math.max(0, p - 1)),
             onNext: () => setPage((p) => Math.min(pageCount - 1, p + 1)),
           }}
@@ -701,7 +768,7 @@ export function TeammatesSettingsPage({
         />
         <Select
           label="Role"
-          options={roleSelectOptions}
+          options={addRoleSelectOptions}
           value={form.roleId || undefined}
           onChange={(value) => {
             setFormError(null);
@@ -709,9 +776,14 @@ export function TeammatesSettingsPage({
           }}
           placeholder="Select role"
           size="sm"
-          searchable={false}
+          searchable
           creatable
-          onCreateOption={handleCreateRoleOption}
+          creatableOptionLabel={(typed) => `Add '${typed}'`}
+          onCreatableSelect={(typed) => {
+            const name = titleCaseRoleName(typed);
+            if (!name) return undefined;
+            return customRoleValue(name);
+          }}
           portaled
         />
         <Select
@@ -860,17 +932,27 @@ export function TeammatesSettingsPage({
   );
 }
 
+function customRoleValue(name: string): string {
+  return `${CUSTOM_ROLE_PREFIX}${encodeURIComponent(name.trim())}`;
+}
+
+function parseCustomRoleValue(value: string): string | null {
+  if (!value.startsWith(CUSTOM_ROLE_PREFIX)) return null;
+  try {
+    return decodeURIComponent(value.slice(CUSTOM_ROLE_PREFIX.length));
+  } catch {
+    return null;
+  }
+}
+
 function sortRoleOptions(roles: RoleOption[]): RoleOption[] {
   return [...roles].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function titleCaseRoleName(raw: string): string {
-  return raw
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ");
+function teammateStatus(row: Teammate): "active" | "pending" | "inactive" {
+  if (row.userId) return "active";
+  if (row.isPendingInvite) return "pending";
+  return "inactive";
 }
 
 function mapTeammateRow(raw: Record<string, unknown>): Teammate {
@@ -889,6 +971,22 @@ function mapTeammateRow(raw: Record<string, unknown>): Teammate {
 
 function labelPermission(value: Teammate["permissionLevel"]) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function renderPermissionPill(level: Teammate["permissionLevel"]) {
+  return (
+    <StatusPill
+      label={labelPermission(level)}
+      color="mushroom"
+      appearance="outline"
+      size="md"
+      labelTypography="body"
+      className={[
+        teammateKebabStyles.tablePillMd,
+        teammateKebabStyles.permissionPill,
+      ].join(" ")}
+    />
+  );
 }
 
 function emailInitialForPendingInvite(email: string | null) {
@@ -989,32 +1087,9 @@ const pendingInviteAvatarStyle: CSSProperties = {
   color: "var(--text-secondary, #6b5e55)",
 };
 
-const pendingInviteNameStyle: CSSProperties = {
-  color: "var(--text-secondary, #6b5e55)",
+const invitedUserPlaceholderStyle: CSSProperties = {
+  color: "var(--text-tertiary, #998c82)",
   fontSize: 13,
-};
-
-const emailCellStyle: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 8,
-  flexWrap: "wrap",
-};
-
-const permissionPillStyle: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  boxSizing: "border-box",
-  padding: "6px 12px",
-  borderRadius: 9999,
-  background: "var(--neutral-0, #ffffff)",
-  border: "1px solid var(--border-default, #e4ddd3)",
-  fontSize: 12,
-  fontWeight: 400,
-  lineHeight: 1.5,
-  color: "var(--text-secondary, #6b5e55)",
-  fontFamily: "'Plus Jakarta Sans', sans-serif",
 };
 
 const paidIconWrapStyle: CSSProperties = {

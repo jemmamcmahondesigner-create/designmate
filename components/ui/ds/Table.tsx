@@ -1,8 +1,9 @@
 'use client';
 
-import { type CSSProperties, type ReactNode } from 'react';
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { IconSquareButton } from './IconSquareButton';
+import { Menu, MenuItem } from './Menu';
 import styles from './Table.module.css';
 
 export type TableCellType =
@@ -30,12 +31,17 @@ export type ColumnDef<T> = {
   render: (row: T, context: ColumnRenderContext) => ReactNode;
 };
 
+export type TablePageSizeOption = 10 | 20 | 40 | 80 | 'all';
+
 export type TablePagination = {
   totalCount: number;
   pageSize: number;
   pageIndex: number;
   onPrev: () => void;
   onNext: () => void;
+  pageSizeOptions?: TablePageSizeOption[];
+  pageSizeValue?: TablePageSizeOption;
+  onPageSizeChange?: (size: TablePageSizeOption) => void;
 };
 
 export type TableProps<T extends { id: string }> = {
@@ -48,6 +54,60 @@ export type TableProps<T extends { id: string }> = {
   pagination?: TablePagination;
   isRowMuted?: (row: T) => boolean;
 };
+
+function pageSizeLabel(size: TablePageSizeOption): string {
+  return size === 'all' ? 'All' : String(size);
+}
+
+function TableFooterRowsPerPage({
+  value,
+  options,
+  onChange,
+}: {
+  value: TablePageSizeOption;
+  options: TablePageSizeOption[];
+  onChange: (size: TablePageSizeOption) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={styles.footerRowsPerPageTrigger}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        Rows per page: {pageSizeLabel(value)}{' '}
+        <Icon name="chevron-down" size={12} aria-hidden />
+      </button>
+      <Menu
+        open={open}
+        onClose={() => setOpen(false)}
+        anchorRef={triggerRef}
+        align="right"
+        portal
+        portalZIndex={100}
+        aria-label="Rows per page"
+      >
+        {options.map((option) => (
+          <MenuItem
+            key={String(option)}
+            label={pageSizeLabel(option)}
+            active={option === value}
+            onClick={() => {
+              onChange(option);
+              setOpen(false);
+            }}
+          />
+        ))}
+      </Menu>
+    </>
+  );
+}
 
 export function Table<T extends { id: string }>({
   columns,
@@ -70,7 +130,7 @@ export function Table<T extends { id: string }>({
     );
   }
 
-  const showFooter = pagination && pagination.totalCount > 10;
+  const showFooter = Boolean(pagination) && pagination!.totalCount > 0;
 
   const rangeStart =
     pagination && pagination.totalCount > 0
@@ -80,13 +140,16 @@ export function Table<T extends { id: string }>({
     pagination && pagination.totalCount > 0
       ? Math.min(
           pagination.totalCount,
-          (pagination.pageIndex + 1) * pagination.pageSize
+          (pagination.pageIndex + 1) * pagination.pageSize,
         )
       : 0;
   const disablePrev = !pagination || pagination.pageIndex <= 0;
   const disableNext =
     !pagination ||
     (pagination.pageIndex + 1) * pagination.pageSize >= pagination.totalCount;
+
+  const pageSizeOptions = pagination?.pageSizeOptions;
+  const pageSizeValue = pagination?.pageSizeValue ?? pagination?.pageSize ?? 10;
 
   return (
     <div className={wrapClass}>
@@ -107,8 +170,7 @@ export function Table<T extends { id: string }>({
           <tr className={styles.theadRow}>
             {columns.map((column, index) => {
               const isLast = index === columns.length - 1;
-              const showHeaderDivider =
-                !isLast && !column.noHeaderDivider;
+              const showHeaderDivider = !isLast && !column.noHeaderDivider;
               const headerLabelWrapStyle: CSSProperties = {
                 display: 'flex',
                 alignItems: 'center',
@@ -218,15 +280,25 @@ export function Table<T extends { id: string }>({
 
       {showFooter ? (
         <div className={styles.footer}>
-          <span className={styles.footerRowsPerPage}>
-            Rows per page: {pagination!.pageSize}{' '}
-            <Icon name="chevron-down" size={12} aria-hidden />
-          </span>
-          <span className={styles.footerRange}>
-            {pagination!.totalCount === 0
-              ? '0–0 of 0'
-              : `${rangeStart}–${rangeEnd} of ${pagination!.totalCount}`}
-          </span>
+          <div className={styles.footerMeta}>
+            {pageSizeOptions && pagination?.onPageSizeChange ? (
+              <TableFooterRowsPerPage
+                value={pageSizeValue as TablePageSizeOption}
+                options={pageSizeOptions}
+                onChange={pagination.onPageSizeChange}
+              />
+            ) : (
+              <span className={styles.footerRowsPerPage}>
+                Rows per page: {pagination!.pageSize}{' '}
+                <Icon name="chevron-down" size={12} aria-hidden />
+              </span>
+            )}
+            <span className={styles.footerRange}>
+              {pagination!.totalCount === 0
+                ? '0–0 of 0'
+                : `${rangeStart}–${rangeEnd} of ${pagination!.totalCount}`}
+            </span>
+          </div>
           <span className={styles.footerNav}>
             <IconSquareButton
               icon="chevron-left"
@@ -250,7 +322,7 @@ export function Table<T extends { id: string }>({
 function renderCell<T extends { id: string }>(
   column: ColumnDef<T>,
   row: T,
-  selected: boolean
+  selected: boolean,
 ): ReactNode {
   const type = column.cellType ?? 'custom';
   const raw = column.render(row, { selected });
@@ -272,8 +344,9 @@ function renderCell<T extends { id: string }>(
     case 'kebab':
       return <span className={styles.kebabCell}>{raw}</span>;
     case 'status':
-    case 'avatar':
     case 'badge':
+      return <span className={styles.cellPill}>{raw}</span>;
+    case 'avatar':
     case 'custom':
     default:
       return <span className={styles.cellCustom}>{raw}</span>;
