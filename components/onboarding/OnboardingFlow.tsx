@@ -177,7 +177,11 @@ export function OnboardingFlow({
   const [projectFor, setProjectFor] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
 
+  const inviteHeadingRef = useRef<HTMLHeadingElement>(null);
+  const [inviteDashTop, setInviteDashTop] = useState<number | null>(null);
+
   const totalSteps = isInvited ? 3 : 4;
+  const invitedConfirmationStep = isInvited && step === 3;
   const designTypeDisplay = useMemo(() => {
     const opt = DESIGN_WORK_OPTIONS.find((o) => o.value === designType);
     return opt?.label ?? "your work";
@@ -274,6 +278,23 @@ export function OnboardingFlow({
       setProjectFor((prev) => prev || company.trim());
     }
   }, [step, isInHouseTeam, company]);
+
+  useLayoutEffect(() => {
+    if (!invitedConfirmationStep) {
+      setInviteDashTop(null);
+      return;
+    }
+
+    const updateDashPosition = () => {
+      const heading = inviteHeadingRef.current;
+      if (!heading) return;
+      setInviteDashTop(heading.getBoundingClientRect().top);
+    };
+
+    updateDashPosition();
+    window.addEventListener("resize", updateDashPosition);
+    return () => window.removeEventListener("resize", updateDashPosition);
+  }, [invitedConfirmationStep, step, inviteWorkspaceName]);
 
   const persistProfile = useCallback(
     async (options?: {
@@ -532,27 +553,6 @@ export function OnboardingFlow({
       />
     );
   }
-
-  const invitedConfirmationStep = isInvited && step === 3;
-  const inviteHeadingRef = useRef<HTMLHeadingElement>(null);
-  const [inviteDashTop, setInviteDashTop] = useState<number | null>(null);
-
-  useLayoutEffect(() => {
-    if (!invitedConfirmationStep) {
-      setInviteDashTop(null);
-      return;
-    }
-
-    const updateDashPosition = () => {
-      const heading = inviteHeadingRef.current;
-      if (!heading) return;
-      setInviteDashTop(heading.getBoundingClientRect().top);
-    };
-
-    updateDashPosition();
-    window.addEventListener("resize", updateDashPosition);
-    return () => window.removeEventListener("resize", updateDashPosition);
-  }, [invitedConfirmationStep, step, inviteWorkspaceName]);
 
   return (
     <main className="onboarding-steps-enter relative flex min-h-screen w-screen flex-col overflow-hidden">
