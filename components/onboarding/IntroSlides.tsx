@@ -37,6 +37,8 @@ const SUB_FONT = "clamp(16px, 2vw, 28px)";
 
 type TransitionState = "idle" | "wiping-in" | "revealing";
 
+type IntroPhase = "loading" | "welcome-appear" | "split-transition" | "content-ready";
+
 type IntroSlidesProps = {
   reducedMotion: boolean;
   exiting?: boolean;
@@ -84,7 +86,7 @@ function SlideSub({ children }: { children: ReactNode }) {
 function WelcomeHeading({ centered = false }: { centered?: boolean }) {
   return (
     <h1
-      className={`m-0 whitespace-nowrap font-extrabold ${centered ? "onboarding-welcome-heading-centered" : "onboarding-welcome-heading-split"}`}
+      className={`m-0 font-extrabold ${centered ? "onboarding-welcome-heading-centered" : "onboarding-welcome-heading-split"}`}
       style={{
         fontSize: "48px",
         lineHeight: 1.15,
@@ -291,8 +293,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const [wipeAnchor, setWipeAnchor] = useState<"left" | "right">("left");
   const [copyVisible, setCopyVisible] = useState(false);
   const [copyFadingOut, setCopyFadingOut] = useState(false);
-  const [slide1Mounted, setSlide1Mounted] = useState(false);
-  const [imageLoaded, setImageLoaded] = useState(false);
+  const [introPhase, setIntroPhase] = useState<IntroPhase>("loading");
   const [isCompleting, setIsCompleting] = useState(false);
 
   const slide = SLIDES[slideIndex];
@@ -301,11 +302,30 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const buttonsOnDarkPanel = !slide.imageOnLeft;
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setImageLoaded(true);
-    }, 300);
-    return () => window.clearTimeout(timer);
+    if (reducedMotion) return;
+    const img = new Image();
+    img.src = SLIDE_IMAGES[0]?.src ?? "";
   }, []);
+
+  useEffect(() => {
+    if (reducedMotion) return;
+
+    const welcomeTimer = window.setTimeout(() => {
+      setIntroPhase("welcome-appear");
+    }, 3000);
+    const splitTimer = window.setTimeout(() => {
+      setIntroPhase("split-transition");
+    }, 3600);
+    const contentTimer = window.setTimeout(() => {
+      setIntroPhase("content-ready");
+    }, 4800);
+
+    return () => {
+      window.clearTimeout(welcomeTimer);
+      window.clearTimeout(splitTimer);
+      window.clearTimeout(contentTimer);
+    };
+  }, [reducedMotion]);
 
   useEffect(() => {
     if (reducedMotion) {
@@ -334,11 +354,10 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   }, []);
 
   useEffect(() => {
-    if (slideIndex === 0 && !reducedMotion && imageLoaded) {
-      setSlide1Mounted(true);
+    if (slideIndex === 0 && !reducedMotion && introPhase === "content-ready") {
       startCopyEnter();
     }
-  }, [slideIndex, reducedMotion, imageLoaded, startCopyEnter]);
+  }, [slideIndex, reducedMotion, introPhase, startCopyEnter]);
 
   const handleWipeTransitionEnd = useCallback(
     (event: TransitionEvent<HTMLDivElement>) => {
@@ -531,7 +550,6 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   }
 
   const copyClassName = [
-    slideIndex === 0 && slide1Mounted ? "onboarding-slide1-heading-enter" : "",
     copyFadingOut ? "onboarding-copy-fade-out" : "",
     !copyFadingOut && copyVisible && slideIndex !== 0 ? "onboarding-copy-enter" : "",
     !copyFadingOut && !copyVisible && slideIndex !== 0 ? "onboarding-copy-hidden" : "",
@@ -540,10 +558,10 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     .join(" ");
 
   const overlayClassName =
-    slide.showImageOverlay && slide1Mounted ? "onboarding-slide1-overlay-enter" : "";
+    slide.showImageOverlay && introPhase === "content-ready" ? "intro-content-fade" : "";
 
   const isWelcomeSlide = slideIndex === 0;
-  const showWelcomeSplit = isWelcomeSlide && imageLoaded;
+  const introControlsVisible = !isWelcomeSlide || introPhase === "content-ready";
 
   const imageColumn = (
     <ImagePanelColumn
@@ -570,7 +588,13 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   return (
     <div
       ref={containerRef}
-      className={`fixed inset-0 z-50 h-screen w-screen cursor-auto ${exiting || isCompleting ? "onboarding-intro-exit" : ""}`}
+      className={[
+        "fixed inset-0 z-50 h-screen w-screen cursor-auto",
+        `intro-phase-${introPhase}`,
+        exiting || isCompleting ? "onboarding-intro-exit" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
       <canvas
         ref={canvasRef}
@@ -579,29 +603,34 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
         aria-hidden
       />
 
-      {isWelcomeSlide && !showWelcomeSplit ? (
-        <div className="onboarding-welcome-fullscreen flex h-full w-full flex-col items-center justify-center gap-8">
-          <AuthMark height={80} squareBlink />
-          <WelcomeHeading centered />
-        </div>
+      {isWelcomeSlide ? (
+        <>
+          <div className="intro-split-layout">
+            <div className="intro-split-left">
+              <WelcomeHeading />
+            </div>
+            <div className="intro-split-right bg-[#1a0810]">
+              <ImagePanelContent
+                activeSlideIndex={0}
+                showOverlay={slide.showImageOverlay}
+                overlayClassName={overlayClassName}
+              />
+            </div>
+          </div>
+          <div className="intro-splash-fullscreen">
+            <div className="intro-splash-logo">
+              <AuthMark height={80} squareBlink={introPhase === "loading"} />
+            </div>
+            {introPhase !== "loading" ? (
+              <div className="intro-splash-welcome">
+                <WelcomeHeading centered />
+              </div>
+            ) : null}
+          </div>
+        </>
       ) : (
         <div className="flex h-full w-full">
-          {isWelcomeSlide ? (
-            <>
-              <div className="flex h-full min-w-0 flex-1 basis-0 items-center px-16 onboarding-welcome-fullscreen">
-                <WelcomeHeading />
-              </div>
-              <div
-                className={`onboarding-welcome-image-panel relative h-full min-w-0 flex-1 basis-0 overflow-hidden ${showWelcomeSplit ? "is-visible" : ""}`}
-              >
-                <ImagePanelContent
-                  activeSlideIndex={0}
-                  showOverlay={slide.showImageOverlay}
-                  overlayClassName={overlayClassName}
-                />
-              </div>
-            </>
-          ) : slide.imageOnLeft ? (
+          {slide.imageOnLeft ? (
             <>
               {imageColumn}
               {textColumn}
@@ -615,7 +644,19 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
         </div>
       )}
 
-      <div className="fixed bottom-8 right-8 z-50 flex flex-row items-center gap-2">
+      <div
+        className={[
+          "fixed bottom-8 right-8 z-50 flex flex-row items-center gap-2",
+          introControlsVisible ? "intro-content-fade" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        style={
+          introControlsVisible
+            ? undefined
+            : { opacity: 0, pointerEvents: "none" }
+        }
+      >
         {!isLastSlide ? (
           <Button
             variant={buttonsOnDarkPanel ? "ghost-on-dark" : "ghost"}

@@ -132,7 +132,132 @@
 .onboarding-left-heading {
   width: 100%;
   min-width: 0;
-  white-space: pre-wrap;
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.onboarding-left-heading h1 {
+  width: 100%;
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Intro splash — 4-phase sequence */
+.intro-splash-fullscreen {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  background: #faf8f6;
+  pointer-events: none;
+}
+
+.intro-splash-logo {
+  transition: transform 600ms ease;
+}
+
+.intro-phase-loading .intro-splash-logo,
+.intro-phase-welcome-appear .intro-splash-logo {
+  transform: translateY(0);
+}
+
+.intro-phase-welcome-appear .intro-splash-logo,
+.intro-phase-split-transition .intro-splash-logo,
+.intro-phase-content-ready .intro-splash-logo {
+  transform: translateY(-32px);
+}
+
+.intro-phase-split-transition .intro-splash-logo,
+.intro-phase-content-ready .intro-splash-logo {
+  opacity: 0;
+  transition:
+    transform 600ms ease,
+    opacity 300ms ease;
+}
+
+.intro-splash-welcome {
+  opacity: 0;
+  transform: translateY(20px);
+  transition:
+    opacity 600ms ease,
+    transform 600ms ease;
+}
+
+.intro-phase-welcome-appear .intro-splash-welcome,
+.intro-phase-split-transition .intro-splash-welcome,
+.intro-phase-content-ready .intro-splash-welcome {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.intro-phase-split-transition .intro-splash-fullscreen,
+.intro-phase-content-ready .intro-splash-fullscreen {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 300ms ease, visibility 0s linear 300ms;
+}
+
+.intro-split-layout {
+  display: flex;
+  height: 100%;
+  width: 100%;
+}
+
+.intro-split-left {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 50%;
+  align-items: center;
+  padding-left: 4rem;
+  padding-right: 4rem;
+  background: #faf8f6;
+  opacity: 0;
+  transition: opacity 700ms ease;
+}
+
+.intro-phase-split-transition .intro-split-left,
+.intro-phase-content-ready .intro-split-left {
+  opacity: 1;
+}
+
+.intro-split-right {
+  position: relative;
+  min-width: 0;
+  flex: 1 1 50%;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(100%);
+  transition:
+    transform 700ms ease,
+    opacity 700ms ease;
+}
+
+.intro-phase-split-transition .intro-split-right,
+.intro-phase-content-ready .intro-split-right {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.intro-content-fade {
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+
+.intro-phase-content-ready .intro-content-fade {
+  opacity: 1;
+}
+
+.onboarding-welcome-heading-split {
+  width: fit-content;
+  max-width: 100%;
+  white-space: normal;
+  word-wrap: break-word;
   overflow-wrap: break-word;
 }
 

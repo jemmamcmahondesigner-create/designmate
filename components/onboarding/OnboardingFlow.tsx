@@ -296,7 +296,7 @@ export function OnboardingFlow({
     const updateDashPosition = () => {
       const heading = inviteHeadingRef.current;
       if (!heading) return;
-      setInviteDashTop(heading.getBoundingClientRect().top);
+      setInviteDashTop(heading.getBoundingClientRect().top + 29);
     };
 
     updateDashPosition();

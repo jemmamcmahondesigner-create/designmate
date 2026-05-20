@@ -722,7 +722,12 @@ export function TeammatesSettingsPage({
           primaryLabel: "Add Teammate",
           primaryLoading: addSubmitting,
           primaryLoadingLabel: "Sending...",
-          primaryDisabled: !canManageTeammates || !form.email.trim() || addSubmitting,
+          primaryDisabled:
+            !canManageTeammates ||
+            !form.name.trim() ||
+            !form.email.trim() ||
+            addSubmitting,
+          showRequiredFields: true,
           onCancel: () => requestCloseForm("add"),
           onPrimary: () => void createTeammate(),
         })}
@@ -758,7 +763,7 @@ export function TeammatesSettingsPage({
           size="sm"
         />
         <Input
-          label="Email"
+          label="Email*"
           value={form.email}
           onChange={(e) => {
             setFormError(null);
@@ -1014,6 +1019,7 @@ function formFooter({
   primaryLoading,
   primaryLoadingLabel,
   primaryVariant = "primary",
+  showRequiredFields = false,
   onCancel,
   onPrimary,
 }: {
@@ -1022,6 +1028,7 @@ function formFooter({
   primaryLoading?: boolean;
   primaryLoadingLabel?: string;
   primaryVariant?: "primary" | "destructive";
+  showRequiredFields?: boolean;
   onCancel: () => void;
   onPrimary: () => void;
 }) {
@@ -1029,40 +1036,55 @@ function formFooter({
     primaryVariant === "destructive" ? "destructive" : "primary";
 
   return (
-    <div style={{ display: "flex", width: "100%", justifyContent: "flex-end", gap: 8 }}>
-      <Button
-        label="Cancel"
-        variant="secondary"
-        size="sm"
-        onClick={onCancel}
-        disabled={primaryLoading}
-      />
-      {primaryLoading ? (
-        <button
-          type="button"
-          className={[
-            buttonStyles.root,
-            buttonStyles[`variant-${primaryVariantClass}`],
-            buttonStyles["size-sm"],
-          ].join(" ")}
-          disabled
-          aria-busy="true"
-          aria-label={primaryLoadingLabel ?? primaryLabel}
-        >
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <SpinnerIcon size={14} className="animate-spin" />
-            {primaryLoadingLabel ?? "Sending..."}
-          </span>
-        </button>
-      ) : (
+    <div
+      style={{
+        display: "flex",
+        width: "100%",
+        alignItems: "center",
+        justifyContent: showRequiredFields ? "space-between" : "flex-end",
+        gap: 8,
+      }}
+    >
+      {showRequiredFields ? (
+        <p style={{ margin: 0, fontSize: 12, color: "#998c82", flex: 1 }}>
+          * Required fields
+        </p>
+      ) : null}
+      <div style={{ display: "flex", gap: 8, marginLeft: showRequiredFields ? undefined : "auto" }}>
         <Button
-          label={primaryLabel}
-          variant={primaryVariant === "destructive" ? "destructive" : "primary"}
+          label="Cancel"
+          variant="secondary"
           size="sm"
-          disabled={primaryDisabled}
-          onClick={onPrimary}
+          onClick={onCancel}
+          disabled={primaryLoading}
         />
-      )}
+        {primaryLoading ? (
+          <button
+            type="button"
+            className={[
+              buttonStyles.root,
+              buttonStyles[`variant-${primaryVariantClass}`],
+              buttonStyles["size-sm"],
+            ].join(" ")}
+            disabled
+            aria-busy="true"
+            aria-label={primaryLoadingLabel ?? primaryLabel}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <SpinnerIcon size={14} className="animate-spin" />
+              {primaryLoadingLabel ?? "Sending..."}
+            </span>
+          </button>
+        ) : (
+          <Button
+            label={primaryLabel}
+            variant={primaryVariant === "destructive" ? "destructive" : "primary"}
+            size="sm"
+            disabled={primaryDisabled}
+            onClick={onPrimary}
+          />
+        )}
+      </div>
     </div>
   );
 }

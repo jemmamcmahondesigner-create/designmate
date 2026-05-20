@@ -197,6 +197,63 @@ export function Select({
     };
   }, [open, portaled, updatePortalPosition]);
 
+  const finishSelect = useCallback((optValue: string) => {
+    onChange?.(optValue);
+    setOpen(false);
+    setSearchTerm('');
+    triggerRef.current?.focus();
+  }, [onChange]);
+
+  const confirmTypedSearch = useCallback(() => {
+    if (!creatable || !searchable) return false;
+    const typed = searchTerm.trim();
+    if (!typed) return false;
+
+    const exactOption = options.find(
+      (o) => o.label.toLowerCase() === typed.toLowerCase(),
+    );
+    if (exactOption) {
+      finishSelect(exactOption.value);
+      return true;
+    }
+
+    if (onCreatableSelect) {
+      const nextValue = onCreatableSelect(typed);
+      if (nextValue) {
+        finishSelect(nextValue);
+        return true;
+      }
+    }
+
+    if (onCreateOption) {
+      void (async () => {
+        const newId = await onCreateOption(typed);
+        if (newId) finishSelect(newId);
+      })();
+      return true;
+    }
+
+    return false;
+  }, [
+    creatable,
+    searchable,
+    searchTerm,
+    options,
+    onCreatableSelect,
+    onCreateOption,
+    finishSelect,
+  ]);
+
+  const closeMenu = useCallback(
+    (confirmCustom = false) => {
+      if (confirmCustom) {
+        confirmTypedSearch();
+      }
+      setOpen(false);
+    },
+    [confirmTypedSearch],
+  );
+
   // Close on outside mousedown only (not keyboard; mousedown fires before blur)
   useEffect(() => {
     if (!open) return;
@@ -204,18 +261,11 @@ export function Select({
       const target = e.target as Node;
       if (wrapperRef.current?.contains(target)) return;
       if (menuRef.current?.contains(target)) return;
-      setOpen(false);
+      closeMenu(true);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const finishSelect = (optValue: string) => {
-    onChange?.(optValue);
-    setOpen(false);
-    setSearchTerm('');
-    triggerRef.current?.focus();
-  };
+  }, [open, closeMenu]);
 
   const handleSelect = (optValue: string) => {
     if (optValue.startsWith(CREATE_PREFIX)) {
@@ -269,12 +319,14 @@ export function Select({
     }
 
     if (e.key === 'Tab') {
-      setOpen(false);
+      if (confirmTypedSearch()) return;
+      closeMenu(false);
       return;
     }
 
     if (e.key === 'Enter') {
       e.preventDefault();
+      if (confirmTypedSearch()) return;
       if (createValue) {
         handleSelect(createValue);
         return;
@@ -282,11 +334,6 @@ export function Select({
       const first = displayOptions.find(o => !o.disabled);
       if (first) {
         handleSelect(first.value);
-        return;
-      }
-      if (creatable && onCreatableSelect && trimmedSearch.length >= 2) {
-        const nextValue = onCreatableSelect(trimmedSearch);
-        if (nextValue) finishSelect(nextValue);
       }
     }
   };
@@ -426,6 +473,10 @@ export function Select({
                   e.nativeEvent.stopImmediatePropagation();
                 }
                 handleSearchKeyDown(e);
+              }}
+              onBlur={() => {
+                if (confirmTypedSearch()) return;
+                closeMenu(false);
               }}
               autoFocus
               aria-label="Search options"
