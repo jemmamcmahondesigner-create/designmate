@@ -50,7 +50,7 @@ const INTRO_HEADING_SLIDE_DELAY_MS = 16;
 /** Switch to STATE B after heading slide delay completes. */
 const INTRO_SPLIT_TO_STATE_B_MS = INTRO_HEADING_SLIDE_DELAY_MS + INTRO_SPLIT_ANIM_MS;
 const INTRO_CONTENT_PAUSE_MS = 600;
-const INTRO_EXIT_MS = 400;
+const INTRO_EXIT_MS = 500;
 
 /** STATE A (phases 1–2) + STATE B (phase 3+) — instant DOM switch at split. */
 const INTRO_UI_CSS = `
@@ -134,6 +134,7 @@ const INTRO_UI_CSS = `
   display: flex;
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
 }
 
 .intro-state-b-left {
@@ -146,6 +147,12 @@ const INTRO_UI_CSS = `
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  transform: translateX(0);
+}
+
+[data-intro-ui-phase="exiting"] .intro-state-b-left {
+  transform: translateX(-100%);
+  transition: transform 500ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .intro-state-b-left-inner {
@@ -188,6 +195,12 @@ const INTRO_UI_CSS = `
 
 .intro-state-b-right.is-open-immediate {
   transition: none;
+}
+
+[data-intro-ui-phase="exiting"] .intro-state-b-right.is-open-immediate {
+  transform: translateX(100%);
+  opacity: 1;
+  transition: transform 500ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .intro-split-right-peek {
@@ -836,7 +849,9 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const introSplitTransition =
     introPhase === "split" && !splitLayoutReady;
   const introControlsVisible =
-    slideIndex > 0 || introPhase === "content-ready";
+    slideIndex > 0 ||
+    introPhase === "content-ready" ||
+    introPhase === "exiting";
   const introFooterFadeClass =
     slideIndex === 0 && introControlsVisible ? "intro-content-fade" : "";
   const introSlideButtonDisabled = isCompleting || introPhase === "exiting";
@@ -863,8 +878,6 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     </div>
   );
 
-  const introScreenOpacity = introPhase === "exiting" ? 0 : 1;
-
   return (
     <div
       ref={containerRef}
@@ -885,14 +898,6 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       <div
         className="h-full w-full"
         data-intro-ui-phase={isWelcomeIntroLayout ? introPhase : undefined}
-        style={
-          isWelcomeIntroLayout
-            ? {
-                opacity: introScreenOpacity,
-                transition: "opacity 400ms ease",
-              }
-            : undefined
-        }
       >
       {isWelcomeIntroLayout ? (
         <>

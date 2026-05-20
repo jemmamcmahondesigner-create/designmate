@@ -70,7 +70,8 @@ export async function fetchWorkspaceRoleOptions(
       .from("contributors")
       .select("role")
       .eq("workspace_id", workspaceId)
-      .not("role", "is", null);
+      .not("role", "is", null)
+      .neq("role", "");
 
     if (contribError) {
       console.error("contributors role fetch error:", contribError);

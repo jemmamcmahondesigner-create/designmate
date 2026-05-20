@@ -8,6 +8,7 @@ import {
   notifyReviewersAssigned,
 } from "@/lib/notifications/reviews";
 import { logTimelineEventServer } from "@/lib/timeline/logEventServer";
+import { notifyCreatorFeedbackSubmitted } from "@/lib/reviews/notify-review-creator";
 import { canEditReviewDetails } from "@/lib/reviews/workflow";
 import type { PostgrestError } from "@supabase/supabase-js";
 
@@ -424,6 +425,13 @@ export async function submitReviewerFeedbackAction(input: {
       review_id: input.reviewId,
       review_type: normalizedReviewType
     }
+  });
+
+  await notifyCreatorFeedbackSubmitted(supabase, {
+    reviewId: input.reviewId,
+    reviewerId: currentContributor.id,
+    reviewerName: currentContributor.name,
+    feedbackText: effectiveFeedbackText || null,
   });
 
   if (

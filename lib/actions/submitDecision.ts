@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { getEffectiveCurrentContributor } from '@/lib/auth/effectiveContributor';
+import { notifyCreatorDecisionRecorded } from '@/lib/reviews/notify-review-creator';
 
 export type DecisionStatus = 'approved' | 'changes-needed';
 
@@ -104,6 +105,14 @@ export async function submitDecisionAction(input: SubmitDecisionInput) {
   if (error) {
     throw error;
   }
+
+  await notifyCreatorDecisionRecorded(supabase, {
+    reviewId,
+    decisionStatus: finalDecisionStatus,
+    decisionText: comments,
+    tradeOffNote: tradeOffNote || null,
+    decisionOwnerId: contributor?.id ?? null,
+  });
 
   revalidatePath(`/reviews/${reviewId}`);
   return { success: true as const };

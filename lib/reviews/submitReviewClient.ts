@@ -173,6 +173,7 @@ export async function submitReviewClient(
     effectiveContributor?.name?.trim() ||
     input.ownerDisplayName.trim() ||
     "Reviewer";
+  const createdBy = effectiveContributor?.id?.trim() || null;
 
   const { error } = await supabase.from("reviews").insert({
     id: input.reviewId,
@@ -186,6 +187,7 @@ export async function submitReviewClient(
     decision_owner_id: decisionOwnerId,
     require_decision_maker: input.requireDecisionMaker,
     owner_display_name: ownerDisplayNameResolved,
+    creator_id: createdBy,
     artifact_file_name: artifactFileName,
     artifact_file_type: artifactFileType,
     artifact_name: artifactName,
@@ -200,8 +202,6 @@ export async function submitReviewClient(
   if (error) {
     return { error: error.message };
   }
-
-  const createdBy = effectiveContributor?.id?.trim() || null;
 
   for (let i = 0; i < input.artifacts.length; i++) {
     const draft = input.artifacts[i];

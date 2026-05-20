@@ -34,6 +34,7 @@ import {
 import {
   ensureContributorRole,
   fetchWorkspaceRoleOptions,
+  parseWorkspaceRoleValue,
   titleCaseRoleName,
 } from "@/lib/workspace/contributorRoles";
 import { useRouter } from "next/navigation";
@@ -186,25 +187,6 @@ export function TeammatesSettingsPage({
   const start = safePage * effectivePageSize;
   const pagedRows = teammates.slice(start, start + effectivePageSize);
 
-  const formDirty = useMemo(() => {
-    if (addOpen) {
-      return (
-        form.name.trim() !== "" ||
-        form.email.trim() !== "" ||
-        form.roleId.trim() !== ""
-      );
-    }
-    if (editRow) {
-      return (
-        form.name.trim() !== editRow.name ||
-        form.email.trim() !== (editRow.email ?? "") ||
-        form.roleId !== (editRow.roleId ?? "") ||
-        form.permissionLevel !== editRow.permissionLevel
-      );
-    }
-    return false;
-  }, [addOpen, editRow, form]);
-
   const mergedRoleOptions = useMemo(() => {
     const byId = new Map<string, RoleOption>();
     for (const r of initialContributorRoles) {
@@ -223,12 +205,42 @@ export function TeammatesSettingsPage({
 
   const addRoleSelectOptions = useMemo(() => {
     const opts = [...roleSelectOptions];
-    const customLabel = form.roleId ? parseCustomRoleValue(form.roleId) : null;
+    const customLabel = form.roleId
+      ? resolveRoleTextFromFormValue(form.roleId, mergedRoleOptions)
+      : null;
     if (customLabel && !opts.some((o) => o.value === form.roleId)) {
       opts.push({ value: form.roleId, label: customLabel });
     }
     return opts;
-  }, [roleSelectOptions, form.roleId]);
+  }, [roleSelectOptions, form.roleId, mergedRoleOptions]);
+
+  const editRoleSelectOptions = useMemo(() => {
+    const opts = [...roleSelectOptions];
+    const v = form.roleId.trim();
+    if (!v || opts.some((o) => o.value === v)) return opts;
+    const label = resolveRoleTextFromFormValue(v, mergedRoleOptions) ?? v;
+    opts.push({ value: v, label });
+    return opts;
+  }, [roleSelectOptions, form.roleId, mergedRoleOptions]);
+
+  const formDirty = useMemo(() => {
+    if (addOpen) {
+      return (
+        form.name.trim() !== "" ||
+        form.email.trim() !== "" ||
+        form.roleId.trim() !== ""
+      );
+    }
+    if (editRow) {
+      return (
+        form.name.trim() !== editRow.name ||
+        form.email.trim() !== (editRow.email ?? "") ||
+        form.roleId !== initialRoleFormValue(editRow, mergedRoleOptions) ||
+        form.permissionLevel !== editRow.permissionLevel
+      );
+    }
+    return false;
+  }, [addOpen, editRow, form, mergedRoleOptions]);
 
   useLayoutEffect(() => {
     roleOptionsRef.current = mergedRoleOptions;
@@ -433,7 +445,7 @@ export function TeammatesSettingsPage({
       label: "",
       width: 40,
       align: "center",
-      cellType: "custom",
+      cellType: "kebab",
       render: (row) => {
         const isOwnRow = isOwnTeammateRow(row.userId, currentUserId);
         const showKebab = row.isPendingInvite
@@ -516,11 +528,10 @@ export function TeammatesSettingsPage({
 
   const openEdit = (row: Teammate) => {
     setFormError(null);
-    const roleName = row.roleName ?? null;
     setForm({
       name: row.name,
       email: row.email ?? "",
-      roleId: row.roleId ?? "",
+      roleId: initialRoleFormValue(row, mergedRoleOptions),
       permissionLevel: row.permissionLevel,
     });
     setEditRow(row);
@@ -562,11 +573,10 @@ export function TeammatesSettingsPage({
       return;
     }
 
-    const customRole = parseCustomRoleValue(form.roleId);
-    const roleName =
-      customRole ??
-      roleOptionsRef.current.find((r) => r.id === form.roleId)?.name ??
-      null;
+    const roleName = resolveRoleTextFromFormValue(
+      form.roleId,
+      roleOptionsRef.current,
+    );
     if (!canManageTeammates) {
       setFormError("Only editors and admins can add new teammates.");
       return;
@@ -606,19 +616,23 @@ export function TeammatesSettingsPage({
     if (!editRow || !form.name.trim() || editRow.isPending || editRow.isPendingInvite) return;
     setFormError(null);
     const supabase = createSupabaseBrowserClient();
-    const roleName = roleOptionsRef.current.find((r) => r.id === form.roleId)?.name ?? null;
+    const roleText = resolveRoleTextFromFormValue(
+      form.roleId,
+      roleOptionsRef.current,
+    );
     const permission_level = form.permissionLevel;
     const { data, error } = await supabase
       .from("contributors")
       .update({
         name: form.name.trim(),
         email: form.email.trim() || null,
-        role: roleName ?? null,
-        role_id: form.roleId || null,
+        role: roleText,
         permission_level,
       })
       .eq("id", editRow.id)
-      .select("id, name, email, role, role_id, permission_level, is_paid, contributor_roles(name)")
+      .select(
+        "id, name, email, role, role_id, permission_level, is_paid, user_id, contributor_roles(name)",
+      )
       .single();
     if (error) {
       setFormError(error.message || "Could not save teammate.");
@@ -643,7 +657,11 @@ export function TeammatesSettingsPage({
       .eq("id", editRow.id);
     void paidError;
 
-    upsertTeammate(mapTeammateRow(data as Record<string, unknown>));
+    const updated = mapTeammateRow(data as Record<string, unknown>);
+    upsertTeammate({
+      ...updated,
+      userId: updated.userId ?? editRow.userId ?? null,
+    });
     setEditRow(null);
     showToast("Changes saved");
   };
@@ -772,7 +790,7 @@ export function TeammatesSettingsPage({
           }}
           size="sm"
         />
-        <AddTeammateRoleSelect
+        <TeammateRoleSelect
           active={addOpen}
           options={addRoleSelectOptions}
           value={form.roleId || undefined}
@@ -843,20 +861,14 @@ export function TeammatesSettingsPage({
           }}
           size="sm"
         />
-        <Select
-          label="Role"
-          options={roleSelectOptions}
+        <TeammateRoleSelect
+          active={Boolean(editRow)}
+          options={editRoleSelectOptions}
           value={form.roleId || undefined}
           onChange={(value) => {
             setFormError(null);
             applyRoleIdToForm(value);
           }}
-          placeholder="Select role"
-          size="sm"
-          searchable={false}
-          creatable
-          onCreateOption={handleCreateRoleOption}
-          portaled
         />
         {showPermissionFieldInEdit ? (
           <Select
@@ -896,6 +908,7 @@ export function TeammatesSettingsPage({
         open={Boolean(removeRow)}
         type="destructive"
         size="sm"
+        className={teammateKebabStyles.removeModal}
         title={`Remove ${removeRow?.name ?? "teammate"} from this workspace?`}
         onClose={() => setRemoveRow(null)}
         footer={formFooter({
@@ -930,19 +943,19 @@ export function TeammatesSettingsPage({
 const ADD_TEAMMATE_ROLE_SEARCH_INPUT = 'input[aria-label="Search options"]';
 const ADD_TEAMMATE_ROLE_MENU = 'ul[role="listbox"][aria-label="Role"]';
 
-type AddTeammateRoleSelectProps = {
+type TeammateRoleSelectProps = {
   active: boolean;
   options: { value: string; label: string }[];
   value?: string;
   onChange: (roleId: string) => void;
 };
 
-function AddTeammateRoleSelect({
+function TeammateRoleSelect({
   active,
   options,
   value,
   onChange,
-}: AddTeammateRoleSelectProps) {
+}: TeammateRoleSelectProps) {
   const rootRef = useRef<HTMLDivElement>(null);
 
   const confirmTypedRole = useCallback(
@@ -950,11 +963,12 @@ function AddTeammateRoleSelect({
       const typed = raw.trim();
       if (!typed) return;
 
-      const existing = options.find(
-        (o) =>
-          o.label.toLowerCase() === typed.toLowerCase() ||
-          o.value.toLowerCase() === typed.toLowerCase(),
-      );
+      const typedKey = typed.toLowerCase();
+      const existing = options.find((o) => {
+        const label = o.label.trim().toLowerCase();
+        const valueKey = cleanRole(o.value).trim().toLowerCase();
+        return label === typedKey || valueKey === typedKey;
+      });
       if (existing) {
         onChange(existing.value);
         return;
@@ -962,7 +976,7 @@ function AddTeammateRoleSelect({
 
       const name = titleCaseRoleName(typed);
       if (!name) return;
-      onChange(customRoleValue(name));
+      onChange(name);
     },
     [options, onChange],
   );
@@ -1030,7 +1044,7 @@ function AddTeammateRoleSelect({
         onCreatableSelect={(typed) => {
           const name = titleCaseRoleName(typed);
           if (!name) return undefined;
-          return customRoleValue(name);
+          return name;
         }}
         portaled
       />
@@ -1049,6 +1063,42 @@ function parseCustomRoleValue(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+function cleanRole(value: string): string {
+  if (value.startsWith("__role__:")) {
+    return decodeURIComponent(value.replace("__role__:", ""));
+  }
+  return value;
+}
+
+function resolveRoleTextFromFormValue(
+  value: string,
+  options: RoleOption[],
+): string | null {
+  if (!value.trim()) return null;
+  const custom = parseCustomRoleValue(value);
+  if (custom) return custom;
+  const workspace = parseWorkspaceRoleValue(value);
+  if (workspace) return workspace;
+  const opt = options.find((r) => r.id === value);
+  if (opt) return opt.name;
+  return cleanRole(value.trim()) || null;
+}
+
+/** Pre-populate edit role from contributors.role text (plain); use option id only for global seed roles (UUID). */
+function initialRoleFormValue(row: Teammate, options: RoleOption[]): string {
+  const name = row.roleName?.trim();
+  if (!name) return row.roleId ?? "";
+  const match = options.find((o) => o.name.toLowerCase() === name.toLowerCase());
+  if (
+    match &&
+    !parseWorkspaceRoleValue(match.id) &&
+    !match.id.startsWith(CUSTOM_ROLE_PREFIX)
+  ) {
+    return match.id;
+  }
+  return name;
 }
 
 function sortRoleOptions(roles: RoleOption[]): RoleOption[] {

@@ -5,24 +5,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
   padding: 4px;
   box-sizing: border-box;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-}
-
-:global(tr:hover) .teammateKebabCell,
-:global(tr[class*="rowSelected"]) .teammateKebabCell {
-  opacity: 1;
-  pointer-events: auto;
+  flex-shrink: 0;
 }
 
 .teammateKebabCell :global(button) {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
   width: 32px;
   height: 32px;
   border: none;
@@ -92,4 +88,13 @@
 
 .cellPillWrap {
   flex-shrink: 0;
+}
+
+/* Remove teammate modal — long names must wrap within dialog width */
+.removeModal :global(#modal-title) {
+  max-width: 100%;
+  font-size: 18px;
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }

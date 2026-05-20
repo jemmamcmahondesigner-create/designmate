@@ -5,6 +5,7 @@ import {
   mapPendingWorkspaceInvites,
 } from "@/lib/workspace/teammates";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
+import { fetchWorkspaceRoleOptions } from "@/lib/workspace/contributorRoles";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -21,22 +22,14 @@ export default async function SettingsTeammatesPage() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
 
-  const { data: rolesRows, error: rolesError } = await adminClient
-    .from("contributor_roles")
-    .select("id, name")
-    .order("name", { ascending: true });
+  const initialContributorRoles = await fetchWorkspaceRoleOptions(
+    adminClient,
+    activeWorkspaceId,
+  );
 
   if (process.env.NODE_ENV === "development") {
-    console.log("contributor_roles raw:", rolesRows);
-    console.log("contributor_roles error:", rolesError);
+    console.log("contributor_roles (merged with workspace):", initialContributorRoles);
   }
-
-  const initialContributorRoles = (rolesRows ?? [])
-    .map((row) => {
-      const o = row as Record<string, unknown>;
-      return { id: String(o.id ?? ""), name: String(o.name ?? "") };
-    })
-    .filter((r) => r.id.trim() !== "" && r.name.trim() !== "");
 
   if (!activeWorkspaceId) {
     return (

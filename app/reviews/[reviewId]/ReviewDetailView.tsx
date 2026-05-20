@@ -253,6 +253,7 @@ export interface ReviewDetailViewProps {
   contactDisplayById?: Record<string, string>;
   decision: DecisionData;
   reviewOwnerName: string | null;
+  lastReminderSentAt?: string | null;
   reviewCreatedAt?: string | null;
   activeTabIndex?: number;
   /** Tradeoffs from `reviews.tradeoffs` jsonb (e.g. create-review AI). */
@@ -580,6 +581,7 @@ export function ReviewDetailView({
   contactDisplayById = {},
   decision: decisionData,
   reviewOwnerName,
+  lastReminderSentAt: lastReminderSentAtProp = null,
   reviewCreatedAt = null,
   activeTabIndex = 0,
   tradeoffs: tradeoffsProp = [],
@@ -642,6 +644,63 @@ export function ReviewDetailView({
   );
   const [savingReviewers, setSavingReviewers] = useState(false);
   const [sendingReminder, setSendingReminder] = useState(false);
+  const [lastReminderSentAt, setLastReminderSentAt] = useState<string | null>(
+    lastReminderSentAtProp,
+  );
+
+  useEffect(() => {
+    setLastReminderSentAt(lastReminderSentAtProp);
+  }, [lastReminderSentAtProp]);
+
+  const isReminderRateLimited = useMemo(() => {
+    if (!lastReminderSentAt) return false;
+    const sentAt = new Date(lastReminderSentAt).getTime();
+    if (Number.isNaN(sentAt)) return false;
+    return Date.now() - sentAt < 24 * 60 * 60 * 1000;
+  }, [lastReminderSentAt]);
+
+  const handleSendReminder = useCallback(async (): Promise<boolean> => {
+    if (sendingReminder) return false;
+    setSendingReminder(true);
+    try {
+      const res = await fetch(`/api/reviews/${encodeURIComponent(reviewId)}/remind`, {
+        method: 'POST',
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        sent?: number;
+        last_reminder_sent_at?: string | null;
+        last_sent_at?: string | null;
+        error?: string;
+      };
+      if (res.status === 429) {
+        const rateLimitedAt =
+          data.last_sent_at ?? data.last_reminder_sent_at ?? lastReminderSentAt;
+        if (rateLimitedAt) setLastReminderSentAt(rateLimitedAt);
+        showToast('A reminder was already sent today');
+        return false;
+      }
+      if (!res.ok) {
+        showToast('Failed to send reminder — please try again');
+        return false;
+      }
+      if (data.last_reminder_sent_at) {
+        setLastReminderSentAt(data.last_reminder_sent_at);
+      }
+      const sent = typeof data.sent === 'number' ? data.sent : 0;
+      if (sent === 0) {
+        showToast('No pending reviewers to remind');
+      } else {
+        const label = sent === 1 ? 'reviewer' : 'reviewers';
+        showToast(`Reminder sent to ${sent} ${label}`);
+      }
+      return sent > 0;
+    } catch {
+      showToast('Failed to send reminder — please try again');
+      return false;
+    } finally {
+      setSendingReminder(false);
+    }
+  }, [reviewId, sendingReminder, showToast, lastReminderSentAt]);
   const [showFeedbackDrawer, setShowFeedbackDrawer] = useState(false);
   const [showFinalDecisionDrawer, setShowFinalDecisionDrawer] = useState(false);
   const [feedbackSubmitToast, setFeedbackSubmitToast] = useState<string | null>(null);
@@ -1537,13 +1596,9 @@ export function ReviewDetailView({
               artifacts={artifacts}
               onOpenSubmitFeedbackDrawer={() => setShowFeedbackDrawer(true)}
               onOpenFinalDecisionDrawer={() => setShowFinalDecisionDrawer(true)}
-              onSendReminder={async () => {
-                if (sendingReminder) return;
-                setSendingReminder(true);
-                await new Promise((resolve) => setTimeout(resolve, 350));
-                setSendingReminder(false);
-              }}
+              onSendReminder={handleSendReminder}
               sendingReminder={sendingReminder}
+              isReminderRateLimited={isReminderRateLimited}
               canCurrentUserMakeDecision={canCurrentUserMakeDecision}
               currentContributorId={currentContributorId}
               canSubmitFeedback={canSubmitFeedback}
@@ -2459,14 +2514,9 @@ export function ReviewDetailView({
             artifacts={artifacts}
             onOpenSubmitFeedbackDrawer={() => setShowFeedbackDrawer(true)}
             onOpenFinalDecisionDrawer={() => setShowFinalDecisionDrawer(true)}
-            onSendReminder={async () => {
-              if (sendingReminder) return;
-              setSendingReminder(true);
-              // TODO: wire up reminder notification
-              await new Promise((resolve) => setTimeout(resolve, 350));
-              setSendingReminder(false);
-            }}
+            onSendReminder={handleSendReminder}
             sendingReminder={sendingReminder}
+            isReminderRateLimited={isReminderRateLimited}
             canCurrentUserMakeDecision={canCurrentUserMakeDecision}
             currentContributorId={currentContributorId}
             canSubmitFeedback={canSubmitFeedback}
@@ -3578,6 +3628,7 @@ function RightColumn({
   onOpenFinalDecisionDrawer,
   onSendReminder,
   sendingReminder,
+  isReminderRateLimited,
   canCurrentUserMakeDecision,
   currentContributorId,
   canSubmitFeedback,
@@ -3644,8 +3695,9 @@ function RightColumn({
   artifacts: ReviewArtifact[];
   onOpenSubmitFeedbackDrawer: () => void;
   onOpenFinalDecisionDrawer: () => void;
-  onSendReminder: () => Promise<void>;
+  onSendReminder: () => Promise<boolean>;
   sendingReminder: boolean;
+  isReminderRateLimited: boolean;
   canCurrentUserMakeDecision: boolean;
   currentContributorId: string | null;
   canSubmitFeedback: boolean;
@@ -3682,8 +3734,19 @@ function RightColumn({
   const width = open ? 'clamp(360px, 34vw, 440px)' : RHC_CLOSED_WIDTH;
   const decisionMade = decision !== null;
   const stage = deriveFeedbackStage(feedback, decisionMade);
-  const reminderDisabled = allReviewerFeedbackSubmitted || sendingReminder || reviewClosed;
+  const reminderDisabled =
+    allReviewerFeedbackSubmitted ||
+    sendingReminder ||
+    reviewClosed ||
+    isReminderRateLimited;
+  const [reminderJustSent, setReminderJustSent] = useState(false);
   const filterAnchorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!reminderJustSent) return;
+    const timer = window.setTimeout(() => setReminderJustSent(false), 3000);
+    return () => window.clearTimeout(timer);
+  }, [reminderJustSent]);
   const filterButtonVariant = hasActiveFilters ? 'primary' : 'secondary';
   const filterButtonStyle: React.CSSProperties | undefined =
     !hasActiveFilters && showFilterMenu
@@ -3784,11 +3847,15 @@ function RightColumn({
                   {canEditCoreDetails && (
                     <Tooltip
                       label={
-                        reviewClosed
-                          ? 'This review has been closed'
-                          : reminderDisabled
-                            ? 'All reviewers have submitted feedback'
-                            : 'Send reminder to pending reviewers'
+                        reminderJustSent
+                          ? 'Reminder sent'
+                          : isReminderRateLimited
+                            ? 'Reminder already sent today'
+                            : reviewClosed
+                              ? 'This review has been closed'
+                              : reminderDisabled && !sendingReminder
+                                ? 'All reviewers have submitted feedback'
+                                : 'Send reminder to pending reviewers'
                       }
                       position="bottom"
                     >
@@ -3802,10 +3869,16 @@ function RightColumn({
                           icon="leading"
                           iconOnly
                           iconName="notification"
-                          style={headerIconDimmedStyle}
+                          style={{
+                            ...headerIconDimmedStyle,
+                            opacity: sendingReminder ? 0.5 : headerIconDimmedStyle.opacity,
+                          }}
                           disabled={reminderDisabled}
                           onClick={() => {
-                            void onSendReminder();
+                            void (async () => {
+                              const ok = await onSendReminder();
+                              if (ok) setReminderJustSent(true);
+                            })();
                           }}
                         />
                       </span>
