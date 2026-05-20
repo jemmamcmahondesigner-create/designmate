@@ -36,8 +36,12 @@ const SUB_FONT = "clamp(16px, 2vw, 28px)";
 
 const INTRO_LOADING_MS = 3000;
 const INTRO_WELCOME_ANIM_MS = 800;
-/** Right-panel slide-in duration (Phase 3). */
-const INTRO_SPLIT_MS = 900;
+/** Right-panel + heading horizontal slide duration (Phase 3). */
+const INTRO_SPLIT_ANIM_MS = 950;
+/** Delay before starting heading slide (avoids layout jerk). */
+const INTRO_HEADING_SLIDE_DELAY_MS = 16;
+/** Switch to STATE B after heading slide delay completes. */
+const INTRO_SPLIT_TO_STATE_B_MS = INTRO_HEADING_SLIDE_DELAY_MS + INTRO_SPLIT_ANIM_MS;
 /** Settle ends at 4800ms (3000 + 800 + 1000). */
 const INTRO_WELCOME_SETTLE_MS = 1000;
 const INTRO_CONTENT_PAUSE_MS = 600;
@@ -46,11 +50,11 @@ const INTRO_CONTENT_PAUSE_MS = 600;
 const INTRO_UI_CSS = `
 @keyframes intro-logo-bounce-up {
   0%   { transform: translate(-50%, -50%) translateY(0px); }
-  45%  { transform: translate(-50%, -50%) translateY(-100px); }
-  65%  { transform: translate(-50%, -50%) translateY(-65px); }
-  80%  { transform: translate(-50%, -50%) translateY(-88px); }
-  90%  { transform: translate(-50%, -50%) translateY(-78px); }
-  100% { transform: translate(-50%, -50%) translateY(-81px); }
+  45%  { transform: translate(-50%, -50%) translateY(-112px); }
+  65%  { transform: translate(-50%, -50%) translateY(-77px); }
+  80%  { transform: translate(-50%, -50%) translateY(-100px); }
+  90%  { transform: translate(-50%, -50%) translateY(-90px); }
+  100% { transform: translate(-50%, -50%) translateY(-93px); }
 }
 
 /* ── STATE A: full-screen cream (loading → welcome-settle) ── */
@@ -75,12 +79,12 @@ const INTRO_UI_CSS = `
 }
 
 [data-intro-ui-phase="welcome-settle"] .intro-state-a-logo {
-  transform: translate(-50%, -50%) translateY(-81px);
+  transform: translate(-50%, -50%) translateY(-93px);
 }
 
 [data-intro-ui-phase="split"] .intro-state-a-logo {
   opacity: 0;
-  transform: translate(-50%, -50%) translateY(-81px);
+  transform: translate(-50%, -50%) translateY(-93px);
   animation: none;
   transition: opacity 300ms ease;
 }
@@ -93,7 +97,7 @@ const INTRO_UI_CSS = `
   margin: 0;
   opacity: 0;
   transform: translate(-50%, calc(-50% + 20px));
-  transition: opacity 800ms ease, transform 800ms ease, left 900ms cubic-bezier(0.25, 0.1, 0.25, 1);
+  transition: opacity 800ms ease, transform 800ms ease;
   pointer-events: none;
   max-width: none;
   white-space: normal;
@@ -101,16 +105,23 @@ const INTRO_UI_CSS = `
   overflow-wrap: break-word;
 }
 
+.intro-state-a-heading.intro-heading-split-prepare {
+  opacity: 1;
+  transition: none;
+  transform: translate(-50%, -50%);
+}
+
+.intro-state-a-heading.intro-heading-split-active {
+  opacity: 1;
+  transition: left 950ms cubic-bezier(0.4, 0, 0.2, 1), transform 950ms cubic-bezier(0.4, 0, 0.2, 1);
+  left: 64px;
+  transform: translate(0, -50%);
+}
+
 [data-intro-ui-phase="welcome-appear"] .intro-state-a-heading,
 [data-intro-ui-phase="welcome-settle"] .intro-state-a-heading {
   opacity: 1;
   transform: translate(-50%, -50%);
-}
-
-[data-intro-ui-phase="split"] .intro-state-a-heading {
-  opacity: 1;
-  left: 64px;
-  transform: translate(0, -50%);
 }
 
 /* ── STATE B: two-panel (split → content-ready) ── */
@@ -130,8 +141,13 @@ const INTRO_UI_CSS = `
   flex-direction: column;
   align-items: center;
   justify-content: center;
+}
+
+.intro-state-b-left-inner {
+  width: 100%;
   padding-left: 64px;
   padding-right: 64px;
+  box-sizing: border-box;
 }
 
 .intro-state-b-left h1 {
@@ -155,7 +171,7 @@ const INTRO_UI_CSS = `
   transform: translateX(100%);
   opacity: 0;
   transition:
-    transform 900ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    transform 950ms cubic-bezier(0.4, 0, 0.2, 1),
     opacity 300ms ease;
 }
 
@@ -181,7 +197,7 @@ const INTRO_UI_CSS = `
   transform: translateX(100%);
   opacity: 0;
   transition:
-    transform 900ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    transform 950ms cubic-bezier(0.4, 0, 0.2, 1),
     opacity 300ms ease;
 }
 
@@ -193,9 +209,9 @@ const INTRO_UI_CSS = `
 .intro-state-b-overlay {
   position: absolute;
   top: 50%;
-  left: 50%;
-  width: calc(100% - 80px);
-  transform: translate(-50%, -50%);
+  left: 64px;
+  right: 64px;
+  transform: translateY(-50%);
   z-index: 1;
   margin: 0;
   opacity: 0;
@@ -491,6 +507,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const [introPhase, setIntroPhase] = useState<IntroPhase>("loading");
   const [splitRightPanelOpen, setSplitRightPanelOpen] = useState(false);
   const [splitLayoutReady, setSplitLayoutReady] = useState(false);
+  const [headingSlideStarted, setHeadingSlideStarted] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
 
   const slide = SLIDES[slideIndex];
@@ -510,7 +527,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     const welcomeAppearAt = INTRO_LOADING_MS;
     const welcomeSettleAt = INTRO_LOADING_MS + INTRO_WELCOME_ANIM_MS;
     const splitAt = INTRO_LOADING_MS + INTRO_WELCOME_ANIM_MS + INTRO_WELCOME_SETTLE_MS;
-    const contentReadyAt = splitAt + INTRO_SPLIT_MS + INTRO_CONTENT_PAUSE_MS;
+    const contentReadyAt = splitAt + INTRO_SPLIT_ANIM_MS + INTRO_CONTENT_PAUSE_MS;
 
     const welcomeTimer = window.setTimeout(() => {
       setIntroPhase("welcome-appear");
@@ -545,12 +562,22 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     });
     const layoutTimer = window.setTimeout(() => {
       setSplitLayoutReady(true);
-    }, INTRO_SPLIT_MS);
+    }, INTRO_SPLIT_TO_STATE_B_MS);
     return () => {
       cancelAnimationFrame(frame);
       window.clearTimeout(layoutTimer);
     };
   }, [introPhase]);
+
+  useEffect(() => {
+    if (introPhase !== "split" || splitLayoutReady) {
+      setHeadingSlideStarted(false);
+      return;
+    }
+    setHeadingSlideStarted(false);
+    const t = window.setTimeout(() => setHeadingSlideStarted(true), INTRO_HEADING_SLIDE_DELAY_MS);
+    return () => window.clearTimeout(t);
+  }, [introPhase, splitLayoutReady]);
 
   useEffect(() => {
     if (reducedMotion) {
@@ -782,7 +809,10 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const introStateB = splitLayoutReady || introPhase === "content-ready";
   const introSplitTransition =
     introPhase === "split" && !splitLayoutReady;
-  const introControlsVisible = !isWelcomeIntroLayout || introPhase === "content-ready";
+  const introControlsVisible =
+    slideIndex > 0 || introPhase === "content-ready";
+  const introFooterFadeClass =
+    slideIndex === 0 && introControlsVisible ? "intro-content-fade" : "";
   const introSlideButtonDisabled = isCompleting;
   const slideButtonDisabled = isTransitioning || isCompleting;
 
@@ -835,7 +865,18 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
                   <AuthMark height={80} squareBlink={introPhase === "loading"} />
                 </div>
                 {introPhase !== "loading" ? (
-                  <div className="intro-state-a-heading">
+                  <div
+                    className={[
+                      "intro-state-a-heading",
+                      introSplitTransition
+                        ? headingSlideStarted
+                          ? "intro-heading-split-active"
+                          : "intro-heading-split-prepare"
+                        : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
                     <WelcomeHeading />
                   </div>
                 ) : null}
@@ -856,7 +897,9 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
             {introStateB ? (
               <div className="intro-state-b">
                 <div className="intro-state-b-left">
-                  <WelcomeHeading />
+                  <div className="intro-state-b-left-inner">
+                    <WelcomeHeading />
+                  </div>
                 </div>
                 <div className="intro-state-b-right is-open-immediate">
                   <ImagePanelContent
@@ -888,7 +931,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       <div
         className={[
           "fixed bottom-8 right-8 z-50 flex flex-row items-center gap-2",
-          introControlsVisible ? "intro-content-fade" : "",
+          introFooterFadeClass,
         ]
           .filter(Boolean)
           .join(" ")}
