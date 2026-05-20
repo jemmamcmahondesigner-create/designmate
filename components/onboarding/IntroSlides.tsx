@@ -35,24 +35,30 @@ const HEADING_FONT_WELCOME = "clamp(28px, 3.5vw, 48px)";
 const SUB_FONT = "clamp(16px, 2vw, 28px)";
 
 const INTRO_LOADING_MS = 3000;
+const INTRO_LOGO_BOUNCE_MS = 1200;
 const INTRO_WELCOME_ANIM_MS = 800;
+const INTRO_WELCOME_SETTLE_MS = 1000;
+/** Logo bounce at 3000ms; heading fade starts after bounce (4200ms). */
+const INTRO_HEADING_FADE_START_MS = INTRO_LOADING_MS + INTRO_LOGO_BOUNCE_MS;
+/** Split at 4200 + 800 + 1000 = 6000ms. */
+const INTRO_SPLIT_START_MS =
+  INTRO_HEADING_FADE_START_MS + INTRO_WELCOME_ANIM_MS + INTRO_WELCOME_SETTLE_MS;
 /** Right-panel + heading horizontal slide duration (Phase 3). */
 const INTRO_SPLIT_ANIM_MS = 950;
 /** Delay before starting heading slide (avoids layout jerk). */
 const INTRO_HEADING_SLIDE_DELAY_MS = 16;
 /** Switch to STATE B after heading slide delay completes. */
 const INTRO_SPLIT_TO_STATE_B_MS = INTRO_HEADING_SLIDE_DELAY_MS + INTRO_SPLIT_ANIM_MS;
-/** Settle ends at 4800ms (3000 + 800 + 1000). */
-const INTRO_WELCOME_SETTLE_MS = 1000;
 const INTRO_CONTENT_PAUSE_MS = 600;
+const INTRO_EXIT_MS = 400;
 
 /** STATE A (phases 1–2) + STATE B (phase 3+) — instant DOM switch at split. */
 const INTRO_UI_CSS = `
 @keyframes intro-logo-bounce-up {
   0%   { transform: translate(-50%, -50%) translateY(0px); }
   45%  { transform: translate(-50%, -50%) translateY(-112px); }
-  65%  { transform: translate(-50%, -50%) translateY(-77px); }
-  80%  { transform: translate(-50%, -50%) translateY(-100px); }
+  65%  { transform: translate(-50%, -50%) translateY(-82px); }
+  80%  { transform: translate(-50%, -50%) translateY(-96px); }
   90%  { transform: translate(-50%, -50%) translateY(-90px); }
   100% { transform: translate(-50%, -50%) translateY(-93px); }
 }
@@ -75,7 +81,7 @@ const INTRO_UI_CSS = `
 }
 
 [data-intro-ui-phase="welcome-appear"] .intro-state-a-logo {
-  animation: intro-logo-bounce-up 1100ms ease-in-out forwards;
+  animation: intro-logo-bounce-up 1200ms cubic-bezier(0.34, 1.2, 0.64, 1) forwards;
 }
 
 [data-intro-ui-phase="welcome-settle"] .intro-state-a-logo {
@@ -118,7 +124,6 @@ const INTRO_UI_CSS = `
   transform: translate(0, -50%);
 }
 
-[data-intro-ui-phase="welcome-appear"] .intro-state-a-heading,
 [data-intro-ui-phase="welcome-settle"] .intro-state-a-heading {
   opacity: 1;
   transform: translate(-50%, -50%);
@@ -244,7 +249,8 @@ type IntroPhase =
   | "welcome-appear"
   | "welcome-settle"
   | "split"
-  | "content-ready";
+  | "content-ready"
+  | "exiting";
 
 type IntroSlidesProps = {
   reducedMotion: boolean;
@@ -509,6 +515,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const [splitLayoutReady, setSplitLayoutReady] = useState(false);
   const [headingSlideStarted, setHeadingSlideStarted] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
+  const introExitTimerRef = useRef<number | null>(null);
 
   const slide = SLIDES[slideIndex];
   const isLastSlide = slideIndex === SLIDE_COUNT - 1;
@@ -524,31 +531,36 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   useEffect(() => {
     if (reducedMotion) return;
 
-    const welcomeAppearAt = INTRO_LOADING_MS;
-    const welcomeSettleAt = INTRO_LOADING_MS + INTRO_WELCOME_ANIM_MS;
-    const splitAt = INTRO_LOADING_MS + INTRO_WELCOME_ANIM_MS + INTRO_WELCOME_SETTLE_MS;
-    const contentReadyAt = splitAt + INTRO_SPLIT_ANIM_MS + INTRO_CONTENT_PAUSE_MS;
-
-    const welcomeTimer = window.setTimeout(() => {
+    const logoBounceTimer = window.setTimeout(() => {
       setIntroPhase("welcome-appear");
-    }, welcomeAppearAt);
-    const settleTimer = window.setTimeout(() => {
+    }, INTRO_LOADING_MS);
+    const headingFadeTimer = window.setTimeout(() => {
       setIntroPhase("welcome-settle");
-    }, welcomeSettleAt);
+    }, INTRO_HEADING_FADE_START_MS);
     const splitTimer = window.setTimeout(() => {
       setIntroPhase("split");
-    }, splitAt);
+    }, INTRO_SPLIT_START_MS);
+    const contentReadyAt =
+      INTRO_SPLIT_START_MS + INTRO_SPLIT_ANIM_MS + INTRO_CONTENT_PAUSE_MS;
     const contentTimer = window.setTimeout(() => {
       setIntroPhase("content-ready");
     }, contentReadyAt);
 
     return () => {
-      window.clearTimeout(welcomeTimer);
-      window.clearTimeout(settleTimer);
+      window.clearTimeout(logoBounceTimer);
+      window.clearTimeout(headingFadeTimer);
       window.clearTimeout(splitTimer);
       window.clearTimeout(contentTimer);
     };
   }, [reducedMotion]);
+
+  useEffect(() => {
+    return () => {
+      if (introExitTimerRef.current !== null) {
+        window.clearTimeout(introExitTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (introPhase !== "split") {
@@ -671,8 +683,19 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       completeIntro();
       return;
     }
+    if (slideIndex === 0 && introPhase === "content-ready") {
+      setIntroPhase("exiting");
+      introExitTimerRef.current = window.setTimeout(() => {
+        introExitTimerRef.current = null;
+        goToSlide(1);
+      }, INTRO_EXIT_MS);
+      return;
+    }
+    if (introPhase === "exiting") {
+      return;
+    }
     goToSlide(slideIndex + 1);
-  }, [isLastSlide, completeIntro, goToSlide, slideIndex]);
+  }, [isLastSlide, completeIntro, goToSlide, slideIndex, introPhase]);
 
   const resizeCanvas = useCallback(() => {
     const container = containerRef.current;
@@ -806,14 +829,17 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     introPhase === "welcome-appear" ||
     introPhase === "welcome-settle" ||
     (introPhase === "split" && !splitLayoutReady);
-  const introStateB = splitLayoutReady || introPhase === "content-ready";
+  const introStateB =
+    splitLayoutReady ||
+    introPhase === "content-ready" ||
+    introPhase === "exiting";
   const introSplitTransition =
     introPhase === "split" && !splitLayoutReady;
   const introControlsVisible =
     slideIndex > 0 || introPhase === "content-ready";
   const introFooterFadeClass =
     slideIndex === 0 && introControlsVisible ? "intro-content-fade" : "";
-  const introSlideButtonDisabled = isCompleting;
+  const introSlideButtonDisabled = isCompleting || introPhase === "exiting";
   const slideButtonDisabled = isTransitioning || isCompleting;
 
   const imageColumn = (
@@ -837,10 +863,11 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
     </div>
   );
 
+  const introScreenOpacity = introPhase === "exiting" ? 0 : 1;
+
   return (
     <div
       ref={containerRef}
-      data-intro-ui-phase={isWelcomeIntroLayout ? introPhase : undefined}
       className={[
         "fixed inset-0 z-50 h-screen w-screen cursor-auto",
         exiting || isCompleting ? "onboarding-intro-exit" : "",
@@ -855,6 +882,18 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
         aria-hidden
       />
 
+      <div
+        className="h-full w-full"
+        data-intro-ui-phase={isWelcomeIntroLayout ? introPhase : undefined}
+        style={
+          isWelcomeIntroLayout
+            ? {
+                opacity: introScreenOpacity,
+                transition: "opacity 400ms ease",
+              }
+            : undefined
+        }
+      >
       {isWelcomeIntroLayout ? (
         <>
           <style dangerouslySetInnerHTML={{ __html: INTRO_UI_CSS }} />
@@ -962,10 +1001,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
           icon="trailing"
           iconName="chevron-right"
           disabled={isWelcomeIntroLayout ? introSlideButtonDisabled : slideButtonDisabled}
-          onClick={() => {
-            console.log("next clicked, current phase:", introPhase);
-            handleNext();
-          }}
+          onClick={handleNext}
           style={
             buttonsOnDarkPanel
               ? undefined
@@ -976,6 +1012,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
                 }
           }
         />
+      </div>
       </div>
     </div>
   );
