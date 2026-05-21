@@ -30,6 +30,28 @@ async function fetchContributorEmailAndName(
   return { email, name };
 }
 
+/** reviews.creator_id → auth.users(id); legacy rows may still store contributors.id. */
+async function fetchReviewCreatorEmailAndName(
+  supabase: SupabaseClient,
+  creatorId: string,
+): Promise<{ email: string; name: string } | null> {
+  const byContributorId = await fetchContributorEmailAndName(supabase, creatorId);
+  if (byContributorId) return byContributorId;
+
+  const { data } = await supabase
+    .from("contributors")
+    .select("email, name")
+    .eq("user_id", creatorId)
+    .limit(1)
+    .maybeSingle();
+  if (!data) return null;
+  const row = data as { email: string | null; name: string | null };
+  const email = row.email?.trim();
+  if (!email) return null;
+  const name = row.name?.trim() || email.split("@")[0] || "there";
+  return { email, name };
+}
+
 export async function notifyCreatorFeedbackSubmitted(
   supabase: SupabaseClient,
   input: {
@@ -55,7 +77,7 @@ export async function notifyCreatorFeedbackSubmitted(
     const creatorId = String(reviewRow.creator_id ?? "").trim();
     if (!creatorId || creatorId === input.reviewerId) return;
 
-    const creator = await fetchContributorEmailAndName(supabase, creatorId);
+    const creator = await fetchReviewCreatorEmailAndName(supabase, creatorId);
     if (!creator) return;
 
     const { data: changeRows } = await supabase
@@ -129,7 +151,7 @@ export async function notifyCreatorDecisionRecorded(
     ).trim();
     if (!creatorId || (decisionOwnerId && creatorId === decisionOwnerId)) return;
 
-    const creator = await fetchContributorEmailAndName(supabase, creatorId);
+    const creator = await fetchReviewCreatorEmailAndName(supabase, creatorId);
     if (!creator) return;
 
     let decisionMakerName = "A teammate";

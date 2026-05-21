@@ -8,10 +8,10 @@ alter table public.contributors
 
 -- Creator attribution for review notification emails (Part 2).
 alter table public.reviews
-  add column if not exists creator_id uuid references public.contributors(id) on delete set null;
+  add column if not exists creator_id uuid references auth.users(id) on delete set null;
 
 update public.reviews r
-set creator_id = sub.actor_id
+set creator_id = c.user_id
 from (
   select distinct on (review_id) review_id, actor_id
   from public.timeline_events
@@ -19,5 +19,7 @@ from (
     and actor_id is not null
   order by review_id, created_at asc
 ) sub
+join public.contributors c on c.id = sub.actor_id
 where r.id = sub.review_id
-  and r.creator_id is null;
+  and r.creator_id is null
+  and c.user_id is not null;

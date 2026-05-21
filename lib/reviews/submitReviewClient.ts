@@ -75,14 +75,30 @@ export function validateSubmitInput(
   return null;
 }
 
+async function resolveAuthUserId(
+  supabase: ReturnType<typeof createSupabaseBrowserClient>,
+): Promise<string | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  return user?.id?.trim() || null;
+}
+
+type ContributorResolveResult =
+  | { contributorId: string; userIdMismatch: false }
+  | { contributorId: string | null; userIdMismatch: true }
+  | { contributorId: string | null; userIdMismatch: false };
+
 /**
- * reviews.creator_id → contributors.id (see migration).
- * Resolve the signed-in user's contributor row for this project (from auth.uid()).
+ * Contributor id for timeline actor_id and artifacts.created_by (→ contributors.id).
+ * Verifies contributors.user_id matches auth.users when both are present.
  */
-async function resolveReviewCreatorId(
+async function resolveContributorIdForProject(
   supabase: ReturnType<typeof createSupabaseBrowserClient>,
   projectId: string,
-): Promise<string | null> {
+): Promise<ContributorResolveResult> {
+  const authUserId = await resolveAuthUserId(supabase);
+
   const devContributorId = readDevImpersonationContributorIdFromBrowser();
   const effectiveContributor = await resolveEffectiveContributor(
     supabase,
@@ -90,38 +106,55 @@ async function resolveReviewCreatorId(
     devContributorId,
   );
   if (effectiveContributor?.id?.trim()) {
-    return effectiveContributor.id.trim();
+    const contributorId = effectiveContributor.id.trim();
+    if (authUserId) {
+      const mismatch = await contributorUserIdMismatch(
+        supabase,
+        contributorId,
+        authUserId,
+      );
+      if (mismatch) return { contributorId, userIdMismatch: true };
+    }
+    return { contributorId, userIdMismatch: false };
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const authUserId = user?.id?.trim();
-  if (!authUserId) return null;
+  if (!authUserId) {
+    return { contributorId: null, userIdMismatch: false };
+  }
 
   const { data: byUserId } = await supabase
     .from("contributors")
-    .select("id")
+    .select("id, user_id")
     .eq("project_id", projectId)
     .eq("user_id", authUserId)
     .maybeSingle();
   const contributorFromUser = String(
     (byUserId as { id?: string | null } | null)?.id ?? "",
   ).trim();
-  if (contributorFromUser) return contributorFromUser;
+  if (contributorFromUser) {
+    return { contributorId: contributorFromUser, userIdMismatch: false };
+  }
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   const email = user?.email?.trim();
   if (email) {
     const { data: byEmail } = await supabase
       .from("contributors")
-      .select("id")
+      .select("id, user_id")
       .eq("project_id", projectId)
       .ilike("email", email)
       .maybeSingle();
-    const contributorFromEmail = String(
-      (byEmail as { id?: string | null } | null)?.id ?? "",
-    ).trim();
-    if (contributorFromEmail) return contributorFromEmail;
+    const row = byEmail as { id?: string | null; user_id?: string | null } | null;
+    const contributorFromEmail = String(row?.id ?? "").trim();
+    if (contributorFromEmail) {
+      const linkedUserId = String(row?.user_id ?? "").trim();
+      if (linkedUserId && linkedUserId !== authUserId) {
+        return { contributorId: contributorFromEmail, userIdMismatch: true };
+      }
+      return { contributorId: contributorFromEmail, userIdMismatch: false };
+    }
   }
 
   const { data: workspaceRow } = await supabase
@@ -135,17 +168,33 @@ async function resolveReviewCreatorId(
   if (workspaceId) {
     const { data: workspaceContributor } = await supabase
       .from("contributors")
-      .select("id")
+      .select("id, user_id")
       .eq("workspace_id", workspaceId)
       .eq("user_id", authUserId)
       .maybeSingle();
     const id = String(
       (workspaceContributor as { id?: string | null } | null)?.id ?? "",
     ).trim();
-    if (id) return id;
+    if (id) return { contributorId: id, userIdMismatch: false };
   }
 
-  return null;
+  return { contributorId: null, userIdMismatch: false };
+}
+
+async function contributorUserIdMismatch(
+  supabase: ReturnType<typeof createSupabaseBrowserClient>,
+  contributorId: string,
+  authUserId: string,
+): Promise<boolean> {
+  const { data } = await supabase
+    .from("contributors")
+    .select("user_id")
+    .eq("id", contributorId)
+    .maybeSingle();
+  const linkedUserId = String(
+    (data as { user_id?: string | null } | null)?.user_id ?? "",
+  ).trim();
+  return Boolean(linkedUserId && linkedUserId !== authUserId);
 }
 
 function fileTypeForVersion(
@@ -246,8 +295,22 @@ export async function submitReviewClient(
     effectiveContributor?.name?.trim() ||
     input.ownerDisplayName.trim() ||
     "Reviewer";
-  const creatorId = await resolveReviewCreatorId(supabase, input.projectId);
-  const createdBy = creatorId;
+  const authUserId = await resolveAuthUserId(supabase);
+  if (!authUserId) {
+    return { error: "You must be signed in to create a review." };
+  }
+
+  const contributorResolved = await resolveContributorIdForProject(
+    supabase,
+    input.projectId,
+  );
+  if (contributorResolved.userIdMismatch) {
+    return {
+      error:
+        "Your account does not match this project membership. Please sign out and sign in again.",
+    };
+  }
+  const createdBy = contributorResolved.contributorId;
 
   const { error } = await supabase.from("reviews").insert({
     id: input.reviewId,
@@ -261,7 +324,7 @@ export async function submitReviewClient(
     decision_owner_id: decisionOwnerId,
     require_decision_maker: input.requireDecisionMaker,
     owner_display_name: ownerDisplayNameResolved,
-    creator_id: creatorId,
+    creator_id: authUserId,
     artifact_file_name: artifactFileName,
     artifact_file_type: artifactFileType,
     artifact_name: artifactName,
@@ -332,7 +395,7 @@ export async function submitReviewClient(
   await logTimelineEventClient({
     projectId: input.projectId,
     reviewId: input.reviewId,
-    actorId: creatorId,
+    actorId: createdBy,
     eventType: "review_created",
     payload: {
       review_title: input.title.trim(),
@@ -344,7 +407,7 @@ export async function submitReviewClient(
   await logTimelineEventClient({
     projectId: input.projectId,
     reviewId: input.reviewId,
-    actorId: creatorId,
+    actorId: createdBy,
     eventType: "artifact_uploaded",
     payload: {
       iteration_label: primaryArtifact?.iterationLabel ?? "v1",
