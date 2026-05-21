@@ -75,6 +75,79 @@ export function validateSubmitInput(
   return null;
 }
 
+/**
+ * reviews.creator_id → contributors.id (see migration).
+ * Resolve the signed-in user's contributor row for this project (from auth.uid()).
+ */
+async function resolveReviewCreatorId(
+  supabase: ReturnType<typeof createSupabaseBrowserClient>,
+  projectId: string,
+): Promise<string | null> {
+  const devContributorId = readDevImpersonationContributorIdFromBrowser();
+  const effectiveContributor = await resolveEffectiveContributor(
+    supabase,
+    projectId,
+    devContributorId,
+  );
+  if (effectiveContributor?.id?.trim()) {
+    return effectiveContributor.id.trim();
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const authUserId = user?.id?.trim();
+  if (!authUserId) return null;
+
+  const { data: byUserId } = await supabase
+    .from("contributors")
+    .select("id")
+    .eq("project_id", projectId)
+    .eq("user_id", authUserId)
+    .maybeSingle();
+  const contributorFromUser = String(
+    (byUserId as { id?: string | null } | null)?.id ?? "",
+  ).trim();
+  if (contributorFromUser) return contributorFromUser;
+
+  const email = user?.email?.trim();
+  if (email) {
+    const { data: byEmail } = await supabase
+      .from("contributors")
+      .select("id")
+      .eq("project_id", projectId)
+      .ilike("email", email)
+      .maybeSingle();
+    const contributorFromEmail = String(
+      (byEmail as { id?: string | null } | null)?.id ?? "",
+    ).trim();
+    if (contributorFromEmail) return contributorFromEmail;
+  }
+
+  const { data: workspaceRow } = await supabase
+    .from("projects")
+    .select("workspace_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  const workspaceId = String(
+    (workspaceRow as { workspace_id?: string | null } | null)?.workspace_id ?? "",
+  ).trim();
+  if (workspaceId) {
+    const { data: workspaceContributor } = await supabase
+      .from("contributors")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", authUserId)
+      .maybeSingle();
+    const id = String(
+      (workspaceContributor as { id?: string | null } | null)?.id ?? "",
+    ).trim();
+    if (id) return id;
+  }
+
+  return null;
+}
+
 function fileTypeForVersion(
   kind: "file" | "link",
   stored: ReviewArtifactStored
@@ -167,13 +240,14 @@ export async function submitReviewClient(
   const effectiveContributor = await resolveEffectiveContributor(
     supabase,
     input.projectId,
-    devContributorId
+    devContributorId,
   );
   const ownerDisplayNameResolved =
     effectiveContributor?.name?.trim() ||
     input.ownerDisplayName.trim() ||
     "Reviewer";
-  const createdBy = effectiveContributor?.id?.trim() || null;
+  const creatorId = await resolveReviewCreatorId(supabase, input.projectId);
+  const createdBy = creatorId;
 
   const { error } = await supabase.from("reviews").insert({
     id: input.reviewId,
@@ -187,7 +261,7 @@ export async function submitReviewClient(
     decision_owner_id: decisionOwnerId,
     require_decision_maker: input.requireDecisionMaker,
     owner_display_name: ownerDisplayNameResolved,
-    creator_id: createdBy,
+    creator_id: creatorId,
     artifact_file_name: artifactFileName,
     artifact_file_type: artifactFileType,
     artifact_name: artifactName,
@@ -258,6 +332,7 @@ export async function submitReviewClient(
   await logTimelineEventClient({
     projectId: input.projectId,
     reviewId: input.reviewId,
+    actorId: creatorId,
     eventType: "review_created",
     payload: {
       review_title: input.title.trim(),
@@ -269,6 +344,7 @@ export async function submitReviewClient(
   await logTimelineEventClient({
     projectId: input.projectId,
     reviewId: input.reviewId,
+    actorId: creatorId,
     eventType: "artifact_uploaded",
     payload: {
       iteration_label: primaryArtifact?.iterationLabel ?? "v1",
