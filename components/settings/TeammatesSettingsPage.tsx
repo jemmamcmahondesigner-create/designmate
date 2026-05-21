@@ -48,6 +48,7 @@ import {
   canShowTeammateKebabMenu,
   isOwnTeammateRow,
   isPaidPermissionLevel,
+  mapWorkspaceMemberRole,
   normalizeWorkspacePermission,
 } from "@/lib/workspace/permissions";
 
@@ -188,40 +189,46 @@ export function TeammatesSettingsPage({
   const pagedRows = teammates.slice(start, start + effectivePageSize);
 
   const mergedRoleOptions = useMemo(() => {
-    const byId = new Map<string, RoleOption>();
+    const byName = new Map<string, RoleOption>();
     for (const r of initialContributorRoles) {
-      if (r.id.trim() !== "" && r.name.trim() !== "") byId.set(r.id, r);
+      const name = r.name.trim();
+      if (!name) continue;
+      byName.set(name.toLowerCase(), { id: name, name });
     }
     for (const r of roleOptions) {
-      if (r.id.trim() !== "" && r.name.trim() !== "") byId.set(r.id, r);
+      const name = r.name.trim();
+      if (!name) continue;
+      byName.set(name.toLowerCase(), { id: name, name });
     }
-    return sortRoleOptions([...byId.values()]);
+    return sortRoleOptions([...byName.values()]);
   }, [initialContributorRoles, roleOptions]);
 
   const roleSelectOptions = useMemo(
-    () => mergedRoleOptions.map((role) => ({ value: role.id, label: role.name })),
+    () =>
+      mergedRoleOptions.map((role) => ({
+        value: role.name,
+        label: role.name,
+      })),
     [mergedRoleOptions],
   );
 
   const addRoleSelectOptions = useMemo(() => {
     const opts = [...roleSelectOptions];
-    const customLabel = form.roleId
-      ? resolveRoleTextFromFormValue(form.roleId, mergedRoleOptions)
-      : null;
-    if (customLabel && !opts.some((o) => o.value === form.roleId)) {
-      opts.push({ value: form.roleId, label: customLabel });
-    }
+    const v = form.roleId.trim();
+    if (!v || opts.some((o) => o.value === v)) return opts;
+    const label = titleCaseRoleName(v) || v;
+    opts.push({ value: v, label });
     return opts;
-  }, [roleSelectOptions, form.roleId, mergedRoleOptions]);
+  }, [roleSelectOptions, form.roleId]);
 
   const editRoleSelectOptions = useMemo(() => {
     const opts = [...roleSelectOptions];
     const v = form.roleId.trim();
     if (!v || opts.some((o) => o.value === v)) return opts;
-    const label = resolveRoleTextFromFormValue(v, mergedRoleOptions) ?? v;
+    const label = titleCaseRoleName(v) || v;
     opts.push({ value: v, label });
     return opts;
-  }, [roleSelectOptions, form.roleId, mergedRoleOptions]);
+  }, [roleSelectOptions, form.roleId]);
 
   const formDirty = useMemo(() => {
     if (addOpen) {
@@ -252,9 +259,15 @@ export function TeammatesSettingsPage({
     }
   }, [roleSelectOptions]);
 
-  const mergeRoleIntoOptions = (id: string, name: string) => {
+  const mergeRoleIntoOptions = (name: string) => {
+    const label = name.trim();
+    if (!label) return;
     setRoleOptions((prev) => {
-      const next = sortRoleOptions([...prev.filter((r) => r.id !== id), { id, name }]);
+      const key = label.toLowerCase();
+      const next = sortRoleOptions([
+        ...prev.filter((r) => r.name.toLowerCase() !== key),
+        { id: label, name: label },
+      ]);
       roleOptionsRef.current = next;
       return next;
     });
@@ -264,8 +277,8 @@ export function TeammatesSettingsPage({
     const supabase = createSupabaseBrowserClient();
     const created = await ensureContributorRole(supabase, typed);
     if (!created) return undefined;
-    mergeRoleIntoOptions(created.id, created.name);
-    return created.id;
+    mergeRoleIntoOptions(created.name);
+    return created.name;
   };
 
   const resendInvite = async (row: Teammate) => {
@@ -627,7 +640,6 @@ export function TeammatesSettingsPage({
         name: form.name.trim(),
         email: form.email.trim() || null,
         role: roleText,
-        permission_level,
       })
       .eq("id", editRow.id)
       .select(
@@ -643,12 +655,31 @@ export function TeammatesSettingsPage({
       return;
     }
 
-    if (canEditPermission && !editingOwnRow && editRow.memberId) {
-      const workspaceMemberRole = permission_level === "admin" ? "admin" : "member";
-      await supabase
-        .from("workspace_members")
-        .update({ role: workspaceMemberRole })
-        .eq("id", editRow.memberId);
+    if (canEditPermission && !editingOwnRow) {
+      const contributorUserId = editRow.userId?.trim() || null;
+      if (!contributorUserId) {
+        console.warn(
+          "[teammates] Cannot update workspace_members.permission_level — contributor has no user_id",
+          { contributorId: editRow.id },
+        );
+      } else if (!activeWorkspaceId) {
+        console.warn(
+          "[teammates] Cannot update workspace_members.permission_level — no active workspace",
+        );
+      } else {
+        const { error: memberError } = await supabase
+          .from("workspace_members")
+          .update({
+            permission_level,
+            role: mapWorkspaceMemberRole(permission_level),
+          })
+          .eq("workspace_id", activeWorkspaceId)
+          .eq("user_id", contributorUserId);
+        if (memberError) {
+          setFormError(memberError.message || "Could not update permission level.");
+          return;
+        }
+      }
     }
 
     const { error: paidError } = await supabase
@@ -661,9 +692,12 @@ export function TeammatesSettingsPage({
     upsertTeammate({
       ...updated,
       userId: updated.userId ?? editRow.userId ?? null,
+      permissionLevel: permission_level,
+      isPaid: isPaidPermissionLevel(permission_level),
     });
     setEditRow(null);
     showToast("Changes saved");
+    router.refresh();
   };
 
   const removeTeammate = async () => {
@@ -884,6 +918,7 @@ export function TeammatesSettingsPage({
             }}
             placeholder="Select permission"
             size="sm"
+            portaled
           />
         ) : editingOwnRow ? null : (
           <Tooltip
@@ -899,6 +934,7 @@ export function TeammatesSettingsPage({
               placeholder="Select permission"
               disabled
               size="sm"
+              portaled
             />
           </Tooltip>
         )}
@@ -967,7 +1003,11 @@ function TeammateRoleSelect({
       const existing = options.find((o) => {
         const label = o.label.trim().toLowerCase();
         const valueKey = cleanRole(o.value).trim().toLowerCase();
-        return label === typedKey || valueKey === typedKey;
+        return (
+          label === typedKey ||
+          valueKey === typedKey ||
+          o.value.trim().toLowerCase() === typedKey
+        );
       });
       if (existing) {
         onChange(existing.value);
@@ -1077,28 +1117,28 @@ function resolveRoleTextFromFormValue(
   options: RoleOption[],
 ): string | null {
   if (!value.trim()) return null;
-  const custom = parseCustomRoleValue(value);
-  if (custom) return custom;
-  const workspace = parseWorkspaceRoleValue(value);
-  if (workspace) return workspace;
-  const opt = options.find((r) => r.id === value);
+  const legacy =
+    parseCustomRoleValue(value) ??
+    parseWorkspaceRoleValue(value) ??
+    null;
+  if (legacy) return legacy;
+  const trimmed = value.trim();
+  const opt = options.find(
+    (r) =>
+      r.name.toLowerCase() === trimmed.toLowerCase() ||
+      r.id === trimmed ||
+      r.id.toLowerCase() === trimmed.toLowerCase(),
+  );
   if (opt) return opt.name;
-  return cleanRole(value.trim()) || null;
+  return cleanRole(trimmed) || null;
 }
 
-/** Pre-populate edit role from contributors.role text (plain); use option id only for global seed roles (UUID). */
+/** Pre-populate edit role from contributors.role plain text (match option casing when known). */
 function initialRoleFormValue(row: Teammate, options: RoleOption[]): string {
   const name = row.roleName?.trim();
-  if (!name) return row.roleId ?? "";
+  if (!name) return "";
   const match = options.find((o) => o.name.toLowerCase() === name.toLowerCase());
-  if (
-    match &&
-    !parseWorkspaceRoleValue(match.id) &&
-    !match.id.startsWith(CUSTOM_ROLE_PREFIX)
-  ) {
-    return match.id;
-  }
-  return name;
+  return match?.name ?? name;
 }
 
 function sortRoleOptions(roles: RoleOption[]): RoleOption[] {

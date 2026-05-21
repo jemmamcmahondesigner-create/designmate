@@ -59,10 +59,9 @@ export async function fetchWorkspaceRoleOptions(
   const byKey = new Map<string, RoleOption>();
   for (const row of globalRows ?? []) {
     const o = row as Record<string, unknown>;
-    const id = String(o.id ?? "").trim();
     const name = String(o.name ?? "").trim();
-    if (!id || !name) continue;
-    byKey.set(name.toLowerCase(), { id, name });
+    if (!name) continue;
+    byKey.set(name.toLowerCase(), { id: name, name });
   }
 
   if (workspaceId) {
@@ -81,7 +80,7 @@ export async function fetchWorkspaceRoleOptions(
         if (!role) continue;
         const key = role.toLowerCase();
         if (!byKey.has(key)) {
-          byKey.set(key, { id: workspaceRoleValue(role), name: role });
+          byKey.set(key, { id: role, name: role });
         }
       }
     }
@@ -102,7 +101,7 @@ export async function ensureContributorRole(
   if (!name) return null;
 
   if (!BASE_ROLE_NAME_KEYS.has(name.toLowerCase())) {
-    return { id: workspaceRoleValue(name), name };
+    return { id: name, name };
   }
 
   const { data, error } = await supabase
@@ -114,7 +113,7 @@ export async function ensureContributorRole(
   if (!error && data && typeof data === "object" && "id" in data) {
     const id = String((data as Record<string, unknown>).id ?? "");
     const label = String((data as Record<string, unknown>).name ?? name);
-    if (id) return { id, name: label };
+    if (id) return { id: label, name: label };
   }
 
   if (error && String((error as { code?: string }).code) === "23505") {
@@ -123,10 +122,9 @@ export async function ensureContributorRole(
       .select("id, name")
       .eq("name", name)
       .maybeSingle();
-    if (existing && typeof existing === "object" && "id" in existing) {
-      const id = String((existing as Record<string, unknown>).id ?? "");
-      const label = String((existing as Record<string, unknown>).name ?? name);
-      if (id) return { id, name: label };
+    if (existing && typeof existing === "object" && "name" in existing) {
+      const label = String((existing as Record<string, unknown>).name ?? name).trim();
+      if (label) return { id: label, name: label };
     }
   }
 

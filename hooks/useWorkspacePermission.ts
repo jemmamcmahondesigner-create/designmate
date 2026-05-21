@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { readDevImpersonationContributorIdFromBrowser } from "@/lib/auth/resolveEffectiveContributor";
 import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
@@ -129,6 +129,8 @@ export function useWorkspacePermission(workspaceId: string | null) {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const refreshRef = useRef<() => Promise<void>>(async () => {});
+
   const refresh = useCallback(async () => {
     if (!workspaceId) {
       setPermissionLevel(null);
@@ -146,6 +148,8 @@ export function useWorkspacePermission(workspaceId: string | null) {
     setPermissionLevel(level);
     setLoading(false);
   }, [workspaceId]);
+
+  refreshRef.current = refresh;
 
   useEffect(() => {
     let cancelled = false;
@@ -179,6 +183,46 @@ export function useWorkspacePermission(workspaceId: string | null) {
       window.removeEventListener("storage", onStorage);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (!workspaceId || !userId) return;
+
+    const supabase = createSupabaseBrowserClient();
+    const channelName = `workspace_members_permission_${workspaceId}_${userId}`;
+
+    try {
+      const channel = supabase.channel(channelName);
+      channel.on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "workspace_members",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          void refreshRef.current();
+        },
+      );
+      channel.subscribe((status) => {
+        if (status === "CHANNEL_ERROR") {
+          console.warn(
+            "workspace_members realtime subscription failed — falling back to manual refresh only",
+          );
+        }
+      });
+
+      return () => {
+        void supabase.removeChannel(channel);
+      };
+    } catch (err) {
+      console.warn(
+        "workspace_members realtime subscription failed — falling back to manual refresh only",
+        err,
+      );
+      return undefined;
+    }
+  }, [workspaceId, userId]);
 
   return {
     permissionLevel,
