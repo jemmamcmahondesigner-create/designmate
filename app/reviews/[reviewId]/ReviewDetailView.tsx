@@ -57,10 +57,12 @@ import type {
 } from '@/components/ui/ds';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatDistanceToNow } from '@/lib/formatDistanceToNow';
+import { useClientRelativeTime } from '@/lib/hooks/useClientRelativeTime';
 import {
   canAddTradeoff,
   canEditReviewDetails,
   canMakeDecision,
+  canSendReviewReminder,
   canSubmitFeedback as canSubmitFeedbackByRole,
   canUseViewOnlyReviewMode,
   getDecisionMakerReviewerId,
@@ -164,6 +166,8 @@ interface FeedbackThread {
   author: string;
   authorAvatarSrc?: string;
   timestamp: string;
+  /** ISO timestamp for client-only relative display (avoids SSR hydration mismatch). */
+  submittedAtIso?: string | null;
   type: 'Feedback' | 'Decision' | 'Question';
   text?: string;
   optionTag?: string;
@@ -462,14 +466,24 @@ function toOrdinalDay(day: number) {
   return `${day}th`;
 }
 
+const REVIEW_DATE_LOCALE_OPTS = { timeZone: 'UTC' } as const;
+
 function formatRequestedAtTooltip(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  const month = date.toLocaleString('en-US', { month: 'long' });
-  const day = toOrdinalDay(date.getDate());
-  const year = date.getFullYear();
+  const month = date.toLocaleString('en-US', {
+    month: 'long',
+    ...REVIEW_DATE_LOCALE_OPTS,
+  });
+  const day = toOrdinalDay(date.getUTCDate());
+  const year = date.getUTCFullYear();
   const time = date
-    .toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+    .toLocaleString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      ...REVIEW_DATE_LOCALE_OPTS,
+    })
     .toLowerCase();
   return `${month} ${day}, ${year} @ ${time}`;
 }
@@ -478,11 +492,19 @@ function formatReviewDetailsDate(value: string | null | undefined) {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  const month = date.toLocaleString('en-US', { month: 'long' });
-  const day = date.getDate();
-  const year = date.getFullYear();
+  const month = date.toLocaleString('en-US', {
+    month: 'long',
+    ...REVIEW_DATE_LOCALE_OPTS,
+  });
+  const day = date.getUTCDate();
+  const year = date.getUTCFullYear();
   const time = date
-    .toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+    .toLocaleString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      ...REVIEW_DATE_LOCALE_OPTS,
+    })
     .toLowerCase();
   return `${month} ${day}, ${year} @ ${time}`;
 }
@@ -654,11 +676,19 @@ export function ReviewDetailView({
     setLastReminderSentAt(lastReminderSentAtProp);
   }, [lastReminderSentAtProp]);
 
-  const isReminderRateLimited = useMemo(() => {
-    if (!lastReminderSentAt) return false;
+  const [isReminderRateLimited, setIsReminderRateLimited] = useState(false);
+
+  useEffect(() => {
+    if (!lastReminderSentAt) {
+      setIsReminderRateLimited(false);
+      return;
+    }
     const sentAt = new Date(lastReminderSentAt).getTime();
-    if (Number.isNaN(sentAt)) return false;
-    return Date.now() - sentAt < 24 * 60 * 60 * 1000;
+    if (Number.isNaN(sentAt)) {
+      setIsReminderRateLimited(false);
+      return;
+    }
+    setIsReminderRateLimited(Date.now() - sentAt < 24 * 60 * 60 * 1000);
   }, [lastReminderSentAt]);
 
   const handleSendReminder = useCallback(async (): Promise<boolean> => {
@@ -1291,9 +1321,8 @@ export function ReviewDetailView({
       id: fid,
       reviewerId: entry.reviewerId,
       author: entry.reviewerName,
-      timestamp: entry.submittedAt
-        ? formatDistanceToNow(new Date(entry.submittedAt), { addSuffix: true })
-        : '',
+      timestamp: '',
+      submittedAtIso: entry.submittedAt ?? null,
       type: entry.feedbackText ? 'Feedback' : 'Feedback',
       text: entry.feedbackText ?? undefined,
       optionTag: entry.selectedOption ?? undefined,
@@ -1306,6 +1335,30 @@ export function ReviewDetailView({
   const pendingFeedbackCount = feedbackThreads.filter(
     (c) => c.status === 'pending' || c.status === 'decision-required'
   ).length;
+  const currentContributorName = useMemo(() => {
+    if (!currentContributorId) return null;
+    return contributors.find((c) => c.id === currentContributorId)?.name ?? null;
+  }, [contributors, currentContributorId]);
+  const canSendReminder = useMemo(
+    () =>
+      canSendReviewReminder({
+        permissionLevel: currentContributorPermissionLevel,
+        reviewOwnerName,
+        currentContributorId,
+        currentContributorName,
+      }),
+    [
+      currentContributorPermissionLevel,
+      reviewOwnerName,
+      currentContributorId,
+      currentContributorName,
+    ],
+  );
+  const showReminderBell =
+    canSendReminder &&
+    pendingFeedbackCount > 0 &&
+    !allReviewerFeedbackSubmitted;
+  const decisionAlertTimestamp = useClientRelativeTime(decisionData.madeAt ?? null);
   const canSubmitFeedback = canSubmitFeedbackByRole({
     currentContributorId,
     reviewerIds,
@@ -1604,7 +1657,7 @@ export function ReviewDetailView({
               canCurrentUserMakeDecision={canCurrentUserMakeDecision}
               currentContributorId={currentContributorId}
               canSubmitFeedback={canSubmitFeedback}
-              canEditCoreDetails={canEditCoreDetails}
+              showReminderBell={showReminderBell}
               allReviewerFeedbackSubmitted={allReviewerFeedbackSubmitted}
               reviewOwnerName={reviewOwnerName}
               totalCardCount={totalCardCount}
@@ -1707,6 +1760,7 @@ export function ReviewDetailView({
                             month: 'long',
                             day: 'numeric',
                             year: 'numeric',
+                            timeZone: 'UTC',
                           })
                         : 'Decision'}
                     </span>
@@ -1805,11 +1859,7 @@ export function ReviewDetailView({
                         : 'Changes Needed'
                   }
                   authorName={decisionAttributionName}
-                  timestamp={
-                    decisionData.madeAt
-                      ? formatDistanceToNow(new Date(decisionData.madeAt), { addSuffix: true })
-                      : undefined
-                  }
+                  timestamp={decisionAlertTimestamp || undefined}
                   actionLabel="View full decision"
                   onAction={openDecisionLogTab}
                   dismissible={false}
@@ -2522,7 +2572,7 @@ export function ReviewDetailView({
             canCurrentUserMakeDecision={canCurrentUserMakeDecision}
             currentContributorId={currentContributorId}
             canSubmitFeedback={canSubmitFeedback}
-            canEditCoreDetails={canEditCoreDetails}
+            showReminderBell={showReminderBell}
             allReviewerFeedbackSubmitted={allReviewerFeedbackSubmitted}
             reviewOwnerName={reviewOwnerName}
             totalCardCount={totalCardCount}
@@ -3614,6 +3664,107 @@ function ChangeRequestReplyComposer({
   );
 }
 
+function RelativeTimeText({
+  iso,
+  className,
+}: {
+  iso: string;
+  className?: string;
+}) {
+  const label = useClientRelativeTime(iso);
+  if (!label) return null;
+  return <span className={className}>{label}</span>;
+}
+
+function FeedbackThreadCommentCard({
+  thread,
+  threadReplies,
+  cardCategory,
+  currentContributorId,
+  canCurrentUserMakeDecision,
+  contributorsById,
+  reviewOwnerName,
+  onFeedbackReply,
+  onMakeDecision,
+}: {
+  thread: FeedbackThread;
+  threadReplies: CardReplyRow[];
+  cardCategory: 'feedback' | 'notification';
+  currentContributorId: string | null;
+  canCurrentUserMakeDecision: boolean;
+  contributorsById: Map<string, ContributorOption>;
+  reviewOwnerName: string | null;
+  onFeedbackReply: (feedbackId: string, text: string) => Promise<void>;
+  onMakeDecision: () => void;
+}) {
+  const timestamp = useClientRelativeTime(thread.submittedAtIso ?? null);
+  const [replyTimestamps, setReplyTimestamps] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const update = () => {
+      const next: Record<string, string> = {};
+      for (const reply of threadReplies) {
+        const date = new Date(reply.created_at);
+        if (!Number.isNaN(date.getTime())) {
+          next[reply.id] = formatDistanceToNow(date, { addSuffix: true });
+        }
+      }
+      setReplyTimestamps(next);
+    };
+    update();
+    const id = window.setInterval(update, 60_000);
+    return () => window.clearInterval(id);
+  }, [threadReplies]);
+
+  const type = getCommentType(thread, threadReplies.length > 0);
+  const replies = threadReplies.map((reply) => {
+    const authorName = reply.reply_by_id
+      ? contributorsById.get(reply.reply_by_id)?.name ?? 'Reviewer'
+      : 'Reviewer';
+    return {
+      text: reply.reply_text,
+      authorName,
+      authorInitials: initialsFromName(authorName),
+      timestamp: replyTimestamps[reply.id] ?? '',
+    };
+  });
+
+  return (
+    <CommentThread
+      type={type}
+      cardCategory={cardCategory}
+      isStakeholder={
+        Boolean(currentContributorId) &&
+        canCurrentUserMakeDecision &&
+        thread.reviewerId === currentContributorId
+      }
+      authorName={thread.author}
+      authorAvatarSrc={thread.authorAvatarSrc}
+      timestamp={timestamp || undefined}
+      body={thread.text}
+      options={thread.optionTag ? [{ label: thread.optionTag }] : []}
+      replies={replies}
+      onReply={
+        thread.status === 'submitted'
+          ? (text) => void onFeedbackReply(thread.id, text)
+          : undefined
+      }
+      onMakeDecision={onMakeDecision}
+      statusInfoTooltip={
+        (thread.status === 'pending' || thread.status === 'decision-required') &&
+        thread.requestedAt
+          ? (() => {
+              const formatted = formatRequestedAtTooltip(thread.requestedAt);
+              if (!formatted) return undefined;
+              const requester = reviewOwnerName?.trim() || 'Requester';
+              return `${requester} requested feedback on ${formatted}`;
+            })()
+          : undefined
+      }
+    />
+  );
+}
+
 function RightColumn({
   open,
   hydrated,
@@ -3634,7 +3785,7 @@ function RightColumn({
   canCurrentUserMakeDecision,
   currentContributorId,
   canSubmitFeedback,
-  canEditCoreDetails,
+  showReminderBell,
   allReviewerFeedbackSubmitted,
   reviewOwnerName,
   totalCardCount,
@@ -3703,7 +3854,7 @@ function RightColumn({
   canCurrentUserMakeDecision: boolean;
   currentContributorId: string | null;
   canSubmitFeedback: boolean;
-  canEditCoreDetails: boolean;
+  showReminderBell: boolean;
   allReviewerFeedbackSubmitted: boolean;
   reviewOwnerName: string | null;
   totalCardCount: number;
@@ -3737,6 +3888,7 @@ function RightColumn({
   const decisionMade = decision !== null;
   const stage = deriveFeedbackStage(feedback, decisionMade);
   const reminderDisabled =
+    pendingCount === 0 ||
     allReviewerFeedbackSubmitted ||
     sendingReminder ||
     reviewClosed ||
@@ -3846,7 +3998,7 @@ function RightColumn({
                     ))}
                 </div>
                 <div className="flex items-center gap-2">
-                  {canEditCoreDetails && (
+                  {showReminderBell && (
                     <Tooltip
                       label={
                         reminderJustSent
@@ -4286,52 +4438,20 @@ function RightColumn({
                 if (card.cardType === 'feedback' || card.cardType === 'notification') {
                   const thread = card.thread;
                   const threadReplies = repliesByCardId.get(thread.id) ?? [];
-                  const type = getCommentType(thread, threadReplies.length > 0);
                   return (
-                    <CommentThread
+                    <FeedbackThreadCommentCard
                       key={thread.id}
-                      type={type}
-                      cardCategory={card.cardType === 'notification' ? 'notification' : 'feedback'}
-                      isStakeholder={
-                        Boolean(currentContributorId) &&
-                        canCurrentUserMakeDecision &&
-                        thread.reviewerId === currentContributorId
+                      thread={thread}
+                      threadReplies={threadReplies}
+                      cardCategory={
+                        card.cardType === 'notification' ? 'notification' : 'feedback'
                       }
-                      authorName={thread.author}
-                      authorAvatarSrc={thread.authorAvatarSrc}
-                      timestamp={thread.timestamp !== '' ? thread.timestamp : undefined}
-                      body={thread.text}
-                      options={thread.optionTag ? [{ label: thread.optionTag }] : []}
-                      replies={threadReplies.map((reply) => {
-                        const authorName = reply.reply_by_id
-                          ? contributorsById.get(reply.reply_by_id)?.name ?? 'Reviewer'
-                          : 'Reviewer';
-                        return {
-                          text: reply.reply_text,
-                          authorName,
-                          authorInitials: initialsFromName(authorName),
-                          timestamp: formatDistanceToNow(new Date(reply.created_at), {
-                            addSuffix: true,
-                          }),
-                        };
-                      })}
-                      onReply={
-                      thread.status === 'submitted'
-                          ? (text) => void onFeedbackReply(thread.id, text)
-                          : undefined
-                      }
+                      currentContributorId={currentContributorId}
+                      canCurrentUserMakeDecision={canCurrentUserMakeDecision}
+                      contributorsById={contributorsById}
+                      reviewOwnerName={reviewOwnerName}
+                      onFeedbackReply={onFeedbackReply}
                       onMakeDecision={handleMakeDecision}
-                      statusInfoTooltip={
-                        (thread.status === 'pending' || thread.status === 'decision-required') &&
-                        thread.requestedAt
-                          ? (() => {
-                              const formatted = formatRequestedAtTooltip(thread.requestedAt);
-                              if (!formatted) return undefined;
-                              const requester = reviewOwnerName?.trim() || 'Requester';
-                              return `${requester} requested feedback on ${formatted}`;
-                            })()
-                          : undefined
-                      }
                     />
                   );
                 }
@@ -4342,9 +4462,6 @@ function RightColumn({
                 const reviewerInitials = initialsFromName(reviewerName);
                 const changeRequestLabel =
                   changeRequestLabelById.get(request.id) ?? '0.0';
-                const createdAtLabel = request.created_at
-                  ? formatDistanceToNow(new Date(request.created_at), { addSuffix: true })
-                  : '';
                 const crReplies = repliesByCardId.get(request.id) ?? [];
                 return (
                   <div
@@ -4382,7 +4499,11 @@ function RightColumn({
                         {reviewerName}
                       </span>
                       <span style={{ fontSize: 12, color: '#998c82' }}> </span>
-                      <span style={{ flex: 1, fontSize: 12, color: '#998c82' }}>{createdAtLabel}</span>
+                      <span style={{ flex: 1, fontSize: 12, color: '#998c82' }}>
+                        {request.created_at ? (
+                          <RelativeTimeText iso={request.created_at} />
+                        ) : null}
+                      </span>
                       <div
                         style={{
                           background: '#fef8dc',
@@ -4458,11 +4579,7 @@ function RightColumn({
                                 : 'Reviewer'}
                             </span>
                             <span> </span>
-                            <span>
-                              {formatDistanceToNow(new Date(reply.created_at), {
-                                addSuffix: true,
-                              })}
-                            </span>
+                            <RelativeTimeText iso={reply.created_at} />
                           </div>
                         </div>
                       </div>

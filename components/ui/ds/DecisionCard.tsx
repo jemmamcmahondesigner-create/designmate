@@ -57,11 +57,13 @@ function formatRecordedLine(iso: string): string {
     month: 'long',
     day: 'numeric',
     year: 'numeric',
+    timeZone: 'UTC',
   });
   const timePart = d.toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
+    timeZone: 'UTC',
   });
   return `Recorded ${datePart} at ${timePart}`;
 }

@@ -22,6 +22,29 @@ export function canEditReviewDetails(
   return canCreateReviews(normalizeWorkspacePermission(permissionLevel));
 }
 
+/** Mirrors server `assertCanSendReviewReminder` for client UI (bell visibility). */
+export function canSendReviewReminder(input: {
+  permissionLevel: WorkspacePermissionLevel | string | null;
+  reviewOwnerName: string | null;
+  currentContributorId: string | null;
+  currentContributorName: string | null;
+  reviewCreatorContributorId?: string | null;
+}): boolean {
+  if (!input.currentContributorId) return false;
+  const perm = normalizeWorkspacePermission(input.permissionLevel);
+  if (perm === "admin" || perm === "editor") return true;
+  const owner = String(input.reviewOwnerName ?? "")
+    .trim()
+    .toLowerCase();
+  const name = String(input.currentContributorName ?? "")
+    .trim()
+    .toLowerCase();
+  if (owner && name && owner === name) return true;
+  const creatorId = String(input.reviewCreatorContributorId ?? "").trim();
+  if (creatorId && creatorId === input.currentContributorId) return true;
+  return false;
+}
+
 export function canUseViewOnlyReviewMode(params: {
   requestedMode: "edit" | "view-only";
   canEditCoreDetails: boolean;
