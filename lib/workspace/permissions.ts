@@ -31,6 +31,17 @@ export function canAddTeammates(level: WorkspacePermissionLevel | null): boolean
   return level === "admin" || level === "editor";
 }
 
+/** workspace_members.permission_level — not contributors.role (job title). */
+export function canCreateReviews(level: WorkspacePermissionLevel | null): boolean {
+  return level === "admin" || level === "editor";
+}
+
+export const CREATE_REVIEW_DENIED_TOOLTIP =
+  "Only editors and admins can create reviews";
+
+export const EDIT_REVIEW_DENIED_MESSAGE =
+  "Only editors and admins can change this.";
+
 export function canEditTeammatePermission(level: WorkspacePermissionLevel | null): boolean {
   return level === "admin";
 }

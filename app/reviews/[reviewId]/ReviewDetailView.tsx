@@ -590,7 +590,9 @@ export function ReviewDetailView({
   const searchParams = useSearchParams();
   const { showToast } = useToast();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  const canEditCoreDetails = canEditReviewDetails(currentContributorRole);
+  const canEditCoreDetails = canEditReviewDetails(
+    currentContributorPermissionLevel ?? null,
+  );
   const isForcedViewOnly = canUseViewOnlyReviewMode({
     requestedMode: mode,
     canEditCoreDetails,

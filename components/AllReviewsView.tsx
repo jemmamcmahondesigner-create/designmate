@@ -15,8 +15,8 @@ import {
   type ReviewStatus
 } from "@/components/ui/ds";
 import { useNewReviewDrawer } from "@/components/NewReviewDrawerProvider";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { canEditReviewDetails } from "@/lib/reviews/workflow";
+import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
+import { canCreateReviews, CREATE_REVIEW_DENIED_TOOLTIP } from "@/lib/workspace/permissions";
 
 export type AllReviewsRow = {
   id: string;
@@ -218,30 +218,8 @@ export function AllReviewsView({
   const router = useRouter();
   const { openNewReview } = useNewReviewDrawer();
   const [searchQuery, setSearchQuery] = useState("");
-  const [currentContributorRole, setCurrentContributorRole] = useState<string | null>(null);
-
-  useEffect(() => {
-    const contributorId =
-      typeof window !== "undefined"
-        ? window.localStorage.getItem("designtrace_dev_contributor_id")
-        : null;
-    if (!contributorId) {
-      setCurrentContributorRole(null);
-      return;
-    }
-    const supabase = createSupabaseBrowserClient();
-    void supabase
-      .from("contributors")
-      .select("role")
-      .eq("id", contributorId)
-      .maybeSingle()
-      .then(({ data }) => {
-        const role = data == null ? null : String((data as Record<string, unknown>).role ?? "");
-        setCurrentContributorRole(role && role.trim() ? role : null);
-      });
-  }, []);
-
-  const canCreateReview = canEditReviewDetails(currentContributorRole);
+  const { permissionLevel } = useActiveWorkspacePermission();
+  const canCreateReview = canCreateReviews(permissionLevel);
 
   const handleNewReview = () => {
     openNewReview({ mode: "global" });
@@ -313,7 +291,7 @@ export function AllReviewsView({
       onClick={handleNewReview}
     />
   ) : (
-    <Tooltip label="Only designers can create reviews" position="bottom">
+    <Tooltip label={CREATE_REVIEW_DENIED_TOOLTIP} position="bottom">
       <span style={{ display: "inline-flex" }}>
         <Button
           type="button"

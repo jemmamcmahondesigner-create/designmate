@@ -28,7 +28,8 @@ import { SidebarDetailCollapsible } from "@/components/SidebarDetailCollapsible"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { formatDistanceToNow } from "@/lib/formatDistanceToNow";
 import { reviewRowHasRecordedDecision } from "@/lib/reviews/fetchProjectReviews";
-import { canEditReviewDetails } from "@/lib/reviews/workflow";
+import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
+import { canCreateReviews, CREATE_REVIEW_DENIED_TOOLTIP } from "@/lib/workspace/permissions";
 import { TimelineTab } from "@/app/projects/[projectId]/TimelineTab";
 import { ArtifactsTab } from "@/components/project-detail/ArtifactsTab";
 import type { ProjectArtifactsTabPayload } from "@/lib/projects/loadProjectArtifactsTab";
@@ -166,7 +167,7 @@ export function ProjectDetailView({
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [reviews, setReviews] = useState<ReviewCardData[]>(initialReviews);
   const [successToast, setSuccessToast] = useState<string | null>(null);
-  const [currentContributorRole, setCurrentContributorRole] = useState<string | null>(null);
+  const { permissionLevel } = useActiveWorkspacePermission();
   const clientLabel = project.client?.trim() || "Unassigned";
   const descriptionText = project.description?.trim() ?? "";
   const descriptionPlaceholder =
@@ -275,8 +276,10 @@ export function ProjectDetailView({
     };
   }, [supabase, project.id, fetchReviews]);
 
+  const canCreateReview = canCreateReviews(permissionLevel);
+
   const handleNewReview = useCallback(() => {
-    if (!canEditReviewDetails(currentContributorRole)) return;
+    if (!canCreateReview) return;
     openNewReview({
       mode: "project",
       projectId: project.id,
@@ -286,29 +289,7 @@ export function ProjectDetailView({
         setSuccessToast("Review created successfully");
       }
     });
-  }, [currentContributorRole, openNewReview, project.id, reviewSeed]);
-
-  useEffect(() => {
-    const contributorId =
-      typeof window !== "undefined"
-        ? window.localStorage.getItem("designtrace_dev_contributor_id")
-        : null;
-    if (!contributorId) {
-      setCurrentContributorRole(null);
-      return;
-    }
-    const supabase = createSupabaseBrowserClient();
-    void supabase
-      .from("contributors")
-      .select("role")
-      .eq("id", contributorId)
-      .maybeSingle()
-      .then(({ data }) => {
-        const role = data == null ? null : String((data as Record<string, unknown>).role ?? "");
-        setCurrentContributorRole(role && role.trim() ? role : null);
-      });
-  }, []);
-  const canCreateReview = canEditReviewDetails(currentContributorRole);
+  }, [canCreateReview, openNewReview, project.id, reviewSeed]);
 
   return (
     <div
@@ -500,7 +481,7 @@ export function ProjectDetailView({
                       onClick={handleNewReview}
                     />
                   ) : (
-                    <Tooltip label="You do not have permission to create a review">
+                    <Tooltip label={CREATE_REVIEW_DENIED_TOOLTIP}>
                       <span style={{ display: "inline-flex" }}>
                         <Button
                           type="button"

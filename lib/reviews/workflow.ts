@@ -1,4 +1,9 @@
 import type { ReviewType } from "@/types/review";
+import {
+  canCreateReviews,
+  normalizeWorkspacePermission,
+  type WorkspacePermissionLevel,
+} from "@/lib/workspace/permissions";
 
 export type ReviewerDisplayState = "submitted" | "pending" | "decision-required";
 
@@ -7,9 +12,14 @@ export type PrimaryFeedbackCta =
   | { type: "make-decision"; label: "Make Decision" }
   | null;
 
-export function canEditReviewDetails(role: string | null) {
-  const normalized = String(role ?? "").trim().toLowerCase();
-  return normalized === "designer";
+/** Editors and admins may create reviews and edit review setup (not job title). */
+export function canEditReviewDetails(
+  permissionLevel: WorkspacePermissionLevel | string | null,
+) {
+  if (permissionLevel == null || String(permissionLevel).trim() === "") {
+    return false;
+  }
+  return canCreateReviews(normalizeWorkspacePermission(permissionLevel));
 }
 
 export function canUseViewOnlyReviewMode(params: {

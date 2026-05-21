@@ -10,6 +10,7 @@ import {
 import { logTimelineEventServer } from "@/lib/timeline/logEventServer";
 import { notifyCreatorFeedbackSubmitted } from "@/lib/reviews/notify-review-creator";
 import { canEditReviewDetails } from "@/lib/reviews/workflow";
+import { EDIT_REVIEW_DENIED_MESSAGE } from "@/lib/workspace/permissions";
 import type { PostgrestError } from "@supabase/supabase-js";
 
 function dedupeIds(ids: string[]) {
@@ -684,9 +685,9 @@ function lifecycleTransitionError(
   return "That status cannot be set manually.";
 }
 
-function assertDesigner(contributor: { role: string | null } | null) {
-  if (!canEditReviewDetails(contributor?.role ?? null)) {
-    return { ok: false as const, error: "Only designers can change this." };
+function assertCanEditReview(contributor: { permissionLevel: string | null } | null) {
+  if (!canEditReviewDetails(contributor?.permissionLevel ?? null)) {
+    return { ok: false as const, error: EDIT_REVIEW_DENIED_MESSAGE };
   }
   return { ok: true as const };
 }
@@ -716,7 +717,7 @@ export async function updateReviewLifecycleStatusAction(input: {
     supabase,
     projectId || undefined
   );
-  const gate = assertDesigner(contributor);
+  const gate = assertCanEditReview(contributor);
   if (!gate.ok) return { success: false, error: gate.error };
 
   const current = String((review as Record<string, unknown>).status ?? "draft");
@@ -759,7 +760,7 @@ export async function updateReviewBasicsAction(input: {
     supabase,
     projectId || undefined
   );
-  const gate = assertDesigner(contributor);
+  const gate = assertCanEditReview(contributor);
   if (!gate.ok) return { success: false, error: gate.error };
 
   const focus = String(input.reviewFocus ?? "").trim();
@@ -799,7 +800,7 @@ export async function archiveReviewStubAction(input: {
     supabase,
     projectId || undefined
   );
-  const gate = assertDesigner(contributor);
+  const gate = assertCanEditReview(contributor);
   if (!gate.ok) return { success: false, error: gate.error };
 
   void reviewId;

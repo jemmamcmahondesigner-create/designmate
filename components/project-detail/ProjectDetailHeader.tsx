@@ -19,7 +19,8 @@ import {
 import { useToast } from "@/components/Toast";
 import { useNewReviewDrawer } from "@/components/NewReviewDrawerProvider";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { canEditReviewDetails } from "@/lib/reviews/workflow";
+import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
+import { canCreateReviews, CREATE_REVIEW_DENIED_TOOLTIP } from "@/lib/workspace/permissions";
 import type { ProjectProblem, ProjectStatus } from "@/types/project";
 import type { User } from "@/types/user";
 
@@ -62,7 +63,7 @@ export function ProjectDetailHeader({
   const pathname = usePathname();
   const { openNewReview } = useNewReviewDrawer();
   const { showToast } = useToast();
-  const [currentContributorRole, setCurrentContributorRole] = useState<string | null>(null);
+  const { permissionLevel } = useActiveWorkspacePermission();
 
   const openReviewDrawer = useCallback(() => {
     openNewReview({
@@ -84,27 +85,6 @@ export function ProjectDetailHeader({
   useEffect(() => {
     setStatus(initialStatus);
   }, [initialStatus]);
-
-  useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
-    const contributorId =
-      typeof window !== "undefined"
-        ? window.localStorage.getItem("designtrace_dev_contributor_id")
-        : null;
-    if (!contributorId) {
-      setCurrentContributorRole(null);
-      return;
-    }
-    void supabase
-      .from("contributors")
-      .select("role")
-      .eq("id", contributorId)
-      .maybeSingle()
-      .then(({ data }) => {
-        const role = data == null ? null : String((data as Record<string, unknown>).role ?? "");
-        setCurrentContributorRole(role && role.trim() ? role : null);
-      });
-  }, []);
 
   const closeAllMenus = useCallback(() => {
     setStatusMenuOpen(false);
@@ -182,7 +162,7 @@ export function ProjectDetailHeader({
   );
 
   const pill = projectStatusToPill(status);
-  const canCreateReview = canEditReviewDetails(currentContributorRole);
+  const canCreateReview = canCreateReviews(permissionLevel);
 
   return (
     <>
@@ -251,7 +231,7 @@ export function ProjectDetailHeader({
                 onClick={openReviewDrawer}
               />
             ) : (
-              <Tooltip label="Only designers can create reviews" position="bottom">
+              <Tooltip label={CREATE_REVIEW_DENIED_TOOLTIP} position="bottom">
                 <span style={{ display: "inline-flex" }}>
                   <Button
                     variant="primary"
