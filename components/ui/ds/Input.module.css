@@ -139,6 +139,17 @@
   cursor: not-allowed;
 }
 
+/* Password + visibility toggle: hide native reveal/clear so they don't overlap trailingAction */
+.fieldPassword .input::-ms-reveal,
+.fieldPassword .input::-ms-clear {
+  display: none;
+}
+
+.fieldHasTrailingAction .input::-webkit-clear-button,
+.fieldHasTrailingAction .input::-ms-clear {
+  display: none;
+}
+
 .trailingAction {
   flex-shrink: 0;
   display: inline-flex;

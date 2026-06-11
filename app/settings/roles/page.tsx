@@ -1,5 +1,6 @@
 import { RolesSettingsPage, type RoleRow } from "@/components/settings/RolesSettingsPage";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { redirectReviewerFromRestrictedSettings } from "@/lib/workspace/redirectReviewerFromRestrictedSettings";
 
 type ContributorRow = {
   id?: string;
@@ -25,6 +26,8 @@ function contributorMatchesRole(
 }
 
 export default async function SettingsRolesPage() {
+  await redirectReviewerFromRestrictedSettings();
+
   const supabase = await createSupabaseServerClient();
 
   const { data: roleRows, error: rolesError } = await supabase

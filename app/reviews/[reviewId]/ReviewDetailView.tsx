@@ -83,6 +83,7 @@ import {
   reopenChangeRequestsAction,
   removeReviewerAction,
   publishReviewAction,
+  reopenReviewAction,
   saveReviewFocusAction,
   submitReplyAction,
   updateReviewLifecycleStatusAction,
@@ -1172,14 +1173,14 @@ export function ReviewDetailView({
         : rawReviewType === 'alignment'
           ? 'align'
           : rawReviewType;
-  const reviewTypePillLabel =
+  const reviewTypeDisplayLabel =
     normalizedReviewType === 'compare'
-      ? 'COMPARE'
+      ? 'Compare'
       : normalizedReviewType === 'approve'
-        ? 'APPROVE'
+        ? 'Approve'
         : normalizedReviewType === 'critique'
-          ? 'CRITIQUE'
-          : 'ALIGN';
+          ? 'Critique'
+          : 'Align';
 
   // Editable snapshots (edit mode only  view-only never writes).
   //
@@ -1405,6 +1406,9 @@ export function ReviewDetailView({
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [headerStatusOverride, setHeaderStatusOverride] = useState<string | null>(null);
   const [headerLifecycleMenuOpen, setHeaderLifecycleMenuOpen] = useState(false);
+  const [showReopenModal, setShowReopenModal] = useState(false);
+  const [notifyOnReopen, setNotifyOnReopen] = useState(true);
+  const [reopenKebabSubmitting, setReopenKebabSubmitting] = useState(false);
   const [reviewMenu, setReviewMenu] = useState<null | 'header'>(null);
   const [lifecycleToast, setLifecycleToast] = useState<string | null>(null);
   const [editReviewDrawerOpen, setEditReviewDrawerOpen] = useState(false);
@@ -1628,10 +1632,46 @@ export function ReviewDetailView({
     }
   }, [reviewId, router, bumpActivityLog, showToast]);
 
+  const handleStatusPillToggle = useCallback(() => {
+    setHeaderLifecycleMenuOpen((open) => !open);
+    setReviewMenu(null);
+  }, []);
+
   const handleReopenReview = useCallback(() => {
     setReviewMenu(null);
-    void handleLifecyclePick(reopenReviewStatusForType(normalizedReviewType));
-  }, [handleLifecyclePick, normalizedReviewType]);
+    setShowReopenModal(true);
+  }, []);
+
+  const handleReopenKebabConfirm = useCallback(async () => {
+    setReopenKebabSubmitting(true);
+    const shouldNotify = notifyOnReopen;
+    try {
+      const result = await reopenReviewAction(reviewId, { notify: shouldNotify });
+      setShowReopenModal(false);
+      setNotifyOnReopen(true);
+      if (!result.success) {
+        showToast(result.error ?? 'Could not reopen review');
+        return;
+      }
+      setHeaderStatusOverride(reopenReviewStatusForType(normalizedReviewType));
+      showToast('Review reopened');
+      if (shouldNotify) {
+        showReviewersNotifiedToast();
+      }
+      bumpActivityLog();
+      router.refresh();
+    } finally {
+      setReopenKebabSubmitting(false);
+    }
+  }, [
+    reviewId,
+    notifyOnReopen,
+    normalizedReviewType,
+    showToast,
+    showReviewersNotifiedToast,
+    bumpActivityLog,
+    router,
+  ]);
 
   useEffect(() => {
     function onPointerDown(ev: PointerEvent) {
@@ -2511,97 +2551,72 @@ export function ReviewDetailView({
     (normalizedDisplayStatus === 'approved' ||
       normalizedDisplayStatus === 'complete');
 
-  const pageHeaderStatusSlot = useMemo(() => {
-    const projectIsComplete =
-      String(projectStatus ?? '').trim().toLowerCase() === 'complete';
-    const canOpenMenu =
-      !projectIsComplete && manualLifecycleOptions.length > 0;
-    const statusPill = (
-      <StatusPill
-        color={lifecycleUi.color}
-        appearance="filled"
-        prominence={
-          showCompareOpenCrWarning ||
-          (lifecycleUi.color === 'brand' && normalizedDisplayStatus === 'complete')
-            ? 'high'
-            : 'default'
-        }
-        leadingIcon={
-          showCompareOpenCrWarning ? (
-            <Warning size={16} weight="fill" aria-hidden />
-          ) : undefined
-        }
-        label={lifecycleUi.label}
-        size="lg"
-        state={canOpenMenu ? 'interactive' : 'default'}
-        onClick={
-          canOpenMenu
-            ? () => {
-                setHeaderLifecycleMenuOpen((o) => !o);
-                setReviewMenu(null);
-              }
-            : undefined
-        }
-      />
-    );
-
-    if (projectIsComplete) {
-      return (
-        <div ref={headerStatusRef} style={{ position: 'relative' }}>
-          <Tooltip
-            label="This project is complete. Reactivate the project to edit reviews."
-            position="bottom"
-          >
-            <span className="inline-flex">{statusPill}</span>
-          </Tooltip>
-        </div>
-      );
-    }
-
-    return (
-      <div ref={headerStatusRef} style={{ position: 'relative' }}>
-        {'tooltip' in lifecycleUi && lifecycleUi.tooltip ? (
-          <Tooltip label={lifecycleUi.tooltip} position="bottom">
-            <span className="inline-flex">{statusPill}</span>
-          </Tooltip>
-        ) : (
-          statusPill
-        )}
-        {canOpenMenu ? (
-          <Menu
-            open={headerLifecycleMenuOpen}
-            onClose={() => setHeaderLifecycleMenuOpen(false)}
-            anchorRef={headerStatusRef}
-            align="left"
-            aria-label="Review status"
-          >
-            {manualLifecycleOptions.map((opt) => {
-              const active = normStatus(displayRawStatus) === normStatus(opt.value);
-              return (
-                <MenuItem
-                  key={opt.value}
-                  label={opt.label}
-                  active={active}
-                  onClick={() => void handleLifecyclePick(opt.value)}
-                />
-              );
-            })}
-          </Menu>
-        ) : null}
-      </div>
-    );
-  }, [
-    projectStatus,
-    lifecycleUi.color,
-    lifecycleUi.label,
-    'tooltip' in lifecycleUi ? lifecycleUi.tooltip : undefined,
-    manualLifecycleOptions,
-    headerLifecycleMenuOpen,
-    displayRawStatus,
-    handleLifecyclePick,
-    showCompareOpenCrWarning,
-    normalizedDisplayStatus,
-  ]);
+  const projectIsCompleteForHeader =
+    String(projectStatus ?? '').trim().toLowerCase() === 'complete';
+  const canOpenHeaderStatusMenu =
+    !projectIsCompleteForHeader && manualLifecycleOptions.length > 0;
+  const headerStatusPill = (
+    <StatusPill
+      color={lifecycleUi.color}
+      appearance="filled"
+      prominence={
+        showCompareOpenCrWarning ||
+        (lifecycleUi.color === 'brand' && normalizedDisplayStatus === 'complete')
+          ? 'high'
+          : 'default'
+      }
+      leadingIcon={
+        showCompareOpenCrWarning ? (
+          <Warning size={16} weight="fill" aria-hidden />
+        ) : undefined
+      }
+      label={lifecycleUi.label}
+      size="lg"
+      state={canOpenHeaderStatusMenu ? 'interactive' : 'default'}
+      onClick={canOpenHeaderStatusMenu ? handleStatusPillToggle : undefined}
+    />
+  );
+  const pageHeaderStatusSlot = (
+    <div ref={headerStatusRef} style={{ position: 'relative' }}>
+      {projectIsCompleteForHeader ? (
+        <Tooltip
+          label="This project is complete. Reactivate the project to edit reviews."
+          position="bottom"
+        >
+          <span className="inline-flex">{headerStatusPill}</span>
+        </Tooltip>
+      ) : canOpenHeaderStatusMenu ? (
+        headerStatusPill
+      ) : 'tooltip' in lifecycleUi && lifecycleUi.tooltip ? (
+        <Tooltip label={lifecycleUi.tooltip} position="bottom" passThroughFocus>
+          <span className="inline-flex">{headerStatusPill}</span>
+        </Tooltip>
+      ) : (
+        headerStatusPill
+      )}
+      {canOpenHeaderStatusMenu ? (
+        <Menu
+          open={headerLifecycleMenuOpen}
+          onClose={() => setHeaderLifecycleMenuOpen(false)}
+          anchorRef={headerStatusRef}
+          align="left"
+          aria-label="Review status"
+        >
+          {manualLifecycleOptions.map((opt) => {
+            const active = normStatus(displayRawStatus) === normStatus(opt.value);
+            return (
+              <MenuItem
+                key={opt.value}
+                label={opt.label}
+                active={active}
+                onClick={() => void handleLifecyclePick(opt.value)}
+              />
+            );
+          })}
+        </Menu>
+      ) : null}
+    </div>
+  );
   const canCurrentUserMakeDecision =
     normalizedReviewType !== 'approve' &&
     canMakeDecision({
@@ -4031,11 +4046,8 @@ export function ReviewDetailView({
                         onClick={() => setShowEditTypeModal(true)}
                         style={{
                           border: 'none',
-                          background: '#6b1e2e',
-                          color: '#ffffff',
-                          borderRadius: 999,
-                          height: 24,
-                          padding: '0 8px 0 10px',
+                          background: 'transparent',
+                          padding: 0,
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: 6,
@@ -4043,10 +4055,15 @@ export function ReviewDetailView({
                         }}
                         aria-label="Edit review type"
                       >
-                        <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>
-                          {reviewTypePillLabel}
-                        </span>
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                        <StatusPill
+                          color="mushroom"
+                          appearance="outline"
+                          label={reviewTypeDisplayLabel}
+                          size="sm"
+                          prominence="default"
+                          labelTypography="body"
+                        />
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" style={{ color: '#6b5e55', flexShrink: 0 }}>
                           <path
                             d="M9.916 2.042a1.237 1.237 0 0 1 1.75 1.75l-5.25 5.25-2.333.583.583-2.333 5.25-5.25Z"
                             stroke="currentColor"
@@ -4065,25 +4082,16 @@ export function ReviewDetailView({
                         }
                         position="left"
                       >
-                        <span style={{ display: 'inline-flex', cursor: 'default' }}>
-                          <span
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              height: 24,
-                              padding: '0 10px',
-                              borderRadius: 999,
-                              backgroundColor: '#f5eaec',
-                              border: '1px solid #e8d0d4',
-                              color: '#6b1e2e',
-                            }}
-                          >
-                            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>
-                              {reviewTypePillLabel}
-                            </span>
-                            <Icon name="info" size={14} />
-                          </span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'default' }}>
+                          <StatusPill
+                            color="mushroom"
+                            appearance="outline"
+                            label={reviewTypeDisplayLabel}
+                            size="sm"
+                            prominence="default"
+                            labelTypography="body"
+                          />
+                          <Icon name="info" size={14} style={{ color: '#6b5e55', flexShrink: 0 }} />
                         </span>
                       </Tooltip>
                     )}
@@ -5337,6 +5345,63 @@ export function ReviewDetailView({
                 void handleMarkCompleteConfirm();
               }}
             />,
+            document.body,
+          )
+        : null}
+
+      {showReopenModal && typeof document !== 'undefined'
+        ? createPortal(
+            <Modal
+              open={showReopenModal}
+              type="default"
+              size="sm"
+              title="Reopen this review?"
+              showSubtitle={false}
+              backdropClosable={!reopenKebabSubmitting}
+              onClose={() => {
+                if (reopenKebabSubmitting) return;
+                setShowReopenModal(false);
+                setNotifyOnReopen(true);
+              }}
+              footer={
+                <>
+                  <div className={modalStyles.spacer} />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    label="Cancel"
+                    disabled={reopenKebabSubmitting}
+                    onClick={() => {
+                      if (reopenKebabSubmitting) return;
+                      setShowReopenModal(false);
+                      setNotifyOnReopen(true);
+                    }}
+                  />
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    label={reopenKebabSubmitting ? 'Reopening…' : 'Reopen'}
+                    disabled={reopenKebabSubmitting}
+                    onClick={() => {
+                      void handleReopenKebabConfirm();
+                    }}
+                  />
+                </>
+              }
+            >
+              <p className={modalStyles.description}>
+                This will move the review back to In Review.
+              </p>
+              <div style={{ marginTop: 16 }}>
+                <Checkbox
+                  id="notify-reviewers-on-reopen"
+                  label="Notify reviewers that this review is active again"
+                  checked={notifyOnReopen}
+                  onChange={setNotifyOnReopen}
+                  disabled={reopenKebabSubmitting}
+                />
+              </div>
+            </Modal>,
             document.body,
           )
         : null}

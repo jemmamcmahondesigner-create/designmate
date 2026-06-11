@@ -2077,6 +2077,116 @@ export async function markCompleteAction(
   return updateReviewLifecycleStatusAction({ reviewId, status: "complete" });
 }
 
+export async function reopenReviewAction(
+  reviewIdInput: string,
+  options: { notify?: boolean } = {},
+): Promise<{ success: boolean; error?: string }> {
+  const notify = options.notify !== false;
+  const reviewId = String(reviewIdInput ?? "").trim();
+  if (!reviewId) return { success: false, error: "Review is required." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data: review } = await supabase
+    .from("reviews")
+    .select(
+      "id, project_id, status, review_type, title, owner_display_name, reviewer_contributor_ids",
+    )
+    .eq("id", reviewId)
+    .maybeSingle();
+  if (!review) return { success: false, error: "Review not found." };
+
+  const row = review as Record<string, unknown>;
+  const projectId = String(row.project_id ?? "");
+  const reviewType = String(row.review_type ?? "");
+  const reviewTitle = String(row.title ?? "Review").trim() || "Review";
+  const current = String(row.status ?? "draft");
+  const reopenTarget = reopenReviewStatusForType(reviewType);
+
+  const contributor = await getEffectiveCurrentContributor(
+    supabase,
+    projectId || undefined,
+  );
+  const gate = assertCanEditReview(contributor);
+  if (!gate.ok) return { success: false, error: gate.error };
+
+  const transitionErr = lifecycleTransitionError(current, reopenTarget, reviewType);
+  if (transitionErr) {
+    return { success: false, error: transitionErr };
+  }
+
+  const { error } = await supabase
+    .from("reviews")
+    .update({ status: reopenTarget })
+    .eq("id", reviewId);
+  if (error) {
+    const schemaMessage = toSchemaCacheErrorMessage(error);
+    if (schemaMessage) return { success: false, error: schemaMessage };
+    return { success: false, error: error.message };
+  }
+
+  const actorName =
+    contributor?.name?.trim() ||
+    String(row.owner_display_name ?? "").trim() ||
+    "A teammate";
+
+  await logTimelineEventServer(supabase, {
+    projectId,
+    reviewId,
+    actorId: contributor?.id ?? null,
+    eventType: "status_changed",
+    payload: {
+      review_title: reviewTitle,
+      review_id: reviewId,
+      review_type: reviewType,
+      previous_status: current,
+      new_status: reopenTarget,
+      from_status: current,
+      to_status: reopenTarget,
+      status_transition_trigger: "manual",
+      review_reopened: true,
+      ...(!notify ? { silent_reopen: true } : {}),
+    },
+  });
+
+  if (notify) {
+    const reviewerIds = Array.isArray(row.reviewer_contributor_ids)
+      ? dedupeIds((row.reviewer_contributor_ids as unknown[]).map((id) => String(id)))
+      : [];
+
+    if (reviewerIds.length > 0) {
+      await sendReviewerNotificationEmails(supabase, {
+        reviewId,
+        reviewTitle,
+        creatorName: actorName,
+        reviewerIds,
+      });
+
+      const activityResult = await logReviewersNotifiedEvent(supabase, {
+        projectId,
+        reviewId,
+        actorId: contributor?.id ?? null,
+        actorName,
+        trigger: "reopen",
+        recipientIds: reviewerIds,
+      });
+      if (!activityResult.ok) {
+        console.error(
+          "[reopenReviewAction] reviewers_notified activity failed:",
+          activityResult.error,
+        );
+      }
+    }
+  }
+
+  revalidatePath(`/reviews/${reviewId}`);
+  if (projectId) {
+    revalidatePath(`/projects/${projectId}`);
+  }
+  revalidatePath("/reviews");
+
+  return { success: true };
+}
+
 export async function updateReviewBasicsAction(input: {
   reviewId: string;
   title: string;

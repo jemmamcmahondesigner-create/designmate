@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type ReviewersNotifiedTrigger = "publish" | "reviewer_added" | "reminder";
+export type ReviewersNotifiedTrigger =
+  | "publish"
+  | "reviewer_added"
+  | "reminder"
+  | "reopen";
 
 export async function resolveReviewersNotifiedRecipients(
   supabase: SupabaseClient,

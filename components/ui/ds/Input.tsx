@@ -120,6 +120,8 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
     const fieldClass = [
       styles.field,
       styles[`size-${size}`],
+      trailingAction ? styles.fieldHasTrailingAction : '',
+      type === 'password' ? styles.fieldPassword : '',
       error ? styles.fieldError : '',
       disabled ? styles.fieldDisabled : '',
       readOnly ? styles.fieldReadOnly : '',

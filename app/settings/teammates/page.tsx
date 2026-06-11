@@ -7,6 +7,7 @@ import {
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import { fetchWorkspaceRoleOptions } from "@/lib/workspace/contributorRoles";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { redirectReviewerFromRestrictedSettings } from "@/lib/workspace/redirectReviewerFromRestrictedSettings";
 import { createClient } from "@supabase/supabase-js";
 import type { WorkspaceTeammate } from "@/lib/workspace/teammates";
 
@@ -19,6 +20,8 @@ function sortTeammatesByName(rows: WorkspaceTeammate[]): WorkspaceTeammate[] {
 }
 
 export default async function SettingsTeammatesPage() {
+  await redirectReviewerFromRestrictedSettings();
+
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },

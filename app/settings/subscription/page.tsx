@@ -1,7 +1,10 @@
 import { SubscriptionSettingsPage } from "@/components/settings/SubscriptionSettingsPage";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { redirectReviewerFromRestrictedSettings } from "@/lib/workspace/redirectReviewerFromRestrictedSettings";
 
 export default async function SettingsSubscriptionPage() {
+  await redirectReviewerFromRestrictedSettings();
+
   const supabase = await createSupabaseServerClient();
   const { count } = await supabase
     .from("contributors")
