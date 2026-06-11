@@ -36,6 +36,19 @@
 .label {
   flex-shrink: 0;
 }
+.trailingContent {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.fullWidth {
+  width: 100%;
+  display: flex;
+  flex-shrink: 1;
+  align-self: stretch;
+}
+
 .iconOnly {
   padding: 10px 8px;
 }

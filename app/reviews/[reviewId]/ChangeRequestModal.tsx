@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Checkbox, Icon, Tag, Textarea, Tooltip } from "@/components/ui/ds";
+import {
+  Button,
+  Checkbox,
+  Icon,
+  Menu,
+  SelectField,
+  Tag,
+  Textarea,
+  Tooltip,
+} from "@/components/ui/ds";
 import { createChangeRequestAction } from "./actions";
 
 type ChangeRequestArtifact = {
@@ -15,7 +24,11 @@ type ChangeRequestModalProps = {
   reviewId: string;
   reviewerContributorId: string;
   artifacts: ChangeRequestArtifact[];
-  onClose: (savedEntries?: { artifactIds: string[]; changesNeeded: string }[]) => void;
+  /** Defer server revalidation until the parent feedback drawer closes. */
+  deferRevalidate?: boolean;
+  /** When false, keep entries in the drawer only until the parent submits (e.g. Final Decision). */
+  persistToDatabase?: boolean;
+  onClose: (savedEntries?: { batchId: string; artifactIds: string[]; changesNeeded: string }[]) => void;
 };
 
 /** Stored in `change_requests.artifact_ids` — title only. */
@@ -24,51 +37,44 @@ function artifactTitleStoreKey(artifact: ChangeRequestArtifact) {
   return title;
 }
 
+function displayVersion(label: string | null | undefined) {
+  return label?.replace(/^Iteration\s+(\d+)$/i, "v$1") ?? label ?? "";
+}
+
 export function ChangeRequestModal({
   reviewId,
   reviewerContributorId,
   artifacts,
+  deferRevalidate = false,
+  persistToDatabase = true,
   onClose,
 }: ChangeRequestModalProps) {
   const [selectedArtifactIds, setSelectedArtifactIds] = useState<string[]>([]);
   const [changesNeeded, setChangesNeeded] = useState("");
   const [createAnother, setCreateAnother] = useState(false);
-  const [artifactSearch, setArtifactSearch] = useState("");
   const [artifactMenuOpen, setArtifactMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [changesAddedCount, setChangesAddedCount] = useState(0);
-  const artifactSearchRef = useRef<HTMLDivElement | null>(null);
+  const artifactSelectRef = useRef<HTMLDivElement | null>(null);
   const [savedEntries, setSavedEntries] = useState<
-    { artifactIds: string[]; changesNeeded: string }[]
+    { batchId: string; artifactIds: string[]; changesNeeded: string }[]
   >([]);
   const [batchId] = useState(() => crypto.randomUUID());
 
-  const addEnabled = selectedArtifactIds.length > 0 && !loading;
+  const addEnabled =
+    selectedArtifactIds.length > 0 && changesNeeded.trim().length > 0 && !loading;
+  const showDisabledTooltip = !addEnabled && !loading;
   const isAdditionalEntry = changesAddedCount > 0;
   const totalCount = changesAddedCount + 1;
-  const filteredArtifacts = useMemo(() => {
-    const q = artifactSearch.trim().toLowerCase();
-    return artifacts.filter((artifact) => {
-      const key = artifactTitleStoreKey(artifact);
-      if (selectedArtifactIds.includes(key)) return false;
-      if (!q) return true;
-      const label = artifact.label.toLowerCase();
-      const title = (artifact.title ?? "").trim().toLowerCase();
-      return label.includes(q) || title.includes(q);
-    });
-  }, [artifacts, artifactSearch, selectedArtifactIds]);
-
-  useEffect(() => {
-    function onPointerDown(e: PointerEvent) {
-      if (!artifactMenuOpen) return;
-      if (!artifactSearchRef.current?.contains(e.target as Node)) {
-        setArtifactMenuOpen(false);
-      }
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [artifactMenuOpen]);
+  const availableArtifacts = useMemo(
+    () =>
+      artifacts.filter((artifact) => {
+        const key = artifactTitleStoreKey(artifact);
+        return key !== "" && !selectedArtifactIds.includes(key);
+      }),
+    [artifacts, selectedArtifactIds],
+  );
 
   function closeModal() {
     onClose(savedEntries.length > 0 ? savedEntries : undefined);
@@ -77,6 +83,24 @@ export function ChangeRequestModal({
   async function handleAdd() {
     if (!addEnabled) return;
     setInlineError(null);
+    const nextEntry = {
+      batchId,
+      artifactIds: selectedArtifactIds,
+      changesNeeded: changesNeeded.trim(),
+    };
+    if (!persistToDatabase) {
+      if (createAnother) {
+        setSavedEntries((prev) => [...prev, nextEntry]);
+        setSelectedArtifactIds([]);
+        setChangesNeeded("");
+        setArtifactMenuOpen(false);
+        setChangesAddedCount((prev) => prev + 1);
+        setCreateAnother(false);
+        return;
+      }
+      onClose([...savedEntries, nextEntry]);
+      return;
+    }
     setLoading(true);
     try {
       const result = await createChangeRequestAction({
@@ -85,20 +109,16 @@ export function ChangeRequestModal({
         artifactIds: selectedArtifactIds,
         changesNeeded,
         batchId,
+        deferRevalidate,
       });
       if (result.error) {
         setInlineError(result.error);
         return;
       }
-      const nextEntry = {
-        artifactIds: selectedArtifactIds,
-        changesNeeded: changesNeeded.trim(),
-      };
       if (createAnother) {
         setSavedEntries((prev) => [...prev, nextEntry]);
         setSelectedArtifactIds([]);
         setChangesNeeded("");
-        setArtifactSearch("");
         setArtifactMenuOpen(false);
         setChangesAddedCount((prev) => prev + 1);
         setCreateAnother(false);
@@ -196,121 +216,101 @@ export function ChangeRequestModal({
                 Select relevant artifacts*
               </label>
               <div
-                ref={artifactSearchRef}
+                ref={artifactSelectRef}
                 style={{ position: "relative", display: "flex", flexDirection: "column", gap: 8 }}
               >
-                <div style={{ position: "relative" }}>
-                  <input
-                    type="text"
-                    placeholder="Find artifacts"
-                    value={artifactSearch}
-                    onChange={(e) => {
-                      setArtifactSearch(e.target.value);
-                      setArtifactMenuOpen(true);
-                    }}
-                    onFocus={() => setArtifactMenuOpen(true)}
-                    style={{
-                      height: 32,
-                      width: "100%",
-                      border: "1px solid #6b1e2e",
-                      borderRadius: 6,
-                      padding: "0 30px 0 8px",
-                      fontSize: 13,
-                      fontFamily: "'Plus Jakarta Sans', sans-serif",
-                      color: "#2e1c1c",
-                      outline: "none",
-                      boxSizing: "border-box",
-                    }}
-                  />
-                  <span
-                    style={{
-                      position: "absolute",
-                      right: 8,
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      color: "#998c82",
-                      display: "inline-flex",
-                      alignItems: "center",
-                    }}
-                  >
-                    <Icon name="search" size={14} />
-                  </span>
-                </div>
-                {artifactMenuOpen && filteredArtifacts.length > 0 ? (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "calc(100% + 4px)",
-                      left: 0,
-                      right: 0,
-                      maxHeight: 180,
-                      overflowY: "auto",
-                      border: "1px solid #e4ddd3",
-                      borderRadius: 8,
-                      background: "#ffffff",
-                      boxShadow: "0px 8px 16px rgba(41,33,28,0.15)",
-                      zIndex: 5,
-                    }}
-                  >
-                    {filteredArtifacts.map((artifact) => (
-                      <button
-                        key={artifact.id}
-                        type="button"
-                        onClick={() => {
-                          const key = artifactTitleStoreKey(artifact);
-                          if (!key) return;
-                          setSelectedArtifactIds((prev) =>
-                            prev.includes(key) ? prev : [...prev, key]
-                          );
-                          setArtifactSearch("");
-                        }}
-                        style={{
-                          width: "100%",
-                          border: "none",
-                          background: "transparent",
-                          textAlign: "left",
-                          padding: "8px 12px",
-                          fontSize: 13,
-                          color: "#2e1c1c",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {artifact.title?.trim() || artifact.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
+                <SelectField
+                  label=""
+                  type="single"
+                  size="sm"
+                  placeholder="Select an option"
+                  selectedLabel={
+                    selectedArtifactIds.length > 0
+                      ? artifacts.find(
+                          (artifact) =>
+                            selectedArtifactIds[0] === artifactTitleStoreKey(artifact),
+                        )?.label
+                      : undefined
+                  }
+                  isOpen={artifactMenuOpen}
+                  onOpen={() => setArtifactMenuOpen((open) => !open)}
+                  aria-controls="change-request-artifact-menu"
+                  className="!gap-0 [&>label]:hidden"
+                />
+                <Menu
+                  id="change-request-artifact-menu"
+                  open={artifactMenuOpen}
+                  onClose={() => setArtifactMenuOpen(false)}
+                  anchorRef={artifactSelectRef}
+                  align="left"
+                >
+                  {availableArtifacts.length === 0 ? (
+                    <li role="none" className="list-none px-3 py-2 text-[13px] text-[#998c82]">
+                      No artifacts available
+                    </li>
+                  ) : (
+                    availableArtifacts.map((artifact) => (
+                      <li key={artifact.id} role="none" className="list-none">
+                        <button
+                          type="button"
+                          className="w-full border-0 bg-transparent px-3 py-2 text-left text-[13px] text-[#2e1c1c] cursor-pointer hover:bg-[#f3efe9]"
+                          onClick={() => {
+                            const key = artifactTitleStoreKey(artifact);
+                            if (!key) return;
+                            setSelectedArtifactIds([key]);
+                            setArtifactMenuOpen(false);
+                          }}
+                        >
+                          {artifact.label}
+                        </button>
+                      </li>
+                    ))
+                  )}
+                </Menu>
                 {selectedArtifactIds.length > 0 ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     {artifacts
-                      .filter((artifact) =>
-                        artifactTitleStoreKey(artifact) !== "" &&
-                        selectedArtifactIds.includes(artifactTitleStoreKey(artifact))
+                      .filter(
+                        (artifact) =>
+                          artifactTitleStoreKey(artifact) !== "" &&
+                          selectedArtifactIds.includes(artifactTitleStoreKey(artifact)),
                       )
                       .map((artifact) => (
                         <div
                           key={artifact.id}
                           style={{
-                            height: 32,
-                            padding: "0 8px",
-                            borderRadius: 4,
-                            border: "1px solid #e07070",
-                            background: "#fceaea",
+                            height: 52,
+                            padding: "0 12px",
+                            borderRadius: 8,
+                            border: "1px solid #fff0a3",
+                            background: "#fff6d7",
                             display: "flex",
                             alignItems: "center",
                             gap: 8,
                           }}
                         >
-                          <span style={{ fontSize: 13, color: "#6b1e2e", fontWeight: 500 }}>
-                            {artifact.title?.trim() || artifact.id}
+                          <span
+                            style={{
+                              fontSize: 13,
+                              color: "#6b1e2e",
+                              fontWeight: 500,
+                              flex: 1,
+                              minWidth: 0,
+                            }}
+                          >
+                            {artifact.label}
                           </span>
-                          <Tag label={artifact.iteration ?? "v1"} variant="brand" size="sm" />
+                          <Tag
+                            label={displayVersion(artifact.iteration ?? "v1")}
+                            variant="brand"
+                            size="sm"
+                          />
                           <button
                             type="button"
-                            aria-label={`Remove ${artifact.title?.trim() || artifact.id}`}
+                            aria-label={`Remove ${artifact.label}`}
                             onClick={() =>
                               setSelectedArtifactIds((prev) =>
-                                prev.filter((id) => id !== artifactTitleStoreKey(artifact))
+                                prev.filter((id) => id !== artifactTitleStoreKey(artifact)),
                               )
                             }
                             style={{
@@ -337,7 +337,7 @@ export function ChangeRequestModal({
             </div>
 
             <Textarea
-              label="What changes are needed?"
+              label="What changes are needed?*"
               size="md"
               variant="form-fixed"
               placeholder="List all relevant changes..."
@@ -381,8 +381,8 @@ export function ChangeRequestModal({
               />
             ) : null}
             <Button label="Cancel" variant="secondary" size="sm" onClick={closeModal} />
-            {!addEnabled ? (
-              <Tooltip label="Select at least one artifact to continue">
+            {showDisabledTooltip ? (
+              <Tooltip label="Select an artifact and describe the changes to continue">
                 <span style={{ display: "inline-flex" }}>
                   <Button
                     label={
@@ -420,7 +420,10 @@ export function ChangeRequestModal({
                 iconName={createAnother && changesAddedCount === 0 ? "chevron-right" : undefined}
                 variant={!isAdditionalEntry && addEnabled ? "accent" : "primary"}
                 size="sm"
+                disabled={!addEnabled}
+                aria-disabled={!addEnabled}
                 onClick={() => {
+                  if (!addEnabled) return;
                   void handleAdd();
                 }}
               />

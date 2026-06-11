@@ -1,0 +1,40 @@
+.rolesTable {
+  min-width: 500px;
+  width: 100%;
+}
+
+.rolesTable :global(table) {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 500px;
+}
+
+.rolesTable :global(table td) {
+  max-width: none !important;
+}
+
+.rolesTable :global(table th:nth-child(1)),
+.rolesTable :global(table td:nth-child(1)) {
+  width: 200px;
+  white-space: normal;
+  overflow: hidden;
+  word-wrap: break-word;
+}
+
+.rolesTable :global(table th:nth-child(2)),
+.rolesTable :global(table td:nth-child(2)) {
+  width: 160px;
+  white-space: nowrap;
+}
+
+.rolesTable :global(table th:nth-child(3)),
+.rolesTable :global(table td:nth-child(3)) {
+  width: 100px;
+  white-space: nowrap;
+}
+
+.rolesTable :global(table th:nth-child(4)),
+.rolesTable :global(table td:nth-child(4)) {
+  width: 48px;
+  white-space: nowrap;
+}

@@ -26,7 +26,7 @@
 }
 
 .required {
-  color: #2e1c1c;
+  color: var(--feedback-error-text, #a31d1d);
   margin-left: 1px;
 }
 
@@ -67,6 +67,18 @@
   background-color: #f3efe9;
   border-color: #e4ddd3;
   cursor: not-allowed;
+}
+
+.fieldReadOnly {
+  background-color: var(--surface-card-recessed, #f3efe9);
+  border-color: #e4ddd3;
+  cursor: default;
+  pointer-events: none;
+}
+
+.fieldReadOnly .input {
+  color: var(--text-secondary, #6b5e55);
+  cursor: default;
 }
 
 /* Sizes */

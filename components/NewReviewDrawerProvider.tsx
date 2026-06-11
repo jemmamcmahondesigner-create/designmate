@@ -12,6 +12,7 @@ import {
 import { useRouter } from "next/navigation";
 import { DiscardChangesModal } from "@/components/DiscardChangesModal";
 import { CreateReviewDrawer } from "@/components/CreateReviewDrawer";
+import { useToast } from "@/components/Toast";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
 import {
@@ -89,6 +90,7 @@ export function NewReviewDrawerProvider({
   allProjects: ProjectMenuOption[];
 }>) {
   const router = useRouter();
+  const { showToast } = useToast();
   const [open, setOpen] = useState(false);
   const [drawerDirty, setDrawerDirty] = useState(false);
   const [navDiscardOpen, setNavDiscardOpen] = useState(false);
@@ -203,12 +205,22 @@ export function NewReviewDrawerProvider({
     async (input: SubmitReviewInput) => {
       const result = await submitReviewClient(input);
       if (!result.error) {
+        showToast("Review created");
+        if (input.sendNotification) {
+          showToast({
+            message: "Reviewers notified",
+            actionLabel: "View",
+            onAction: () => {
+              router.push(`/reviews/${input.reviewId}?tab=activity`);
+            },
+          });
+        }
         router.push(`/reviews/${input.reviewId}`);
         router.refresh();
       }
       return result;
     },
-    [router]
+    [router, showToast]
   );
 
   const ctx = useMemo(

@@ -2,7 +2,10 @@ import { AllReviewsView, type AllReviewsGroupedByType } from "@/components/AllRe
 import { getEffectiveCurrentContributor } from "@/lib/auth/effectiveContributor";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import { formatDistanceToNow } from "@/lib/formatDistanceToNow";
-import { reviewRowHasRecordedDecision } from "@/lib/reviews/fetchProjectReviews";
+import {
+  buildReviewCardReviewers,
+  fetchReviewCardMeta,
+} from "@/lib/reviews/fetchProjectReviews";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -90,6 +93,8 @@ export default async function AllReviewsPage() {
     owner_display_name,
     created_at,
     updated_at,
+    review_focus,
+    reviewer_contributor_ids,
     project_id,
     projects!inner (
       id,
@@ -145,7 +150,19 @@ export default async function AllReviewsPage() {
   const searchPlaceholder = teammateLabelOk
     ? "Filter by project, client, or teammate..."
     : "Filter by project or client...";
-
+  const reviewerIds = [...new Set(
+    sorted.flatMap((review) =>
+      Array.isArray(review.reviewer_contributor_ids)
+        ? (review.reviewer_contributor_ids as unknown[])
+            .map((id) => String(id).trim())
+            .filter(Boolean)
+        : [],
+    ),
+  )];
+  const { reviewerResolutionByRawId, countsByReviewId } = await fetchReviewCardMeta(supabase, {
+    reviewIds: sorted.map((review) => String(review.id ?? "").trim()).filter(Boolean),
+    reviewerIds,
+  });
   for (const review of sorted) {
     const bucket = reviewTypeBucket(review.review_type);
     const updatedDate = new Date(String(review.updated_at ?? review.created_at ?? ""));
@@ -153,6 +170,10 @@ export default async function AllReviewsPage() {
       ? ""
       : formatDistanceToNow(updatedDate, { addSuffix: true });
     const projectMeta = toProjectMeta(review.projects);
+    const reviewers = buildReviewCardReviewers(
+      review.reviewer_contributor_ids,
+      reviewerResolutionByRawId,
+    );
 
     grouped[bucket].push({
       id: String(review.id ?? ""),
@@ -162,14 +183,22 @@ export default async function AllReviewsPage() {
         review.decision_status == null ? null : String(review.decision_status),
       require_decision_maker: Boolean(review.require_decision_maker),
       updated_ago: updatedAgo,
+      date_tooltip_iso:
+        review.created_at == null ? null : String(review.created_at),
+      project_id: String(review.project_id ?? "").trim(),
       project_name: projectMeta.projectName,
       client_name: projectMeta.clientName,
+      description:
+        review.review_focus == null ? null : String(review.review_focus).trim() || null,
       owner_display_name:
         review.owner_display_name == null
           ? null
           : String(review.owner_display_name).trim() || null,
-      decision_count: reviewRowHasRecordedDecision(review) ? 1 : 0,
-      contributor_names: contributorNamesFromProjectJoin(review.projects)
+      feedback_count: countsByReviewId.get(String(review.id ?? "").trim())?.feedbackCount ?? 0,
+      change_request_count:
+        countsByReviewId.get(String(review.id ?? "").trim())?.changeRequestCount ?? 0,
+      contributor_names: contributorNamesFromProjectJoin(review.projects),
+      reviewers,
     });
   }
 

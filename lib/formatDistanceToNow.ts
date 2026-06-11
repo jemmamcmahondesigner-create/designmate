@@ -23,12 +23,55 @@ export function formatDistanceToNow(
       ? `${h} ${h === 1 ? "hour" : "hours"} ago`
       : `in ${h} ${h === 1 ? "hour" : "hours"}`;
   } else {
-    const d = Math.floor(absSec / 86400);
-    text = past
-      ? `${d} ${d === 1 ? "day" : "days"} ago`
-      : `in ${d} ${d === 1 ? "day" : "days"}`;
+    const now = new Date();
+    const sameYear = now.getFullYear() === date.getFullYear();
+    text = sameYear
+      ? date.toLocaleDateString([], { month: "short", day: "numeric" })
+      : date.toLocaleDateString([], {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+    return text;
   }
 
   if (!addSuffix) return text.replace(/\sago$/, "").replace(/^in\s/, "");
   return text;
+}
+
+/**
+ * Abbreviated relative time for compact card headers (avoids line wrapping):
+ *   < 1 min   → "just now"
+ *   1–59 min  → "Xm ago"
+ *   1–23 hr   → "Xh ago"
+ *   1–6 days  → "Xd ago"
+ *   7+ days   → short date ("Jun 1", with year if different)
+ */
+export function formatDistanceToNowShort(
+  date: Date | null | undefined,
+): string {
+  if (!date) return '';
+  const diffMs = Date.now() - date.getTime();
+  const absSec = Math.floor(Math.abs(diffMs) / 1000);
+
+  if (absSec < 60) return "just now";
+
+  const minutes = Math.floor(absSec / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+
+  const now = new Date();
+  const sameYear = now.getFullYear() === date.getFullYear();
+  return sameYear
+    ? date.toLocaleDateString([], { month: "short", day: "numeric" })
+    : date.toLocaleDateString([], {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
 }

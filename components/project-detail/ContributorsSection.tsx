@@ -15,7 +15,12 @@ import { useToast } from "@/components/Toast";
 import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
-import { canAddTeammates } from "@/lib/workspace/permissions";
+import {
+  canAddTeammates,
+  isPaidPermissionLevel,
+  toStoredPermissionLevel,
+  type ContentPermissionLevel,
+} from "@/lib/workspace/permissions";
 import { sendWorkspaceInvite } from "@/lib/workspace/invite-client";
 import { inviteToastMessage } from "@/lib/workspace/invite-toast";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
@@ -25,14 +30,97 @@ const sectionHeadingClass =
   "text-[20px] font-semibold leading-[1.3] text-[#6b1e2e]";
 const sectionHeadingStyle = { letterSpacing: "-0.3px" as const };
 
+const TEAMMATE_PERMISSION_SELECT_OPTIONS = [
+  { value: "reviewer", label: "Reviewer" },
+  { value: "editor", label: "Editor" },
+] as const;
+
 type ContributorsSectionProps = {
   projectId: string;
   initialContributors: ProjectContributor[];
+  hideAddActions?: boolean;
 };
+
+function TeammateTag({
+  contributor,
+  editable,
+  onRemove,
+}: {
+  contributor: ProjectContributor;
+  editable: boolean;
+  onRemove: (contributorId: string) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const showBrandHover = editable && hovered;
+
+  return (
+    <div
+      className="group inline-flex items-center"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        height: 32,
+        backgroundColor: showBrandHover ? "#f5eaec" : "#f3efe9",
+        border: `1px solid ${showBrandHover ? "#e8d0d4" : "#e4ddd3"}`,
+        borderRadius: 4,
+        paddingLeft: 8,
+        paddingRight: 8,
+        paddingTop: 4,
+        paddingBottom: 4,
+        gap: 8,
+        transition: "background-color 120ms ease, border-color 120ms ease",
+      }}
+    >
+      <Avatar
+        name={contributor.name}
+        src={contributor.avatarUrl ?? undefined}
+        contributorId={contributor.id}
+        size="md"
+        prominence="high"
+      />
+      <span style={{ fontSize: 13, fontWeight: 500, color: "#6b5e55" }}>
+        {contributor.name}
+      </span>
+      {contributor.role ? (
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 400,
+            color: "#998c82",
+            lineHeight: 1.65,
+          }}
+        >
+          {contributor.role}
+        </span>
+      ) : null}
+      {editable ? (
+        <span className="inline-flex opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+          <button
+            type="button"
+            onClick={() => onRemove(contributor.id)}
+            aria-label={`Remove ${contributor.name}`}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "#998c82",
+              display: "inline-flex",
+              alignItems: "center",
+              padding: 0,
+            }}
+          >
+            <Icon name="close" size={14} />
+          </button>
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 export function ContributorsSection({
   projectId,
   initialContributors,
+  hideAddActions = false,
 }: ContributorsSectionProps) {
   const { showToast } = useToast();
   const { permissionLevel, loading: permissionLoading } = useActiveWorkspacePermission();
@@ -50,6 +138,8 @@ export function ContributorsSection({
   const [newContributorName, setNewContributorName] = useState("");
   const [newContributorEmail, setNewContributorEmail] = useState("");
   const [newContributorRole, setNewContributorRole] = useState("");
+  const [newContributorPermissionLevel, setNewContributorPermissionLevel] =
+    useState<ContentPermissionLevel>("reviewer");
   const [isSaving, setIsSaving] = useState(false);
   const [emailExistsError, setEmailExistsError] = useState<string | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
@@ -113,6 +203,7 @@ export function ContributorsSection({
     setNewContributorName("");
     setNewContributorEmail("");
     setNewContributorRole("");
+    setNewContributorPermissionLevel("reviewer");
     setEmailExistsError(null);
   };
 
@@ -182,59 +273,12 @@ export function ContributorsSection({
       {contributors.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
           {contributors.map((contributor) => (
-            <div
+            <TeammateTag
               key={contributor.id}
-              style={{
-                height: 32,
-                backgroundColor: "#f3efe9",
-                border: "1px solid #e4ddd3",
-                borderRadius: 4,
-                paddingLeft: 8,
-                paddingRight: 8,
-                paddingTop: 4,
-                paddingBottom: 4,
-                gap: 8,
-                display: "inline-flex",
-                alignItems: "center",
-              }}
-            >
-              <Avatar
-                name={contributor.name}
-                src={contributor.avatarUrl ?? undefined}
-                size="md"
-              />
-              <span style={{ fontSize: 13, fontWeight: 500, color: "#6b5e55" }}>
-                {contributor.name}
-              </span>
-              {contributor.role ? (
-                <span
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 400,
-                    color: "#998c82",
-                    lineHeight: 1.65,
-                  }}
-                >
-                  {contributor.role}
-                </span>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => void removeContributor(contributor.id)}
-                aria-label={`Remove ${contributor.name}`}
-                style={{
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  color: "#998c82",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  padding: 0,
-                }}
-              >
-                <Icon name="close" size={14} />
-              </button>
-            </div>
+              contributor={contributor}
+              editable={canManageTeammates}
+              onRemove={(contributorId) => void removeContributor(contributorId)}
+            />
           ))}
         </div>
       )}
@@ -248,7 +292,7 @@ export function ContributorsSection({
         }}
         ref={anchorRef}
       >
-        {canManageTeammates ? (
+        {canManageTeammates && !hideAddActions ? (
         <button
           type="button"
           onClick={() => setMenuOpen((prev) => !prev)}
@@ -277,7 +321,7 @@ export function ContributorsSection({
         </button>
         ) : null}
 
-        {canManageTeammates && menuOpen && (
+        {canManageTeammates && !hideAddActions && menuOpen && (
           <div
             style={{
               flex: 1,
@@ -345,7 +389,7 @@ export function ContributorsSection({
                           );
                         }}
                       />
-                      <Avatar name={contributor.name} size="md" />
+                      <Avatar name={contributor.name} contributorId={contributor.id} size="md" />
                       <span style={{ fontSize: 14, fontWeight: 500, color: "#2e1c1c", flex: 1 }}>
                         {contributor.name}
                       </span>
@@ -480,13 +524,18 @@ export function ContributorsSection({
                 const supabase = createSupabaseBrowserClient();
                 const activeWorkspaceId = await getActiveWorkspaceId(supabase);
 
+                const storedPermissionLevel = toStoredPermissionLevel(
+                  newContributorPermissionLevel,
+                  false,
+                );
+
                 if (email && activeWorkspaceId) {
                   const inviteResult = await sendWorkspaceInvite({
                     workspace_id: activeWorkspaceId,
                     email,
                     name,
                     role: newContributorRole.trim() || undefined,
-                    permission_level: "reviewer",
+                    permission_level: storedPermissionLevel,
                   });
                   if (inviteResult.status === "error") {
                     setIsSaving(false);
@@ -504,6 +553,8 @@ export function ContributorsSection({
                     name,
                     email: email || null,
                     role: newContributorRole.trim() || null,
+                    permission_level: storedPermissionLevel,
+                    is_paid: isPaidPermissionLevel(storedPermissionLevel),
                   })
                   .select("id, name, email, role")
                   .single();
@@ -568,6 +619,7 @@ export function ContributorsSection({
         <Select
           label="Role"
           size="sm"
+          portaled
           placeholder="Select"
           options={[
             { value: "Designer", label: "Designer" },
@@ -577,6 +629,17 @@ export function ContributorsSection({
           ]}
           value={newContributorRole || undefined}
           onChange={(value) => setNewContributorRole(value)}
+        />
+        <Select
+          label="Permission Level"
+          size="sm"
+          portaled
+          placeholder="Select"
+          options={[...TEAMMATE_PERMISSION_SELECT_OPTIONS]}
+          value={newContributorPermissionLevel}
+          onChange={(value) =>
+            setNewContributorPermissionLevel(value as ContentPermissionLevel)
+          }
         />
       </Modal>
     </section>

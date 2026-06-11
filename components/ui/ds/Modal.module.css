@@ -73,6 +73,13 @@
   white-space: nowrap;
 }
 
+.deleteArtifactDialog .title {
+  color: var(--text/heading, #2e1c1c);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+}
+
 .titleDestructive {
   color: #8b2020;
 }

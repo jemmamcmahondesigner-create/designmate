@@ -207,7 +207,7 @@ export function ProjectsView({
     const filt = (arr: Project[]) =>
       arr.filter((p) => {
         const team = (p.contributor_names ?? []).join("\0").toLowerCase();
-        const hay = [p.name, p.client ?? "", team].join("\0").toLowerCase();
+        const hay = [p.name, p.description ?? "", team].join("\0").toLowerCase();
         return hay.includes(q);
       });
     return {

@@ -1,5 +1,7 @@
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { TimelineEventType } from "@/lib/timeline/events";
+import { resolveCanonicalTimelineActor } from "@/lib/timeline/enrichTimelineActors";
+import { resolveCanonicalContributorIds } from "@/lib/contributors/resolveCanonicalContributorIds";
 
 type TimelineInsertInput = {
   projectId?: string | null;
@@ -20,18 +22,11 @@ export async function logTimelineEventClient(input: TimelineInsertInput) {
       } = await supabase.auth.getUser();
       const authUserId = user?.id?.trim();
       if (authUserId) {
-        const byUserId = await supabase
-          .from("contributors")
-          .select("id, name")
-          .eq("user_id", authUserId)
-          .limit(1)
-          .maybeSingle();
-        if (!byUserId.error && byUserId.data) {
-          actorId = String((byUserId.data as Record<string, unknown>).id ?? "");
-          actorName =
-            (byUserId.data as Record<string, unknown>).name == null
-              ? null
-              : String((byUserId.data as Record<string, unknown>).name);
+        const byAuthUser = await resolveCanonicalContributorIds(supabase, [authUserId]);
+        const match = byAuthUser.get(authUserId);
+        if (match) {
+          actorId = match.contributorId;
+          actorName = match.name;
         } else if (user?.email) {
           const byEmail = await supabase
             .from("contributors")
@@ -40,11 +35,14 @@ export async function logTimelineEventClient(input: TimelineInsertInput) {
             .limit(1)
             .maybeSingle();
           if (!byEmail.error && byEmail.data) {
-            actorId = String((byEmail.data as Record<string, unknown>).id ?? "");
+            const rawId = String((byEmail.data as Record<string, unknown>).id ?? "");
+            const canonical = await resolveCanonicalTimelineActor(supabase, rawId);
+            actorId = canonical.contributorId ?? rawId;
             actorName =
-              (byEmail.data as Record<string, unknown>).name == null
+              canonical.name ??
+              ((byEmail.data as Record<string, unknown>).name == null
                 ? null
-                : String((byEmail.data as Record<string, unknown>).name);
+                : String((byEmail.data as Record<string, unknown>).name));
           }
         }
       }
@@ -53,16 +51,30 @@ export async function logTimelineEventClient(input: TimelineInsertInput) {
     actorId = input.actorId ?? null;
   }
 
+  if (actorId?.trim()) {
+    const canonical = await resolveCanonicalTimelineActor(supabase, actorId);
+    actorId = canonical.contributorId;
+    actorName = actorName ?? canonical.name;
+  }
+
   const payload = {
     ...(input.payload ?? {}),
     ...(actorName ? { actor_name: actorName } : {})
   };
 
-  await supabase.from("timeline_events").insert({
+  const { error: insertError } = await supabase.from("timeline_events").insert({
     project_id: input.projectId ?? null,
     review_id: input.reviewId ?? null,
     actor_id: actorId || null,
     event_type: input.eventType,
     payload
   });
+
+  if (insertError) {
+    console.error(
+      "[logTimelineEventClient] insert failed:",
+      insertError.message,
+      input.eventType,
+    );
+  }
 }

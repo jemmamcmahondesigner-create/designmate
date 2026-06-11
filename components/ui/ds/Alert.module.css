@@ -83,6 +83,22 @@
 .titleDefault { color: #6b1e2e; }
 .titleInverse { color: #ffffff; }
 
+.sentiment-success.low .titleDefault {
+  color: var(--feedback-success-text, #256b38);
+}
+
+.sentiment-danger.low .titleDefault {
+  color: var(--feedback-error-text, #a31d1d);
+}
+
+.sentiment-warning.low .titleDefault {
+  color: var(--feedback-warning-text, #7a5c00);
+}
+
+.sentiment-base.low .titleDefault {
+  color: var(--text-secondary, #6b5e55);
+}
+
 /* ─── Body row ───────────────────────────────────────────────────────────────── */
 
 .bodyRow {

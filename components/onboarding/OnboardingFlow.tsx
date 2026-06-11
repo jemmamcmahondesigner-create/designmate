@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { AuthMark } from "@/components/auth/AuthMark";
 import { Button, Input, Select, Textarea } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { resolveProjectClientFields } from "@/lib/projects/resolveProjectClientFields";
 import { generateInviteCode } from "@/lib/workspace/utils";
 import { ensureContributorProfile } from "@/lib/workspace/ensureContributorProfile";
 import {
@@ -555,10 +556,14 @@ export function OnboardingFlow({
       const supabase = createSupabaseBrowserClient();
 
       if (!skip && projectName.trim() && activeWorkspaceId) {
+        const clientFields = await resolveProjectClientFields(supabase, {
+          clientName: projectFor.trim() || null,
+        });
         await supabase.from("projects").insert({
           name: projectName.trim(),
           description: projectDescription.trim() || null,
-          client: projectFor.trim() || null,
+          client: clientFields.client,
+          client_id: clientFields.client_id,
           workspace_id: activeWorkspaceId,
           status: "active",
         });
@@ -977,7 +982,7 @@ export function OnboardingFlow({
                       <Input
                         label="Who is the project for?"
                         size="sm"
-                        placeholder="Enter a client name or mark as internal"
+                        placeholder="Enter a group name or mark as internal"
                         value={projectFor}
                         onChange={(e) => setProjectFor(e.target.value)}
                         className="w-full"

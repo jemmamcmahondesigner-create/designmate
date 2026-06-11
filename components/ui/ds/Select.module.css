@@ -19,9 +19,14 @@
   font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
-  letter-spacing: 0.26px;
-  color: #2e1c1c;
+  letter-spacing: normal;
+  color: var(--text-primary, #2e1c1c);
   white-space: nowrap;
+}
+
+.required {
+  color: var(--feedback-error-text, #a31d1d);
+  margin-left: 1px;
 }
 
 .labelError   { color: #8b2020; }
@@ -109,6 +114,10 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.valueTextDisabled {
+  color: var(--text-secondary, #6b5e55);
 }
 
 .placeholderText {

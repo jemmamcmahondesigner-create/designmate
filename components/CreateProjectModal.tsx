@@ -5,15 +5,11 @@ import { useRouter } from "next/navigation";
 import { DiscardChangesModal } from "@/components/DiscardChangesModal";
 import { Alert, Button, Input, Modal, Select, Textarea, Tooltip } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { resolveProjectClientFields } from "@/lib/projects/resolveProjectClientFields";
 import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
 
-const CLIENT_OPTIONS = [
-  "Internal Project",
-  "Gem Designs and Signs",
-  "Peak Digital Solutions",
-  "Creative Canvas Marketing"
-] as const;
+type ClientOption = { id: string; name: string };
 
 export type CreateProjectModalProps = {
   open: boolean;
@@ -24,7 +20,8 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
   const router = useRouter();
   const descId = useId();
   const [name, setName] = useState("");
-  const [client, setClient] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,11 +30,37 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
 
   const resetForm = useCallback(() => {
     setName("");
-    setClient("");
+    setClientId("");
     setDescription("");
     setError(null);
     setSubmitAttempted(false);
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const supabase = createSupabaseBrowserClient();
+    void supabase
+      .from("clients")
+      .select("id, name")
+      .order("name", { ascending: true })
+      .then(({ data, error: clientsError }) => {
+        if (clientsError) {
+          console.error("CreateProjectModal clients fetch error:", clientsError);
+          return;
+        }
+        const mapped =
+          data
+            ?.map((row) => {
+              const o = row as Record<string, unknown>;
+              const id = String(o.id ?? "").trim();
+              const label = String(o.name ?? "").trim();
+              if (!id || !label) return null;
+              return { id, name: label };
+            })
+            .filter((row): row is ClientOption => row != null) ?? [];
+        setClientOptions(mapped);
+      });
+  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -47,8 +70,8 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
   }, [open, resetForm]);
 
   const isDirty = useMemo(
-    () => name.trim() !== "" || client.trim() !== "" || description.trim() !== "",
-    [name, client, description],
+    () => name.trim() !== "" || clientId.trim() !== "" || description.trim() !== "",
+    [name, clientId, description],
   );
 
   function requestClose() {
@@ -75,11 +98,16 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
       return;
     }
 
+    const clientFields = await resolveProjectClientFields(supabase, {
+      clientId: clientId || null,
+    });
+
     const { data: createdProject, error: insertError } = await supabase
       .from("projects")
       .insert({
         name: trimmed,
-        client: client.trim() || null,
+        client: clientFields.client,
+        client_id: clientFields.client_id,
         description: description.trim() || null,
         status: "active",
         workspace_id: activeWorkspaceId,
@@ -103,8 +131,8 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
         projectId: newProjectId,
         eventType: "project_created",
         payload: {
-          project_name: String((createdProject as Record<string, unknown>).name ?? trimmed)
-        }
+          project_name: String((createdProject as Record<string, unknown>).name ?? trimmed),
+        },
       });
     }
 
@@ -128,7 +156,7 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
           flex: "1 0 0",
           fontSize: 13,
           color: "#6b5e55",
-          fontFamily: "'Plus Jakarta Sans', sans-serif"
+          fontFamily: "'Plus Jakarta Sans', sans-serif",
         }}
       >
         Required*
@@ -174,79 +202,79 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
 
   return (
     <>
-    <Modal
-      open={open}
-      type="form"
-      size="md"
-      title="Create Project"
-      showSubtitle={false}
-      onClose={requestClose}
-      backdropClosable={!isDirty}
-      onEscapeWhenBackdropBlocked={() => setDiscardOpen(true)}
-      footer={footer}
-    >
-      <div className="flex flex-col gap-6">
-        <Input
-          type="text"
-          label="Project name"
-          required
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="i.e. Website Redesign"
-          autoComplete="off"
-          size="sm"
-          error={nameFieldError}
-          errorMessage="Project name is required"
-          helperText="Give your project a clear, descriptive name"
-          showHelper={!nameFieldError}
-        />
-
-        <Select
-          label="Who is the project for?"
-          options={CLIENT_OPTIONS.map((opt) => ({ value: opt, label: opt }))}
-          value={client || undefined}
-          onChange={(v) => setClient(v)}
-          placeholder="Select a client"
-          size="sm"
-          portaled={true}
-        />
-
-        <Textarea
-          id={descId}
-          label="Project Description"
-          showLabel
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="A brief overview of the project goals..."
-          variant="form-fixed"
-          size="md"
-        />
-
-        {error ? (
-          <Alert
-            sentiment="danger"
-            prominence="low"
-            title="Something went wrong"
-            body={error}
-            dismissible
-            onDismiss={() => setError(null)}
+      <Modal
+        open={open}
+        type="form"
+        size="md"
+        title="Create Project"
+        showSubtitle={false}
+        onClose={requestClose}
+        backdropClosable={!isDirty}
+        onEscapeWhenBackdropBlocked={() => setDiscardOpen(true)}
+        footer={footer}
+      >
+        <div className="flex flex-col gap-6">
+          <Input
+            type="text"
+            label="Project name"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="i.e. Website Redesign"
+            autoComplete="off"
+            size="sm"
+            error={nameFieldError}
+            errorMessage="Project name is required"
+            helperText="Give your project a clear, descriptive name"
+            showHelper={!nameFieldError}
           />
-        ) : null}
-      </div>
-    </Modal>
-    <DiscardChangesModal
-      open={discardOpen}
-      title="Unsaved changes?"
-      message="You have unsaved changes. Are you sure you want to close?"
-      keepEditingLabel="Keep editing"
-      discardLabel="Discard changes"
-      onKeepEditing={() => setDiscardOpen(false)}
-      onDiscard={() => {
-        resetForm();
-        setDiscardOpen(false);
-        onClose();
-      }}
-    />
+
+          <Select
+            label="Who is the project for?"
+            options={clientOptions.map((opt) => ({ value: opt.id, label: opt.name }))}
+            value={clientId || undefined}
+            onChange={(v) => setClientId(v)}
+            placeholder="Select a group"
+            size="sm"
+            portaled={true}
+          />
+
+          <Textarea
+            id={descId}
+            label="Project Description"
+            showLabel
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="A brief overview of the project goals..."
+            variant="form-fixed"
+            size="md"
+          />
+
+          {error ? (
+            <Alert
+              sentiment="danger"
+              prominence="low"
+              title="Something went wrong"
+              body={error}
+              dismissible
+              onDismiss={() => setError(null)}
+            />
+          ) : null}
+        </div>
+      </Modal>
+      <DiscardChangesModal
+        open={discardOpen}
+        title="Unsaved changes?"
+        message="You have unsaved changes. Are you sure you want to close?"
+        keepEditingLabel="Keep editing"
+        discardLabel="Discard changes"
+        onKeepEditing={() => setDiscardOpen(false)}
+        onDiscard={() => {
+          resetForm();
+          setDiscardOpen(false);
+          onClose();
+        }}
+      />
     </>
   );
 }

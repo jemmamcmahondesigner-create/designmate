@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { Icon } from './Icon';
 import styles from './StatusPill.module.css';
 
@@ -16,6 +17,43 @@ export type StatusPillStatus =
 
 /** DLS semantic colours (Mushroom = neutral default surface). */
 export type StatusPillColor = 'mushroom' | 'butter' | 'blue' | 'green' | 'brand' | 'error';
+
+export type StatusPillDisplay = {
+  label: string;
+  color: StatusPillColor;
+  legacyStatus?: StatusPillStatus;
+};
+
+function normalizeStatusPillKey(raw: string): string {
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-');
+}
+
+/** Canonical lifecycle status → pill label / colour (DS source of truth). */
+export const STATUS_PILL_DISPLAY: Record<string, StatusPillDisplay> = {
+  draft: { label: 'Draft', color: 'mushroom', legacyStatus: 'draft' },
+  'in-review': { label: 'In Review', color: 'butter', legacyStatus: 'in-review' },
+  'needs-changes': { label: 'Needs Changes', color: 'brand', legacyStatus: 'needs-changes' },
+  'changes-needed': { label: 'Needs Changes', color: 'brand', legacyStatus: 'needs-changes' },
+  'feedback-submitted': {
+    label: 'Feedback Submitted',
+    color: 'blue',
+    legacyStatus: 'feedback-submitted',
+  },
+  'direction-approved': { label: 'Direction Approved', color: 'green' },
+  paused: { label: 'Paused', color: 'mushroom', legacyStatus: 'paused' },
+  complete: { label: 'Complete', color: 'green' },
+  approved: { label: 'Approved', color: 'green', legacyStatus: 'approved' },
+  blocked: { label: 'Blocked', color: 'error', legacyStatus: 'blocked' },
+  closed: { label: 'Closed', color: 'mushroom', legacyStatus: 'closed' },
+  archived: { label: 'Archived', color: 'mushroom' },
+};
+
+export function resolveStatusPillDisplay(statusRaw: string): StatusPillDisplay | null {
+  return STATUS_PILL_DISPLAY[normalizeStatusPillKey(statusRaw)] ?? null;
+}
 
 /** Filled = solid pill; Outline = border-led (e.g. decision row). */
 export type StatusPillAppearance = 'filled' | 'outline';
@@ -59,6 +97,8 @@ export interface StatusPillProps {
   className?: string;
   /** Default overline caption; `body` uses 13px sentence case for table-style labels. */
   labelTypography?: 'overline' | 'body';
+  /** Optional icon before label (10px slot; inherits pill text colour). */
+  leadingIcon?: ReactNode;
 }
 
 export function StatusPill({
@@ -72,6 +112,7 @@ export function StatusPill({
   onClick,
   className,
   labelTypography = 'overline',
+  leadingIcon,
 }: StatusPillProps) {
   const isInteractive = state === 'interactive' && size === 'lg';
   const usesTokens = Boolean(color);
@@ -91,6 +132,7 @@ export function StatusPill({
   const rootClass = [
     styles.root,
     usesTokens ? tokenClass : legacyClasses,
+    usesTokens && prominence === 'high' ? styles.tokenHigh : '',
     usesTokens && isInteractive ? styles.interactive : '',
     styles[`size-${size}`],
     labelTypography === 'body' ? styles.typographyBody : '',
@@ -108,6 +150,11 @@ export function StatusPill({
       type={isInteractive ? 'button' : undefined}
       aria-haspopup={isInteractive ? 'menu' : undefined}
     >
+      {leadingIcon ? (
+        <span className={styles.leadingIcon} aria-hidden="true">
+          {leadingIcon}
+        </span>
+      ) : null}
       <span className={styles.label}>{label}</span>
       {isInteractive && (
         <span className={styles.chevron} aria-hidden="true">

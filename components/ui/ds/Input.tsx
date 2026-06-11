@@ -39,6 +39,8 @@ export interface InputProps {
   showHelper?: boolean
   /** Disabled state */
   disabled?: boolean
+  /** Read-only control styling without dimming the label (e.g. read-only forms). */
+  readOnly?: boolean
   /** HTML input type */
   type?: 'text' | 'email' | 'password' | 'search' | 'url' | 'number' | 'tel'
   /** onChange handler */
@@ -47,6 +49,8 @@ export interface InputProps {
   onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void
   /** onFocus handler */
   onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void
+  /** onKeyDown handler */
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
   /** Additional class on the root wrapper — for layout positioning only */
   className?: string
   /** aria-describedby — auto-set from helperText/errorMessage, override if needed */
@@ -81,10 +85,12 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
       helperText,
       showHelper = true,
       disabled = false,
+      readOnly = false,
       type = 'text',
       onChange,
       onBlur,
       onFocus,
+      onKeyDown,
       className,
       'aria-describedby': ariaDescribedBy,
       name,
@@ -116,6 +122,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
       styles[`size-${size}`],
       error ? styles.fieldError : '',
       disabled ? styles.fieldDisabled : '',
+      readOnly ? styles.fieldReadOnly : '',
     ]
       .filter(Boolean)
       .join(' ')
@@ -141,6 +148,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
             defaultValue={defaultValue}
             placeholder={placeholder}
             disabled={disabled}
+            readOnly={readOnly}
             required={required}
             aria-required={required}
             aria-invalid={error}
@@ -152,6 +160,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
             onChange={onChange}
             onBlur={onBlur}
             onFocus={onFocus}
+            onKeyDown={onKeyDown}
           />
           {trailingAction}
         </div>

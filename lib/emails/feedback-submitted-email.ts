@@ -1,4 +1,5 @@
 import { escapeHtml } from "@/lib/emails/escape-html";
+import { getDesignTraceWordmarkHtml } from "@/lib/emails/brand-wordmark";
 
 export type FeedbackSubmittedEmailProps = {
   creatorName: string;
@@ -71,8 +72,8 @@ export function getFeedbackSubmittedEmailHtml({
         <table width="560" cellpadding="0" cellspacing="0" style="background:white;border-radius:12px;border:1px solid #ede8e0;max-width:560px;">
           <tr>
             <td style="padding:32px 40px 24px;">
-              <p style="margin:0 0 20px;font-size:22px;line-height:1.2;">
-                <span style="font-weight:800;color:#6b1e2e;">Design</span><span style="font-weight:300;color:#a0384f;">Trace</span>
+              <p style="margin:0 0 20px;font-size:20px;line-height:1.2;">
+                ${getDesignTraceWordmarkHtml()}
               </p>
               <hr style="border:none;border-top:1px solid #ede8e0;margin:0 0 24px;"/>
               <h2 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#6b1e2e;line-height:1.3;">

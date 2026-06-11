@@ -62,6 +62,22 @@ button.root:focus-visible {
   flex-shrink: 0;
 }
 
+.leadingIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: inherit;
+}
+
+.leadingIcon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
 .chevron {
   display: flex;
   align-items: center;
@@ -265,8 +281,8 @@ button.root:focus-visible {
 }
 
 .ds_blue_filled {
-  background: #e8f1fb;
-  color: #1565c0;
+  background: #e5f3f9;
+  color: #1a527a;
   border-width: 0;
 }
 
@@ -282,6 +298,15 @@ button.root:focus-visible {
   background: #ebf6ee;
   color: #256b38;
   border-width: 0;
+}
+
+.tokenHigh {
+  /* Modifier for high-prominence token pills (see paired colour rules below). */
+}
+
+.root.tokenHigh.ds_green_filled {
+  background: #3b9b54;
+  color: #ffffff;
 }
 
 .ds_green_outline {

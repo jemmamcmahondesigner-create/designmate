@@ -10,7 +10,7 @@ export default async function DashboardPage() {
   return (
     <main className="py-16">
       <Container>
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="mt-2 text-zinc-600">
           This is a placeholder. In a multi-tenant setup, you’ll typically scope
           pages by tenant (e.g. <code>/t/[tenantSlug]/...</code>) and enforce RLS

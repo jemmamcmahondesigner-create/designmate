@@ -96,21 +96,35 @@ export const TextareaAi = forwardRef<HTMLTextAreaElement, TextareaAiProps>(
             </div>
             <div className={styles.aiFooterActions}>
               {showLoadingButton ? (
-                <button
-                  type="button"
-                  className={styles.loadingBtn}
-                  disabled
-                  aria-busy
-                  aria-label="Generating description"
-                  tabIndex={-1}
-                >
-                  <Icon
-                    name="loading"
-                    size={14}
-                    className={styles.loadingBtnSpin}
-                    aria-hidden
+                aiButtonLabel ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    label={aiButtonLabel}
+                    icon="leading"
+                    iconName="loading"
+                    disabled
+                    className={styles.loadingAiButton}
+                    aria-label={aiButtonLabel}
                   />
-                </button>
+                ) : (
+                  <button
+                    type="button"
+                    className={styles.loadingBtn}
+                    disabled
+                    aria-busy
+                    aria-label="Generating description"
+                    tabIndex={-1}
+                  >
+                    <Icon
+                      name="loading"
+                      size={14}
+                      className={styles.loadingBtnSpin}
+                      aria-hidden
+                    />
+                  </button>
+                )
               ) : showRegenerateButton ? (
                 aiButtonLabel ? (
                   aiButtonTooltip ? (

@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, IconSquareButton, Input, Menu, MenuItem, Modal, Table, type ColumnDef } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import settingsTableLayoutStyles from "./settingsTableLayout.module.css";
+import groupsTableStyles from "./ClientsSettingsPage.module.css";
 
 export type ClientRow = {
   id: string;
@@ -50,7 +52,7 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
     const website = createForm.website.trim() || null;
     const { error } = await supabase.from("clients").insert({ name, industry, website });
     if (error) {
-      setFormError(error.message || "Could not create client.");
+      setFormError(error.message || "Could not create group.");
       return;
     }
     setCreateOpen(false);
@@ -81,7 +83,7 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
       .update({ name, industry, website })
       .eq("id", editClient.id);
     if (error) {
-      setFormError(error.message || "Could not update client.");
+      setFormError(error.message || "Could not update group.");
       return;
     }
     setEditClient(null);
@@ -93,7 +95,7 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
     const supabase = createSupabaseBrowserClient();
     const { error } = await supabase.from("clients").delete().eq("id", removeClient.id);
     if (error) {
-      setFormError(error.message || "Could not remove client.");
+      setFormError(error.message || "Could not remove group.");
       setRemoveClient(null);
       return;
     }
@@ -116,11 +118,44 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
       label: "Industry",
       width: 200,
       cellType: "custom",
-      render: (row) => (
-        <span style={{ fontSize: 13, fontWeight: 400, color: "var(--text-secondary, #6b5e55)" }}>
-          {row.industry?.trim() ? row.industry : "—"}
-        </span>
-      ),
+      render: (row) => {
+        const industry = row.industry?.trim();
+        return (
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 400,
+              color: industry
+                ? "var(--text-secondary, #6b5e55)"
+                : "var(--text-disabled, #c9c0b4)",
+            }}
+          >
+            {industry || "—"}
+          </span>
+        );
+      },
+    },
+    {
+      key: "website",
+      label: "Website",
+      width: 200,
+      cellType: "custom",
+      render: (row) => {
+        const website = row.website?.trim();
+        return (
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 400,
+              color: website
+                ? "var(--text-secondary, #6b5e55)"
+                : "var(--text-disabled, #c9c0b4)",
+            }}
+          >
+            {website || "—"}
+          </span>
+        );
+      },
     },
     {
       key: "projects",
@@ -144,14 +179,14 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
             }}
             variant="ghost"
             icon="kebab"
-            label="Client actions"
+            label="Group actions"
             onClick={() => setOpenMenuId((prev) => (prev === row.id ? null : row.id))}
           />
           <Menu
             open={openMenuId === row.id}
             onClose={() => setOpenMenuId(null)}
             anchorRef={{ current: actionRefs.current[row.id] as HTMLElement | null }}
-            align="left"
+            align="right"
             portal
             portalZIndex={100}
           >
@@ -176,26 +211,18 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
   ];
 
   return (
-    <>
+    <div className={settingsTableLayoutStyles.pageContent}>
       <div
         style={{
           display: "flex",
-          alignItems: "center",
+          alignItems: "flex-start",
           justifyContent: "space-between",
           gap: 16,
+          flexWrap: "wrap",
           marginBottom: 16,
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 24,
-            flex: 1,
-            minWidth: 0,
-            flexWrap: "wrap",
-          }}
-        >
+        <div style={{ flex: 1, minWidth: 0 }}>
           <h1
             style={{
               margin: 0,
@@ -205,27 +232,29 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
               color: "var(--text-heading, #6b1e2e)",
             }}
           >
-            Clients
+            Groups
           </h1>
           <p
             style={{
-              margin: 0,
+              margin: "8px 0 0",
               fontSize: 15,
               fontWeight: 400,
               color: "var(--text-secondary, #6b5e55)",
             }}
           >
-            Link projects to clients in order to build insights and a record of decisions on client relationships.
+            Link projects to groups to organise your work and track decisions across teams and client relationships.
           </p>
         </div>
-        <Button
-          label="Client"
-          variant="primary"
-          size="sm"
-          icon="leading"
-          iconName="plus"
-          onClick={openCreate}
-        />
+        <div style={{ flexShrink: 0 }}>
+          <Button
+            label="New Group"
+            variant="primary"
+            size="sm"
+            icon="leading"
+            iconName="plus"
+            onClick={openCreate}
+          />
+        </div>
       </div>
 
       {formError && !createOpen && !editClient ? (
@@ -234,19 +263,29 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
         </p>
       ) : null}
 
-      <Table
-        columns={columns}
-        rows={clients}
-        emptyState={
-          <span style={{ color: "var(--text-secondary, #6b5e55)" }}>No clients yet — add your first client to start linking projects.</span>
-        }
-      />
+      <div
+        className={settingsTableLayoutStyles.tableShell}
+        style={{ minWidth: 0, width: "100%" }}
+      >
+        <div className={settingsTableLayoutStyles.tableScroll}>
+          <div className={settingsTableLayoutStyles.tableScrollInner}>
+            <Table
+              className={`${settingsTableLayoutStyles.tableBorderless} ${groupsTableStyles.groupsTable}`}
+              columns={columns}
+              rows={clients}
+              emptyState={
+                <span style={{ color: "var(--text-secondary, #6b5e55)" }}>No groups yet — add your first group to start linking projects.</span>
+              }
+            />
+          </div>
+        </div>
+      </div>
 
       <Modal
         open={createOpen}
         type="form"
         size="sm"
-        title="Create Client"
+        title="Create Group"
         onClose={() => setCreateOpen(false)}
         footer={
           <div style={{ display: "flex", width: "100%", justifyContent: "flex-end", gap: 8 }}>
@@ -283,7 +322,7 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
         open={Boolean(editClient)}
         type="form"
         size="sm"
-        title="Edit Client"
+        title="Edit Group"
         onClose={() => setEditClient(null)}
         footer={
           <div style={{ display: "flex", width: "100%", justifyContent: "flex-end", gap: 8 }}>
@@ -319,7 +358,7 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
       <Modal
         open={Boolean(removeClient)}
         type="destructive"
-        title="Remove client"
+        title="Remove group"
         description={
           removeClient
             ? `Are you sure you want to remove ${removeClient.name}? This cannot be undone.`
@@ -329,6 +368,6 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
         onConfirm={() => void confirmRemove()}
         onClose={() => setRemoveClient(null)}
       />
-    </>
+    </div>
   );
 }

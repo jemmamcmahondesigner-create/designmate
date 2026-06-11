@@ -22,17 +22,44 @@ export function canEditReviewDetails(
   return canCreateReviews(normalizeWorkspacePermission(permissionLevel));
 }
 
+function mergePermissionLevels(
+  contributorLevel: WorkspacePermissionLevel | string | null,
+  workspaceLevel: WorkspacePermissionLevel | string | null,
+): WorkspacePermissionLevel {
+  const levels = [
+    contributorLevel ? normalizeWorkspacePermission(contributorLevel) : null,
+    workspaceLevel ? normalizeWorkspacePermission(workspaceLevel) : null,
+  ].filter(Boolean) as WorkspacePermissionLevel[];
+  if (levels.includes("admin")) return "admin";
+  if (levels.includes("editor")) return "editor";
+  return levels[0] ?? "reviewer";
+}
+
 /** Mirrors server `assertCanSendReviewReminder` for client UI (bell visibility). */
 export function canSendReviewReminder(input: {
   permissionLevel: WorkspacePermissionLevel | string | null;
+  workspacePermissionLevel?: WorkspacePermissionLevel | string | null;
   reviewOwnerName: string | null;
   currentContributorId: string | null;
   currentContributorName: string | null;
   reviewCreatorContributorId?: string | null;
+  reviewCreatorAuthUserId?: string | null;
+  currentAuthUserId?: string | null;
 }): boolean {
-  if (!input.currentContributorId) return false;
-  const perm = normalizeWorkspacePermission(input.permissionLevel);
+  const perm = mergePermissionLevels(
+    input.permissionLevel,
+    input.workspacePermissionLevel ?? null,
+  );
   if (perm === "admin" || perm === "editor") return true;
+
+  const creatorAuthUserId = String(input.reviewCreatorAuthUserId ?? "").trim();
+  const currentAuthUserId = String(input.currentAuthUserId ?? "").trim();
+  if (creatorAuthUserId && currentAuthUserId && creatorAuthUserId === currentAuthUserId) {
+    return true;
+  }
+
+  if (!input.currentContributorId) return false;
+
   const owner = String(input.reviewOwnerName ?? "")
     .trim()
     .toLowerCase();

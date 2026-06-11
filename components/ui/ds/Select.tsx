@@ -21,6 +21,8 @@ export interface SelectOption {
   value: string;
   label: string;
   disabled?: boolean;
+  /** Native tooltip for disabled or informational options. */
+  title?: string;
 }
 
 const CREATE_PREFIX = '__create__:';
@@ -31,10 +33,14 @@ export interface SelectProps {
   onChange?: (value: string) => void;
   placeholder?: string;
   label?: string;
+  /** Marks the field as required — appends * to label */
+  required?: boolean;
   helperText?: string;
   errorText?: string;
   size?: SelectSize;
   disabled?: boolean;
+  /** Disabled control styling without dimming the label (e.g. read-only forms). */
+  readOnly?: boolean;
   /** Renders the menu open immediately (for searchable/autocomplete UX) */
   searchable?: boolean;
   /**
@@ -65,10 +71,12 @@ export function Select({
   onChange,
   placeholder = 'Select an option',
   label,
+  required = false,
   helperText,
   errorText,
   size = 'sm',
   disabled = false,
+  readOnly = false,
   searchable = false,
   creatable = false,
   creatableOptionLabel,
@@ -356,11 +364,13 @@ export function Select({
     }
   };
 
+  const isControlInactive = disabled || readOnly;
+
   const controlClass = [
     styles.control,
     styles[`size-${size}`],
     hasError ? styles.error : '',
-    disabled ? styles.disabled : '',
+    isControlInactive ? styles.disabled : '',
     open ? styles.open : '',
     isFilled && !hasError ? styles.filled : '',
   ]
@@ -370,7 +380,6 @@ export function Select({
   const labelClass = [
     styles.label,
     hasError ? styles.labelError : '',
-    disabled ? styles.labelDisabled : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -410,6 +419,7 @@ export function Select({
             .join(' ')}
           onMouseDown={e => e.preventDefault()}
           onClick={() => !option.disabled && handleSelect(option.value)}
+          title={option.title}
         >
           {option.label}
           {option.value === value && !option.value.startsWith(CREATE_PREFIX) && (
@@ -430,6 +440,11 @@ export function Select({
       {label && (
         <label htmlFor={id} className={labelClass}>
           {label}
+          {required && (
+            <span className={styles.required} aria-hidden="true">
+              *
+            </span>
+          )}
         </label>
       )}
 
@@ -437,7 +452,7 @@ export function Select({
       <select
         name={name}
         value={value ?? ''}
-        disabled={disabled}
+        disabled={isControlInactive}
         aria-hidden="true"
         tabIndex={-1}
         style={{ display: 'none' }}
@@ -460,11 +475,11 @@ export function Select({
           role="combobox"
           aria-haspopup="listbox"
           aria-expanded={open}
-          aria-disabled={disabled}
-          disabled={disabled}
+          aria-disabled={isControlInactive}
+          disabled={isControlInactive}
           className={controlClass}
           onClick={(e) => {
-            if (disabled) return;
+            if (isControlInactive) return;
             if (searchable && open && e.detail === 0) return;
             if (searchable && e.target instanceof HTMLInputElement) {
               if (!open) setOpen(true);
@@ -501,7 +516,16 @@ export function Select({
             />
           ) : (
             <span
-              className={displayLabel ? styles.valueText : styles.placeholderText}
+              className={
+                displayLabel
+                  ? [
+                      styles.valueText,
+                      disabled && !readOnly ? styles.valueTextDisabled : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')
+                  : styles.placeholderText
+              }
             >
               {displayLabel || placeholder}
             </span>

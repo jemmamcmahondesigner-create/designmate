@@ -13,6 +13,10 @@
   background: transparent;
 }
 
+.scrimBrand {
+  background: rgba(107, 30, 46, 0.2);
+}
+
 /* ─── Root ──────────────────────────────────────────────────────────────────── */
 
 .root {

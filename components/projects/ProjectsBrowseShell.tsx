@@ -18,6 +18,7 @@ export function ProjectsBrowseShell({ children }: { children: ReactNode }) {
         style={{
           flex: "1 1 0",
           minWidth: 0,
+          minHeight: 0,
           display: "flex",
           flexDirection: "column",
           overflow: "hidden"
@@ -27,6 +28,7 @@ export function ProjectsBrowseShell({ children }: { children: ReactNode }) {
           style={{
             flex: "1 1 0",
             minWidth: 0,
+            minHeight: 0,
             overflowY: "auto",
             display: "flex",
             flexDirection: "column",

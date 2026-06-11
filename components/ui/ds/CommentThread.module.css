@@ -126,7 +126,7 @@
 .options {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 4px;
   flex-shrink: 0;
   flex-wrap: wrap;
 }

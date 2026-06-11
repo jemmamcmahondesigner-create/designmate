@@ -1,19 +1,14 @@
-/* DecisionCard.module.css — DLS node 55:195
-   Status header: recessed bg (#f3efe9), status pill right-aligned
-   Content: options → decision text → owner row → optional trade-off block
-   Trade-off: white card, 2px butter border (#fff0a3), AI stars icon
-*/
+/* DecisionCard.module.css — DLS node 1236:46349 */
 
 .root {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  width: 100%;
   border-radius: 8px;
   border: 1px solid #e4ddd3;
   background: #ffffff;
-  box-shadow: 0 1px 3px 0 rgba(41, 33, 28, 0.08);
-  overflow: clip;
-  width: 100%;
   font-family: 'Plus Jakarta Sans', sans-serif;
   box-sizing: border-box;
   padding-bottom: 20px;
@@ -35,102 +30,88 @@
   text-align: center;
 }
 
-/* ─── Status header ──────────────────────────────────────────────────────────── */
-/* Recessed surface (#f3efe9), 12px v, 12px h padding */
+/* ─── Header band ───────────────────────────────────────────────────────────── */
 
-.statusHeader {
+.headerBand {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background: #f3efe9;
-  border-radius: 4px;
+  gap: 8px;
   width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px 8px 0 0;
   box-sizing: border-box;
   flex-shrink: 0;
 }
 
-.statusLabel {
+.headerBandApproved {
+  background: #ebf7f4;
+}
+
+.headerBandChangesNeeded {
+  background: #fef8dc;
+}
+
+.headerBandPreference {
+  background: #e5f3f9;
+}
+
+.headerBandPreferenceAmended {
+  background: #f3efe9;
+}
+
+.preferencePill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  padding: 4px 10px;
+  background: #2e82b5;
+  color: #ffffff;
+  font-family: 'Plus Jakarta Sans', sans-serif;
   font-size: 10px;
   font-weight: 600;
   line-height: 1.5;
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: #6b5e55;
   white-space: nowrap;
 }
 
-/* ─── Content area ───────────────────────────────────────────────────────────── */
-
-.content {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 0 16px;
-  width: 100%;
-  box-sizing: border-box;
-  flex-shrink: 0;
-}
-
-/* ─── Option tags ────────────────────────────────────────────────────────────── */
-
-.options {
-  display: flex;
+.preferencePillAmended {
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
+  justify-content: center;
   flex-shrink: 0;
-}
-
-/* ─── Text block (decision text + owner row) ─────────────────────────────────── */
-
-.textBlock {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-  flex-shrink: 0;
-}
-
-.decisionText {
-  font-size: 14px;
-  font-weight: 400;
+  border-radius: 9999px;
+  padding: 4px 10px;
+  background: #b8b0a8;
+  color: #ffffff;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
   line-height: 1.5;
-  color: #2e1c1c;
-  width: 100%;
-  margin: 0;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
-/* ─── Owner row ──────────────────────────────────────────────────────────────── */
+.decisionTextAmended {
+  color: #c9c0b4;
+}
 
-.ownerRow {
+.headerLeft {
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-}
-
-.recordedLine {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: 0.24px;
-  color: #998c82;
-}
-
-.ownerDetails {
-  display: flex;
+  flex: 1;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  min-width: 0;
 }
 
 .ownerName {
   font-size: 12px;
   font-weight: 500;
   line-height: normal;
-  color: #6b5e55;
+  color: #2e1c1c;
   white-space: nowrap;
 }
 
@@ -140,6 +121,7 @@
   line-height: 1.5;
   letter-spacing: 0.24px;
   color: #998c82;
+  flex-shrink: 0;
 }
 
 .timestamp {
@@ -151,51 +133,176 @@
   white-space: nowrap;
 }
 
-/* ─── Trade-off block ────────────────────────────────────────────────────────── */
-/* White card, 2px butter border (#fff0a3) */
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
 
-.tradeOff {
+/* ─── Body ────────────────────────────────────────────────────────────────────── */
+
+.body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  border: 2px solid #fff0a3;
-  background: #ffffff;
+  gap: 12px;
+  padding: 0 16px;
   width: 100%;
   box-sizing: border-box;
+}
+
+.decisionText {
+  margin: 0;
+  width: 100%;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #2e1c1c;
+}
+
+.tagsRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.changeRequestsBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.changeRequestBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.changeRequestDivider {
+  width: 100%;
+}
+
+.changeRequestItem {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.changeRequestRow {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+}
+
+.changeRequestText {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #2e1c1c;
+}
+
+.changeRequestTag {
   flex-shrink: 0;
 }
 
-.tradeOffHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
+.rootCompleted {
+  background: var(--workflow/closed/bg, #ede8e0);
+  border-color: #e4ddd3;
 }
 
-.tradeOffLabel {
+.rootCompleted .decisionText,
+.rootCompleted .changeRequestText,
+.rootCompleted .ownerName {
+  color: var(--text/disabled, #c9c0b4);
+}
+
+.rootCompleted .timestamp,
+.rootCompleted .dot {
+  color: var(--text/disabled, #c9c0b4);
+}
+
+.headerBandCompleted {
+  background: var(--workflow/closed/bg, #ede8e0);
+}
+
+.headerBandSuperseded {
+  background: #f3efe9;
+}
+
+.rootSuperseded .ownerName,
+.rootSuperseded .timestamp,
+.rootSuperseded .dot {
+  color: #c9c0b4;
+}
+
+.rootSuperseded .decisionText,
+.rootSuperseded .changeRequestText {
+  color: #c9c0b4;
+}
+
+.rootSuperseded .headerActions {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.supersededLabel {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 2;
   font-size: 10px;
   font-weight: 600;
-  line-height: 1.5;
   letter-spacing: 1px;
   text-transform: uppercase;
   color: #998c82;
-  white-space: nowrap;
 }
 
-.aiIcon {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.tradeOffNote {
-  font-size: 13px;
-  font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: 0.26px;
-  color: #2e1c1c;
-  margin: 0;
+.changesRequestedSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   width: 100%;
+}
+
+.changesRequestedDividerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.changesRequestedLine {
+  flex: 1;
+  min-width: 0;
+}
+
+.changeRequestFooterRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.changeRequestTextCompleted {
+  color: #c9c0b4;
+}
+
+.changeRequestKebabDisabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.changesRequestedPillSlot {
+  flex-shrink: 0;
 }

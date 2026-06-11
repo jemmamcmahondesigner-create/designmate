@@ -167,6 +167,7 @@ function VersionArtifactPanel({
                 <Avatar
                   key={p.id}
                   name={p.name}
+                  contributorId={p.id}
                   src={p.avatarUrl ?? undefined}
                   size="md"
                   className={artifactStyles.avatarGroupItem}

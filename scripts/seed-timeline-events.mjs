@@ -182,14 +182,12 @@ async function run() {
   }
 
   if (inserts.length === 0) {
-    console.log("No seed inserts needed. timeline_events already populated.");
     return;
   }
 
   const { error: insertError } = await supabase.from("timeline_events").insert(inserts);
   if (insertError) throw insertError;
 
-  console.log(`Inserted ${inserts.length} timeline seed events.`);
 }
 
 run().catch((error) => {

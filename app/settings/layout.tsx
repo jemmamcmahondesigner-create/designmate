@@ -22,6 +22,8 @@ export default function SettingsLayout({
           style={{
             flex: 1,
             minHeight: 0,
+            minWidth: 0,
+            overflowX: "hidden",
             overflowY: "auto",
             paddingLeft: 32,
             paddingRight: 32,

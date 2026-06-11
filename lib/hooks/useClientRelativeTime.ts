@@ -1,14 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { formatDistanceToNow } from '@/lib/formatDistanceToNow';
+import {
+  formatDistanceToNow,
+  formatDistanceToNowShort,
+} from '@/lib/formatDistanceToNow';
 
 /** Relative time safe for SSR — empty until after mount, then updates periodically. */
 export function useClientRelativeTime(
   iso: string | null | undefined,
-  options?: { addSuffix?: boolean },
+  options?: { addSuffix?: boolean; short?: boolean },
 ): string {
   const addSuffix = options?.addSuffix ?? true;
+  const short = options?.short ?? false;
   const [label, setLabel] = useState('');
 
   useEffect(() => {
@@ -22,12 +26,16 @@ export function useClientRelativeTime(
       return;
     }
     const update = () => {
-      setLabel(formatDistanceToNow(date, { addSuffix }));
+      setLabel(
+        short
+          ? formatDistanceToNowShort(date)
+          : formatDistanceToNow(date, { addSuffix }),
+      );
     };
     update();
     const id = window.setInterval(update, 60_000);
     return () => window.clearInterval(id);
-  }, [iso, addSuffix]);
+  }, [iso, addSuffix, short]);
 
   return label;
 }

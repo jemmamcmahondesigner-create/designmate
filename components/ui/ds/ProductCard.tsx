@@ -4,9 +4,11 @@ import Link from 'next/link';
 import { StatusPill, type StatusPillStatus } from './StatusPill';
 import { Tag } from './Tag';
 import { Avatar } from './Avatar';
+import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
 import styles from './ProductCard.module.css';
 
 export interface ProductCardContributor {
+  id: string;
   name: string;
   avatarSrc?: string;
 }
@@ -81,11 +83,17 @@ export function ProductCard({
           <div className={styles.avatarGroup}>
             {contributors.slice(0, 4).map((c, i) => (
               <div
-                key={i}
+                key={c.id || i}
                 className={styles.avatarWrap}
                 style={{ zIndex: 4 - i }}
               >
-                <Avatar src={c.avatarSrc} name={c.name} size="md" />
+                <Avatar
+                  src={c.avatarSrc}
+                  name={c.name}
+                  contributorId={c.id}
+                  size="md"
+                  style={getAvatarInlineStyle(c.id)}
+                />
               </div>
             ))}
           </div>

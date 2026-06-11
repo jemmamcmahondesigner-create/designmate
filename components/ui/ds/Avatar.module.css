@@ -11,14 +11,13 @@
   overflow: hidden;
   flex-shrink: 0;
   font-family: 'Plus Jakarta Sans', sans-serif;
-  background: #e4ddd3;
-  color: #6b5e55;
   font-weight: 600;
   user-select: none;
 }
 
 /* ─── Sizes ─────────────────────────────────────────────────────────────────── */
 
+.size-sm,
 .size-md {
   width: 24px;
   height: 24px;
@@ -31,6 +30,14 @@
   height: 32px;
   font-size: 11px;
   letter-spacing: 0;
+}
+
+/* ─── Prominence ────────────────────────────────────────────────────────────── */
+
+.prominenceHigh {
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+  box-sizing: border-box;
 }
 
 /* ─── Image ─────────────────────────────────────────────────────────────────── */

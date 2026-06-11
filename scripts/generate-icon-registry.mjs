@@ -45,4 +45,3 @@ const banner = `/* eslint-disable */
 `
 const body = `${banner}export const ICONS = {\n${entries.join('\n')}\n} as const\n\nexport type PublicIconKey = keyof typeof ICONS\n`
 fs.writeFileSync(outFile, body, 'utf8')
-console.log(`Wrote ${outFile} (${files.length} icons)`)

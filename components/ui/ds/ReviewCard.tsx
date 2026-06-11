@@ -3,6 +3,14 @@
 import { Avatar } from './Avatar';
 import { Tag } from './Tag';
 import { StatusPill, type StatusPillColor } from './StatusPill';
+import { Tooltip } from './Tooltip';
+import { Breadcrumb, type BreadcrumbSegment } from './Breadcrumb';
+import {
+  normalizeReviewTypeKey,
+  resolveReviewStatusPill,
+} from '@/lib/reviews/reviewStatusDisplay';
+import { Warning } from 'phosphor-react';
+import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
 import styles from './ReviewCard.module.css';
 
 export type ReviewStatus =
@@ -14,12 +22,15 @@ export type ReviewStatus =
   | 'approved'
   | 'needs-changes'
   | 'changes-needed'
-  | 'blocked';
+  | 'blocked'
+  | 'archived';
 
 export interface ReviewCardProps {
   title: string;
   /** Review lifecycle `reviews.status` (DB-normalized). */
   status: ReviewStatus;
+  /** Compare | approve | align | critique — drives type-specific pill labels. */
+  reviewType?: string | null;
   /** `reviews.decision_status` — drives Complete pill colour. */
   decisionStatus?: string | null;
   /** `reviews.require_decision_maker` — Complete + no decision → mushroom when false. */
@@ -35,8 +46,18 @@ export interface ReviewCardProps {
   /** @deprecated Use `creatorAvatarSrc`. */
   ownerAvatarSrc?: string;
   dateLabel?: string;
-  /** Client / project name — butter Tag below status row (DLS 55:108). */
+  dateTooltipIso?: string;
+  /** Client name tag below description (Project Detail). Hidden when `breadcrumb` is set. */
   clientName?: string;
+  /**
+   * [client name] / [project name] row (All Reviews). Mutually exclusive with `clientName`.
+   * Project links to project detail; client without a name shows as disabled "Undefined".
+   */
+  breadcrumb?: {
+    clientName: string | null;
+    projectName: string;
+    projectId: string;
+  } | null;
   description?: string;
   /** Show the description body */
   showDescription?: boolean;
@@ -45,8 +66,16 @@ export interface ReviewCardProps {
   artifactLabel?: string;
   /** Version chip rendered right-aligned in the footer (e.g. "v1") */
   iterationLabel?: string;
+  feedbackCount?: number;
+  changeRequestCount?: number;
   commentCount?: number;
   decisionCount?: number;
+  showDecisionCount?: boolean;
+  reviewers?: Array<{
+    id?: string;
+    name: string;
+    avatarSrc?: string | null;
+  }>;
   /** When false, the footer (counts + iteration) is hidden */
   showDetailCounts?: boolean;
   onClick?: () => void;
@@ -57,39 +86,58 @@ function norm(s: string | null | undefined) {
   return String(s ?? '').trim().toLowerCase();
 }
 
-/** Same semantics as Review Detail `completeLifecyclePillColor`. */
-function completeLifecyclePillColor(decisionStatus: string | null | undefined): StatusPillColor {
-  const d = norm(decisionStatus);
-  if (!d) return 'mushroom';
-  if (d === 'approved') return 'green';
-  if (d === 'rejected' || d === 'blocked') return 'error';
-  if (d === 'needs-changes' || d === 'changes-needed') return 'brand';
-  return 'mushroom';
+function formatReviewCardDateTooltip(iso: string | null | undefined) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const dateLabel = date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const timeLabel = date
+    .toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+    .toLowerCase();
+  return `Created ${dateLabel} at ${timeLabel}`;
 }
 
-function reviewCardPill(input: {
-  status: string;
-  decisionStatus?: string | null;
-  requireDecisionMaker?: boolean;
-}): { color: StatusPillColor; label: string } {
-  const k = norm(input.status);
-  if (k === 'draft') return { color: 'mushroom', label: 'Draft' };
-  if (k === 'in-review') return { color: 'butter', label: 'In Review' };
-  if (k === 'feedback-submitted') return { color: 'blue', label: 'Feedback Submitted' };
-  if (k === 'paused') return { color: 'mushroom', label: 'Paused' };
-  if (k === 'complete' || k === 'approved' || k === 'needs-changes' || k === 'changes-needed') {
-    return {
-      label: 'Complete',
-      color: completeLifecyclePillColor(input.decisionStatus),
-    };
+function formatFeedbackChangeRequestCounts(
+  status: ReviewStatus,
+  feedbackCount: number,
+  changeRequestCount: number,
+): string | null {
+  const k = norm(status);
+  const hideWhenZero =
+    (k === 'complete' || k === 'approved' || k === 'archived') &&
+    feedbackCount === 0 &&
+    changeRequestCount === 0;
+
+  if (hideWhenZero) return null;
+
+  if (changeRequestCount > 0 && feedbackCount > 0) {
+    return `${feedbackCount} feedback · ${changeRequestCount} ${
+      changeRequestCount === 1 ? 'change request' : 'change requests'
+    }`;
   }
-  if (k === 'blocked') return { color: 'error', label: 'Blocked' };
-  return { color: 'mushroom', label: 'Draft' };
+  if (changeRequestCount > 0 && feedbackCount === 0) {
+    return `${changeRequestCount} ${
+      changeRequestCount === 1 ? 'change request' : 'change requests'
+    }`;
+  }
+  if (feedbackCount > 0) {
+    return `${feedbackCount} feedback`;
+  }
+  return '0 feedback';
 }
 
 export function ReviewCard({
   title,
   status,
+  reviewType = null,
   decisionStatus = null,
   requireDecisionMaker = true,
   creatorName,
@@ -97,59 +145,99 @@ export function ReviewCard({
   ownerName,
   ownerAvatarSrc,
   dateLabel,
+  dateTooltipIso,
   clientName,
+  breadcrumb = null,
   description,
   showDescription = true,
   hasArtifact = false,
   artifactLabel,
   iterationLabel,
+  feedbackCount,
+  changeRequestCount,
   commentCount,
   decisionCount,
+  showDecisionCount = true,
+  reviewers = [],
   showDetailCounts = true,
   onClick,
   className,
 }: ReviewCardProps) {
-  const pill = reviewCardPill({ status, decisionStatus, requireDecisionMaker });
-  const isNeedsChanges = status === 'needs-changes';
+  const openChangeRequests = changeRequestCount ?? 0;
+  const pill = resolveReviewStatusPill({
+    status,
+    reviewType,
+    decisionStatus,
+    openChangeRequestCount: openChangeRequests,
+  });
+  const statusNorm = norm(status);
+  const reviewerAvatarRing = statusNorm === 'needs-changes';
+  const reviewTypeNorm = normalizeReviewTypeKey(reviewType);
+  const showCompareOpenCrWarning =
+    reviewTypeNorm === 'compare' &&
+    openChangeRequests > 0 &&
+    (statusNorm === 'approved' || statusNorm === 'complete');
+  const statusPillProminence =
+    showCompareOpenCrWarning ||
+    (pill.color === 'brand' && statusNorm === 'complete')
+      ? 'high'
+      : 'default';
   /** Avatar always reflects the review creator (submitter), never reviewers[0] / decision maker. */
   const metaName = creatorName ?? ownerName;
   const metaAvatarSrc = creatorAvatarSrc ?? ownerAvatarSrc;
+  const dateTooltipLabel = formatReviewCardDateTooltip(dateTooltipIso);
+  const hiddenReviewers = reviewers.length > 3 ? reviewers.slice(3) : [];
+  const hiddenReviewerTooltipLabel = hiddenReviewers.map((reviewer) => reviewer.name).join('\n');
 
-  const rootClass = [
-    styles.root,
-    isNeedsChanges ? styles['status-needs-changes'] : '',
-    className ?? '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const rootClass = [styles.root, className ?? ''].filter(Boolean).join(' ');
 
-  const titleClass = [
-    styles.title,
-    isNeedsChanges ? styles.titleWarning : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const titleClass = styles.title;
 
-  const dividerClass = [
-    styles.divider,
-    isNeedsChanges ? styles.dividerStrong : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const countsClass = styles.counts;
 
-  const countsClass = [
-    styles.counts,
-    isNeedsChanges ? styles.countsWarning : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const artifactClass = styles.artifact;
 
-  const artifactClass = [
-    styles.artifact,
-    isNeedsChanges ? styles.artifactLight : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const footerClass = styles.footer;
+
+  const countText =
+    feedbackCount !== undefined || changeRequestCount !== undefined
+      ? formatFeedbackChangeRequestCounts(
+          status,
+          feedbackCount ?? 0,
+          changeRequestCount ?? 0,
+        )
+      : [
+          commentCount !== undefined
+            ? `${commentCount} ${commentCount === 1 ? 'comment' : 'comments'}`
+            : null,
+          showDecisionCount && decisionCount !== undefined
+            ? `${decisionCount} ${decisionCount === 1 ? 'decision' : 'decisions'}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' · ') || null;
+
+  const showFooterSection =
+    showDetailCounts && (countText != null || iterationLabel || reviewers.length > 0);
+  const showBreadcrumb = breadcrumb != null;
+  const showClientTag = !showBreadcrumb && Boolean(clientName?.trim());
+
+  const breadcrumbSegments: BreadcrumbSegment[] | null = showBreadcrumb
+    ? (() => {
+        const hasClient = Boolean(breadcrumb!.clientName?.trim());
+        const projectHref = `/projects/${breadcrumb!.projectId.trim()}`;
+        return [
+          {
+            label: hasClient ? breadcrumb!.clientName!.trim() : 'Undefined',
+            disabled: !hasClient,
+          },
+          {
+            label: breadcrumb!.projectName,
+            href: projectHref,
+          },
+        ];
+      })()
+    : null;
 
   return (
     <article
@@ -159,17 +247,40 @@ export function ReviewCard({
       tabIndex={onClick ? 0 : undefined}
       onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
     >
-      {/* Title */}
       <h3 className={titleClass}>{title}</h3>
 
-      {/* Status row */}
       <div className={styles.meta}>
-        <StatusPill
-          color={pill.color}
-          appearance="filled"
-          label={pill.label}
-          size="sm"
-        />
+        {pill.tooltip ? (
+          <Tooltip label={pill.tooltip} position="top">
+            <span className="inline-flex shrink-0">
+              <StatusPill
+                color={pill.color}
+                appearance="filled"
+                prominence={statusPillProminence}
+                leadingIcon={
+                  showCompareOpenCrWarning ? (
+                    <Warning size={16} weight="fill" aria-hidden />
+                  ) : undefined
+                }
+                label={pill.label}
+                size="sm"
+              />
+            </span>
+          </Tooltip>
+        ) : (
+          <StatusPill
+            color={pill.color}
+            appearance="filled"
+            prominence={statusPillProminence}
+            leadingIcon={
+              showCompareOpenCrWarning ? (
+                <Warning size={16} weight="fill" aria-hidden />
+              ) : undefined
+            }
+            label={pill.label}
+            size="sm"
+          />
+        )}
         {(metaName || metaAvatarSrc) && (
           <Avatar
             src={metaAvatarSrc}
@@ -178,52 +289,102 @@ export function ReviewCard({
           />
         )}
         {dateLabel && (
-          <span className={styles.date}>{dateLabel}</span>
+          dateTooltipLabel ? (
+            <Tooltip label={dateTooltipLabel} position="top">
+              <span className={styles.date}>{dateLabel}</span>
+            </Tooltip>
+          ) : (
+            <span className={styles.date}>{dateLabel}</span>
+          )
         )}
       </div>
 
-      {clientName ? (
-        <div className={styles.clientTagRow}>
-          <Tag label={clientName} variant="butter" size="sm" />
+      {showDescription && description ? (
+        <Tooltip label={description} position="top" maxWidth={320} fullWidth>
+          <p className={styles.description}>{description}</p>
+        </Tooltip>
+      ) : null}
+
+      {breadcrumbSegments ? (
+        <div
+          className={styles.breadcrumbRow}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <Breadcrumb segments={breadcrumbSegments} variant="compact" />
         </div>
       ) : null}
 
-      {/* Description */}
-      {showDescription && description && (
-        <p className={styles.description}>{description}</p>
-      )}
+      {showClientTag ? (
+        <div className={styles.clientTagRow}>
+          <Tag label={clientName!.trim()} variant="default" size="sm" />
+        </div>
+      ) : null}
 
-      {/* Artifact */}
-      {hasArtifact && (
+      {hasArtifact ? (
         <div className={artifactClass}>
           <span className={styles.artifactText}>
             📎&nbsp;&nbsp;{artifactLabel ?? 'Figma artifact attached'}
           </span>
         </div>
-      )}
+      ) : null}
 
-      {/* Footer: counts on the left, iteration tag right-aligned */}
-      {showDetailCounts &&
-        (commentCount !== undefined ||
-          decisionCount !== undefined ||
-          iterationLabel) && (
-        <>
-          <span className={dividerClass} />
-          <div className={countsClass}>
-            {commentCount !== undefined && (
-              <span>{commentCount} {commentCount === 1 ? 'comment' : 'comments'}</span>
-            )}
-            {decisionCount !== undefined && (
-              <span>{decisionCount} {decisionCount === 1 ? 'decision' : 'decisions'}</span>
-            )}
-            {iterationLabel && (
+      {showFooterSection ? (
+        <div style={{ marginTop: 'auto' }}>
+          {iterationLabel ? (
+            <div className={styles.iterationRow}>
               <span className={styles.iterationSlot}>
                 <Tag label={iterationLabel} variant="default" size="sm" />
               </span>
-            )}
-          </div>
-        </>
-      )}
+            </div>
+          ) : null}
+          {countText || reviewers.length > 0 ? (
+            <div className={footerClass}>
+              {countText ? <span className={countsClass}>{countText}</span> : <span />}
+              {reviewers.length > 0 ? (
+                <span className={styles.reviewersSlot}>
+                  {reviewers.slice(0, 3).map((reviewer, index) => (
+                    <span
+                      key={`${reviewer.name}-${index}`}
+                      className={styles.reviewerAvatar}
+                      style={{ zIndex: reviewers.length - index }}
+                    >
+                      <Avatar
+                        src={reviewer.avatarSrc ?? undefined}
+                        name={reviewer.name}
+                        contributorId={reviewer.id}
+                        size="md"
+                        style={
+                          reviewer.id
+                            ? getAvatarInlineStyle(reviewer.id, {
+                                ring: reviewerAvatarRing,
+                              })
+                            : undefined
+                        }
+                      />
+                    </span>
+                  ))}
+                  {reviewers.length > 3 ? (
+                    <Tooltip
+                      label={hiddenReviewerTooltipLabel}
+                      position="top"
+                      maxWidth={320}
+                    >
+                      <span
+                        className={styles.reviewerOverflow}
+                        style={{ zIndex: 0 }}
+                        aria-label={`${reviewers.length - 3} more reviewers`}
+                      >
+                        +{reviewers.length - 3}
+                      </span>
+                    </Tooltip>
+                  ) : null}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 }

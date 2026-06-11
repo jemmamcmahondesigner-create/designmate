@@ -15,6 +15,7 @@ import type { ProjectReference } from "@/types/project";
 interface ReferencesSectionProps {
   projectId: string;
   initialReferences: ProjectReference[];
+  hideAddActions?: boolean;
 }
 
 const sectionHeadingClass =
@@ -110,7 +111,8 @@ function referenceTitle(row: ProjectReference): string {
 
 export function ReferencesSection({
   projectId,
-  initialReferences
+  initialReferences,
+  hideAddActions = false,
 }: ReferencesSectionProps) {
   const [references, setReferences] =
     useState<ProjectReference[]>(initialReferences);
@@ -221,18 +223,20 @@ export function ReferencesSection({
               No source files added yet.
             </p>
           </div>
-          <div className="mt-2">
-            <Button
-              type="button"
-              variant="ghost"
-              label="Add source"
-              icon="leading"
-              iconName="plus"
-              size="sm"
-              disabled={isSaving}
-              onClick={() => fileInputRef.current?.click()}
-            />
-          </div>
+          {!hideAddActions ? (
+            <div className="mt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                label="Add source"
+                icon="leading"
+                iconName="plus"
+                size="sm"
+                disabled={isSaving}
+                onClick={() => fileInputRef.current?.click()}
+              />
+            </div>
+          ) : null}
         </>
       ) : null}
 
@@ -282,7 +286,7 @@ export function ReferencesSection({
       ) : null}
 
       <div className={`flex w-full min-w-0 flex-col gap-2 ${references.length > 0 ? "mt-3" : ""}`}>
-        {!showEmptyState ? (
+        {!showEmptyState && !hideAddActions ? (
           <Button
             type="button"
             variant="ghost"

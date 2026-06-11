@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import type { LegacyRef, ReactNode } from 'react';
 import { Avatar } from './Avatar';
 import { ButtonGroup } from './ButtonGroup';
@@ -8,6 +7,7 @@ import { StatusPill, StatusPillStatus } from './StatusPill';
 import { TabItem } from './TabItem';
 import { Icon, type IconName } from './Icon';
 import { IconSquareButton } from './IconSquareButton';
+import { Breadcrumb } from './Breadcrumb';
 import styles from './PageHeader.module.css';
 
 export type PageHeaderVariant =
@@ -100,7 +100,7 @@ export function PageHeader({
   onKebab,
   onSearch,
   searchValue,
-  searchPlaceholder = 'Filter by project, client, or team member ...',
+  searchPlaceholder = 'Filter by project, group, or team member ...',
   primaryActionMenu,
   kebabMenu,
   primaryActionMenuExpanded,
@@ -249,7 +249,11 @@ export function PageHeader({
         <>
           <div className={styles.breadcrumbTop}>
             <div className={styles.breadcrumbLeft}>
-              <Breadcrumb segments={breadcrumbSegments} fallback={breadcrumb} />
+              <Breadcrumb
+                segments={breadcrumbSegments}
+                fallback={breadcrumb}
+                className={styles.breadcrumb}
+              />
               <div className={styles.titleRow}>
                 <h1 className={styles.title}>{pageTitle}</h1>
                 {showStatus && (
@@ -307,48 +311,6 @@ export function PageHeader({
   );
 }
 
-/* ── Breadcrumb ─────────────────────────────────────────────────────────────── */
-
-interface BreadcrumbProps {
-  segments?: PageHeaderBreadcrumbSegment[];
-  fallback?: string;
-}
-
-function Breadcrumb({ segments, fallback }: BreadcrumbProps) {
-  if (!segments || segments.length === 0) {
-    return <p className={styles.breadcrumb}>{fallback}</p>;
-  }
-
-  return (
-    <nav className={styles.breadcrumb} aria-label="Breadcrumb">
-      {segments.map((segment, i) => {
-        const isLast = i === segments.length - 1;
-        return (
-          <span key={`${segment.label}-${i}`}>
-            {segment.href && !isLast ? (
-              <Link
-                href={segment.href}
-                className={styles.breadcrumbLink}
-              >
-                {segment.label}
-              </Link>
-            ) : (
-              <span className={isLast ? styles.breadcrumbCurrent : undefined}>
-                {segment.label}
-              </span>
-            )}
-            {!isLast && (
-              <span className={styles.breadcrumbSep} aria-hidden="true">
-                {'  /  '}
-              </span>
-            )}
-          </span>
-        );
-      })}
-    </nav>
-  );
-}
-
 /* ── Shared action bar ─────────────────────────────────────────────────────── */
 
 interface ActionBarProps {
@@ -389,7 +351,9 @@ function ActionBar({
         ref={primaryActionSectionRef}
         style={{ position: 'relative', display: 'inline-flex' }}
       >
-        {primaryActionSlot ?? (
+        {primaryActionSlot !== undefined ? (
+          primaryActionSlot
+        ) : (
           <>
             <ButtonGroup
               label={primaryAction}

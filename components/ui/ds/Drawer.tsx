@@ -13,9 +13,13 @@ export interface DrawerProps {
   width?: DrawerWidth;
   title?: string;
   subtitle?: string;
+  /** When false, the subtitle line is omitted entirely. Default true. */
+  showSubtitle?: boolean;
   onClose: () => void;
   /** When false, scrim clicks do not close the drawer. Default true. */
   scrimClosable?: boolean;
+  /** Scrim appearance — `brand` uses the burgundy overlay per project edit spec. */
+  scrimVariant?: 'default' | 'brand';
   /** When `scrimClosable` is false and the user presses Escape, invoke this instead of closing. */
   onEscapeWhenScrimBlocked?: () => void;
   /** Optional ref on the scrollable body region */
@@ -50,8 +54,10 @@ export function Drawer({
   width = 360,
   title,
   subtitle,
+  showSubtitle = true,
   onClose,
   scrimClosable = true,
+  scrimVariant = 'default',
   onEscapeWhenScrimBlocked,
   bodyRef,
   children,
@@ -96,11 +102,18 @@ export function Drawer({
     .filter(Boolean)
     .join(' ');
 
+  const scrimClass = [
+    styles.scrim,
+    scrimVariant === 'brand' ? styles.scrimBrand : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
     <>
       {/* Scrim — click to close */}
       <div
-        className={styles.scrim}
+        className={scrimClass}
         onClick={scrimClosable ? onClose : undefined}
         aria-hidden="true"
       />
@@ -116,7 +129,9 @@ export function Drawer({
         <div className={styles.header}>
           <div className={styles.headerText}>
             <p className={styles.title}>{resolvedTitle}</p>
-            <p className={styles.subtitle}>{resolvedSubtitle}</p>
+            {showSubtitle && resolvedSubtitle ? (
+              <p className={styles.subtitle}>{resolvedSubtitle}</p>
+            ) : null}
           </div>
           <button
             type="button"

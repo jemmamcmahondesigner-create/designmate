@@ -58,17 +58,6 @@ export async function generateReviewTitle(
   | { ok: true; title: string; suggestedReviewType: SuggestedReviewType }
   | { ok: false; error: string }
 > {
-  console.log('[AI Review Title] Called with:', {
-    artifactNames: input.artifactNames,
-    reviewType: input.reviewType,
-    artifactCount: input.artifactContext?.length ?? 0,
-    priorReviewsExist: input.priorReviewsExist ?? false,
-  });
-  console.log(
-    '[AI Review Title] API key present:',
-    !!process.env.ANTHROPIC_API_KEY,
-  );
-
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     console.error(
@@ -120,8 +109,6 @@ Prefer the Figma frame or section name over generic terms like 'Concept 1'. Do n
   if (!title) {
     return { ok: false, error: 'Empty response from AI.' };
   }
-
-  console.log('[AI Review Title] Result:', { title, suggestedReviewType });
 
   return { ok: true, title, suggestedReviewType };
 }

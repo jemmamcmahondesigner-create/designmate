@@ -31,7 +31,7 @@ export type { SelectProps, SelectOption, SelectSize } from './Select'
 export { Select as SelectField } from './Select/Select'
 export type { SelectProps as SelectFieldProps } from './Select/Select'
 
-export { Menu, MenuItem, MenuFooter } from './Menu'
+export { Menu, MenuItem, MenuFooter, MenuSectionHeading } from './Menu'
 export type {
   MenuProps,
   MenuItemProps,
@@ -51,7 +51,7 @@ export type { ProductCardProps, ProductCardContributor } from './ProductCard'
 export { Tag } from './Tag'
 export type { TagProps, TagVariant, TagSize, TagIcon } from './Tag'
 
-export { StatusPill } from './StatusPill'
+export { StatusPill, STATUS_PILL_DISPLAY, resolveStatusPillDisplay } from './StatusPill'
 export type {
   StatusPillProps,
   StatusPillStatus,
@@ -60,6 +60,7 @@ export type {
   StatusPillSize,
   StatusPillProminence,
   StatusPillState,
+  StatusPillDisplay,
 } from './StatusPill'
 
 export { TabItem } from './TabItem'
@@ -67,6 +68,13 @@ export type { TabItemProps, TabItemStyle } from './TabItem'
 
 export { Drawer } from './Drawer'
 export type { DrawerProps, DrawerType, DrawerWidth } from './Drawer'
+
+export { Breadcrumb } from './Breadcrumb'
+export type {
+  BreadcrumbProps,
+  BreadcrumbSegment,
+  BreadcrumbVariant,
+} from './Breadcrumb'
 
 export { PageHeader } from './PageHeader'
 export type {
@@ -106,6 +114,9 @@ export type {
   NotificationBadgeProminence
 } from './NotificationBadge'
 
+export { Skeleton } from './Skeleton'
+export type { SkeletonProps, SkeletonShape, SkeletonBackground } from './Skeleton'
+
 export { ShowAccordion } from './ShowAccordion'
 export type { ShowAccordionProps, ShowAccordionState } from './ShowAccordion'
 
@@ -128,6 +139,15 @@ export type {
 export { Checkbox } from './Checkbox'
 export type { CheckboxProps, CheckboxState, CheckboxSentiment } from './Checkbox'
 
+export { FilterPanel } from './FilterPanel'
+export type {
+  FilterPanelProps,
+  FilterPanelGroup,
+  FilterPanelAllRow,
+  FilterPanelCheckboxItem,
+  FilterPanelPersonItem,
+} from './FilterPanel'
+
 // ─── Molecules ────────────────────────────────────────────────────────────────
 
 export { ReviewCard } from './ReviewCard'
@@ -136,6 +156,7 @@ export type { ReviewCardProps, ReviewStatus } from './ReviewCard'
 export { DecisionCard } from './DecisionCard'
 export type {
   DecisionCardProps,
+  DecisionCardChangeRequestItem,
   DecisionStatus,
   DecisionOption
 } from './DecisionCard'

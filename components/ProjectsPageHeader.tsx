@@ -9,7 +9,7 @@ export function ProjectsPageHeader() {
   return (
     <PageHeader
       variant="search"
-      searchPlaceholder="Filter by project, client, or teammate..."
+      searchPlaceholder="Filter by project, group, or teammate..."
       primaryActionSlot={
         <Button
           type="button"

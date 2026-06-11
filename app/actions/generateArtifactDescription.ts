@@ -6,7 +6,18 @@ const MODEL =
   process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5';
 
 const OPTIMISE_SYSTEM_PROMPT =
-  'You are a copy editor. Fix grammar and spelling only. Do not change the structure, content, meaning, or length. Return only the corrected text.';
+  'You are a copy editor. Fix grammar and spelling only. Do not change the structure, content, meaning, or length. Return ONLY the improved version of the text. If the text requires no changes, return the original text exactly as provided. Never add commentary, explanations, parenthetical notes, or meta-text about the quality of the original. Output only the final text, nothing else.';
+
+function looksLikeOptimiseMetaCommentary(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return (
+    trimmed.startsWith('(') ||
+    /no corrections/i.test(trimmed) ||
+    /already grammatically/i.test(trimmed) ||
+    /no changes needed/i.test(trimmed)
+  );
+}
 
 export type GenerateArtifactDescriptionInput = {
   existingContent: string;
@@ -19,15 +30,6 @@ export async function generateArtifactDescription(
   if (!existingTrimmed) {
     return { ok: false, error: 'No content to optimise' };
   }
-
-  console.log('[AI Description] Called with:', {
-    mode: 'optimise',
-    existingLen: existingTrimmed.length,
-  });
-  console.log(
-    '[AI Description] API key present:',
-    !!process.env.ANTHROPIC_API_KEY,
-  );
 
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
@@ -56,14 +58,14 @@ export async function generateArtifactDescription(
   }
 
   const block = msg.content.find((b) => b.type === 'text');
-  const description =
-    block?.type === 'text' ? block.text.trim() : '';
+  const rawDescription = block?.type === 'text' ? block.text.trim() : '';
+  const description = looksLikeOptimiseMetaCommentary(rawDescription)
+    ? existingTrimmed
+    : rawDescription;
 
   if (!description) {
     return { ok: false, error: 'Empty response from AI.' };
   }
-
-  console.log('[AI Description] Result:', description);
 
   return { ok: true, description };
 }

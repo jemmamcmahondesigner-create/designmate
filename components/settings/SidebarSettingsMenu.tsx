@@ -1,64 +1,253 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
-import { Button, Select, Avatar } from "@/components/ui/ds";
+import { Button, Avatar, Icon, Menu } from "@/components/ui/ds";
+import menuStyles from "@/components/ui/ds/Menu.module.css";
+import selectStyles from "@/components/ui/ds/Select.module.css";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getAvatarInlineStyle } from "@/lib/utils/avatarColour";
 
 type SidebarSettingsMenuProps = {
   open: boolean;
   onClose: () => void;
+  contributorId: string | null;
   displayName: string;
   roleLabel: string;
+  workspaceOptions: Array<{ value: string; label: string }>;
+  workspaceValue: string | null;
 };
 
 const SETTINGS_ITEMS = [
   { label: "Teammates", href: "/settings/teammates" },
   { label: "Roles", href: "/settings/roles" },
   { label: "Permissions", href: "/settings/permissions" },
-  { label: "Clients", href: "/settings/clients" },
+  { label: "Groups", href: "/settings/clients" },
 ] as const;
 
 const MENU_WIDTH = 229;
 /** Inset from viewport left; sits above 48px footer + 8px gap. */
 const MENU_LEFT = 8;
 const MENU_BOTTOM = 56;
+const WORKSPACE_SWITCHER_MENU_ID = "workspace-switcher-menu";
+
+function workspaceShortId(id: string): string {
+  return id.trim().slice(0, 8);
+}
+
+type WorkspaceSwitcherSelectProps = {
+  options: Array<{ value: string; label: string }>;
+  value: string | null;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  switching?: boolean;
+};
+
+function WorkspaceSwitcherSelect({
+  options,
+  value,
+  onChange,
+  disabled = false,
+  switching = false,
+}: WorkspaceSwitcherSelectProps) {
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (switching) setOpen(true);
+  }, [switching]);
+
+  const selected = options.find((option) => option.value === value);
+  const displayLabel = switching
+    ? "Switching workspace…"
+    : (selected?.label ?? "Select workspace");
+
+  return (
+    <div className={selectStyles.root}>
+      <div className={selectStyles.wrapper}>
+        <button
+          ref={anchorRef}
+          type="button"
+          className={[
+            selectStyles.control,
+            selectStyles["size-sm"],
+            disabled ? selectStyles.disabled : "",
+            open ? selectStyles.open : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          disabled={disabled || switching}
+          onClick={() => {
+            if (disabled || switching) return;
+            setOpen((current) => !current);
+          }}
+        >
+          <span className={selectStyles.valueText}>{displayLabel}</span>
+          <Icon
+            name="chevron-down"
+            size={16}
+            className={[
+              selectStyles.chevron,
+              open ? selectStyles.chevronOpen : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            aria-hidden
+          />
+        </button>
+
+        <Menu
+          id={WORKSPACE_SWITCHER_MENU_ID}
+          open={open}
+          onClose={() => {
+            if (switching) return;
+            setOpen(false);
+          }}
+          anchorRef={anchorRef}
+          align="left"
+          portal
+          portalZIndex={250}
+          type="context-menu"
+          aria-label="Switch workspace"
+        >
+          {options.map((option) => {
+            const isActive = option.value === value;
+            const itemDisabled = disabled || switching;
+            return (
+              <li
+                key={option.value}
+                role="menuitem"
+                tabIndex={itemDisabled ? -1 : 0}
+                aria-disabled={itemDisabled}
+                className={[
+                  menuStyles.item,
+                  isActive ? menuStyles.itemActive : "",
+                  itemDisabled ? menuStyles.itemDisabled : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onClick={() => {
+                  if (itemDisabled) return;
+                  onChange(option.value);
+                }}
+              >
+                <span className={menuStyles.itemLabel}>
+                  <span style={{ color: "var(--text-disabled, #c9c0b4)" }}>
+                    {workspaceShortId(option.value)}
+                  </span>
+                  <span> · </span>
+                  <span>{option.label}</span>
+                </span>
+                {isActive ? (
+                  <span
+                    className={menuStyles.itemCheck}
+                    aria-hidden="true"
+                    style={{ color: "#6b1e2e" }}
+                  >
+                    <Icon name="check" size={16} />
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
+        </Menu>
+      </div>
+    </div>
+  );
+}
 
 export function SidebarSettingsMenu({
   open,
   onClose,
+  contributorId,
   displayName,
   roleLabel,
+  workspaceOptions,
+  workspaceValue,
 }: SidebarSettingsMenuProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const [workspace, setWorkspace] = useState("core-solutions");
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [hoveredHref, setHoveredHref] = useState<string | null>(null);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(
+    workspaceValue,
+  );
+  const [switchingWorkspace, setSwitchingWorkspace] = useState(false);
+  const [workspaceSwitchError, setWorkspaceSwitchError] = useState<string | null>(null);
 
   const activePath = useMemo(() => pathname ?? "", [pathname]);
+  const showWorkspaceSelect = workspaceOptions.length > 1;
+  useEffect(() => {
+    setSelectedWorkspaceId(workspaceValue);
+  }, [workspaceValue]);
+
+  useEffect(() => {
+    if (!open) return;
+    setWorkspaceSwitchError(null);
+  }, [open]);
+
+  const handleWorkspaceChange = useCallback(
+    async (newValue: string) => {
+      if (switchingWorkspace || newValue === selectedWorkspaceId) return;
+
+      const previousValue = selectedWorkspaceId;
+      setWorkspaceSwitchError(null);
+      setSwitchingWorkspace(true);
+      setSelectedWorkspaceId(newValue);
+
+      const { error } = await supabase.auth.updateUser({
+        data: { active_workspace_id: newValue },
+      });
+
+      if (error) {
+        setSelectedWorkspaceId(previousValue);
+        setWorkspaceSwitchError("Couldn't switch workspace");
+        setSwitchingWorkspace(false);
+        return;
+      }
+
+      window.location.href = "/projects";
+      onClose();
+      setSwitchingWorkspace(false);
+    },
+    [onClose, selectedWorkspaceId, supabase, switchingWorkspace],
+  );
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !switchingWorkspace) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, switchingWorkspace]);
 
   useEffect(() => {
     if (!open) return;
     const handleOutside = (event: MouseEvent) => {
+      if (switchingWorkspace) return;
+
       const t = event.target as HTMLElement | null;
       if (t?.closest?.("[data-settings-trigger]")) return;
+      if (t?.closest?.(`#${WORKSPACE_SWITCHER_MENU_ID}`)) return;
+
       const panel = document.getElementById("settings-popover-panel");
       if (panel?.contains(event.target as Node)) return;
       onClose();
     };
     document.addEventListener("mousedown", handleOutside);
     return () => document.removeEventListener("mousedown", handleOutside);
-  }, [open, onClose]);
+  }, [open, onClose, switchingWorkspace]);
 
   const navigate = (href: string) => {
     router.push(href);
@@ -66,9 +255,8 @@ export function SidebarSettingsMenu({
   };
 
   const signOut = async () => {
-    const supabase = createSupabaseBrowserClient();
     await supabase.auth.signOut();
-    router.push("/");
+    router.push("/login");
     onClose();
   };
 
@@ -95,22 +283,36 @@ export function SidebarSettingsMenu({
     >
       {/* Workspace section */}
       <div style={workspaceSectionStyle}>
-        <div style={{ padding: 12 }}>
-          <Select
-            options={[{ value: "core-solutions", label: "Core Solutions" }]}
-            value={workspace}
-            onChange={(value) => {
-              setWorkspace(value);
-              // TODO: workspace switching
-            }}
-            size="sm"
-          />
-        </div>
-
         <div style={workspaceHeadingWrapStyle}>
           <p style={workspaceHeadingTextStyle}>WORKSPACE</p>
         </div>
+
         <div style={headingDividerStyle} />
+
+        {showWorkspaceSelect ? (
+          <div style={{ padding: 12 }}>
+            <WorkspaceSwitcherSelect
+              options={workspaceOptions}
+              value={selectedWorkspaceId}
+              onChange={(newValue) => void handleWorkspaceChange(newValue)}
+              disabled={switchingWorkspace}
+              switching={switchingWorkspace}
+            />
+            {workspaceSwitchError ? (
+              <p
+                style={{
+                  margin: "6px 0 0",
+                  fontSize: 11,
+                  lineHeight: 1.4,
+                  color: "#8b2020",
+                }}
+                role="alert"
+              >
+                {workspaceSwitchError}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {SETTINGS_ITEMS.map((item) => (
           <button
@@ -163,7 +365,12 @@ export function SidebarSettingsMenu({
             {roleLabel.trim() ? <p style={footerRoleStyle}>{roleLabel}</p> : null}
           </div>
           <span aria-hidden="true">
-            <Avatar name={displayName} size="lg" />
+            <Avatar
+              name={displayName}
+              size="lg"
+              contributorId={contributorId ?? undefined}
+              style={getAvatarInlineStyle((contributorId ?? "").trim() || "?", { ring: true })}
+            />
           </span>
         </div>
         <Button
@@ -185,7 +392,6 @@ const workspaceSectionStyle: CSSProperties = {
 };
 
 const accountSectionStyle: CSSProperties = {
-  borderTop: "1px solid var(--border-default, #e4ddd3)",
   background: "var(--surface-card-default, #ffffff)",
 };
 
@@ -239,9 +445,9 @@ const footerIdentityRowStyle: CSSProperties = {
 
 const footerNameStyle: CSSProperties = {
   margin: 0,
-  fontSize: 16,
-  fontWeight: 600,
-  color: "var(--text-secondary, #6b5e55)",
+  fontSize: 13,
+  fontWeight: 500,
+  color: "var(--text-primary, #2e1c1c)",
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",
@@ -249,11 +455,9 @@ const footerNameStyle: CSSProperties = {
 
 const footerRoleStyle: CSSProperties = {
   margin: 0,
-  fontSize: 10,
-  fontWeight: 600,
-  letterSpacing: "1px",
-  textTransform: "uppercase",
-  color: "var(--text-tertiary, #998c82)",
+  fontSize: 12,
+  fontWeight: 400,
+  color: "var(--text-secondary, #6b5e55)",
 };
 
 function menuItemStyle(
@@ -274,7 +478,7 @@ function menuItemStyle(
         ? "var(--interactive-hover-surface-strong, #ede8e0)"
         : "transparent",
     color: active ? "var(--text-heading, #6b1e2e)" : "var(--text-primary, #2e1c1c)",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 500,
     cursor: disabled ? "default" : "pointer",
     fontFamily: "'Plus Jakarta Sans', sans-serif",

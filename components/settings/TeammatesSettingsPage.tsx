@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -10,6 +11,7 @@ import {
   type CSSProperties,
 } from "react";
 import teammateKebabStyles from "./TeammatesSettingsPage.module.css";
+import settingsTableLayoutStyles from "./settingsTableLayout.module.css";
 import { DiscardChangesModal } from "@/components/DiscardChangesModal";
 import { SpinnerIcon } from "@/components/auth/SpinnerIcon";
 import buttonStyles from "@/components/ui/ds/Button.module.css";
@@ -17,6 +19,7 @@ import { useToast } from "@/components/Toast";
 import {
   Alert,
   Button,
+  Checkbox,
   Icon,
   IconSquareButton,
   Input,
@@ -40,8 +43,10 @@ import {
 import { useRouter } from "next/navigation";
 import { useWorkspacePermission } from "@/hooks/useWorkspacePermission";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
 import { cancelWorkspaceInvite, sendWorkspaceInvite } from "@/lib/workspace/invite-client";
 import { inviteToastMessage } from "@/lib/workspace/invite-toast";
+import { getAvatarColour } from "@/lib/utils/avatarColour";
 import {
   canAddTeammates,
   canEditTeammatePermission,
@@ -49,7 +54,9 @@ import {
   isOwnTeammateRow,
   isPaidPermissionLevel,
   mapWorkspaceMemberRole,
-  normalizeWorkspacePermission,
+  normalizeTeammatePermissionFields,
+  toStoredPermissionLevel,
+  type ContentPermissionLevel,
 } from "@/lib/workspace/permissions";
 
 type Teammate = {
@@ -58,7 +65,8 @@ type Teammate = {
   email: string | null;
   roleId: string | null;
   roleName: string | null;
-  permissionLevel: "admin" | "editor" | "reviewer";
+  permissionLevel: ContentPermissionLevel;
+  isAdmin: boolean;
   isPaid: boolean;
   isPending?: boolean;
   isPendingInvite?: boolean;
@@ -76,8 +84,15 @@ type FormState = {
   name: string;
   email: string;
   roleId: string;
-  permissionLevel: "admin" | "editor" | "reviewer";
+  permissionLevel: ContentPermissionLevel;
+  isAdmin: boolean;
 };
+
+const ADMIN_ACCESS_HELPER =
+  "Grants workspace-level controls: billing, teammate management, and settings. At least one Admin must always exist.";
+
+const LAST_ADMIN_ERROR =
+  "At least one Admin must exist. Assign Admin to another teammate first.";
 
 const ROWS_PER_PAGE_STORAGE_KEY = "dt_teammates_rows_per_page";
 const ROWS_PER_PAGE_OPTIONS: TablePageSizeOption[] = [10, 20, 40, 80, "all"];
@@ -98,9 +113,7 @@ function readStoredRowsPerPage(): TablePageSizeOption {
 const PAID_SEAT_TOOLTIP =
   "Admin and Editor seats will require a paid subscription in a future update. Reviewer access is always free.";
 
-const PERMISSION_TOOLTIPS: Record<Teammate["permissionLevel"], string> = {
-  admin:
-    "Full access. Can manage teammates, projects, reviews, and workspace settings.",
+const PERMISSION_TOOLTIPS: Record<ContentPermissionLevel, string> = {
   editor:
     "Can create and edit projects and reviews. Cannot manage workspace settings.",
   reviewer:
@@ -142,6 +155,7 @@ export function TeammatesSettingsPage({
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
   const roleOptionsRef = useRef<RoleOption[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
+  const [adminAccessError, setAdminAccessError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const router = useRouter();
   const { permissionLevel, userId: currentUserId, loading: permissionLoading } =
@@ -162,7 +176,28 @@ export function TeammatesSettingsPage({
     email: "",
     roleId: "",
     permissionLevel: "reviewer",
+    isAdmin: false,
   });
+
+  const activeAdminCount = useMemo(
+    () =>
+      teammates.filter((row) => row.isAdmin && !row.isPending && !row.isPendingInvite).length,
+    [teammates],
+  );
+
+  const editingLastAdmin = Boolean(editRow?.isAdmin && activeAdminCount === 1);
+
+  const handleAdminAccessChange = useCallback(
+    (checked: boolean) => {
+      if (!checked && editingLastAdmin) {
+        setAdminAccessError(LAST_ADMIN_ERROR);
+        return;
+      }
+      setAdminAccessError(null);
+      setForm((prev) => ({ ...prev, isAdmin: checked }));
+    },
+    [editingLastAdmin],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -243,7 +278,8 @@ export function TeammatesSettingsPage({
         form.name.trim() !== editRow.name ||
         form.email.trim() !== (editRow.email ?? "") ||
         form.roleId !== initialRoleFormValue(editRow, mergedRoleOptions) ||
-        form.permissionLevel !== editRow.permissionLevel
+        form.permissionLevel !== editRow.permissionLevel ||
+        form.isAdmin !== editRow.isAdmin
       );
     }
     return false;
@@ -254,9 +290,7 @@ export function TeammatesSettingsPage({
   }, [mergedRoleOptions]);
 
   useEffect(() => {
-    if (process.env.NODE_ENV === "development") {
-      console.log("roleSelectOptions (for Role Select):", roleSelectOptions);
-    }
+    // Intentionally no debug logging here.
   }, [roleSelectOptions]);
 
   const mergeRoleIntoOptions = (name: string) => {
@@ -287,7 +321,7 @@ export function TeammatesSettingsPage({
     const result = await sendWorkspaceInvite({
       workspace_id: activeWorkspaceId,
       email: row.email.trim(),
-      permission_level: row.permissionLevel,
+      permission_level: toStoredPermissionLevel(row.permissionLevel, row.isAdmin),
     });
     if (result.status === "error") {
       showToast(result.message);
@@ -312,51 +346,64 @@ export function TeammatesSettingsPage({
 
   const columns: ColumnDef<Teammate>[] = [
     {
-      key: "avatar",
-      label: "",
-      width: 56,
-      cellType: "avatar",
-      render: (row) => (
-        <div
-          style={
-            row.isPendingInvite ? pendingInviteAvatarStyle : teammateAvatarStyle
-          }
-        >
-          {row.isPendingInvite
-            ? row.name.trim()
-              ? nameInitialsForTeammate(row.name)
-              : emailInitialForPendingInvite(row.email)
-            : nameInitialsForTeammate(row.name)}
-        </div>
-      ),
-    },
-    {
       key: "name",
       label: "Name",
       width: "flex",
-      cellType: "text-bold",
-      render: (row) =>
-        row.isPendingInvite ? (
-          row.name.trim() ? (
-            row.name
-          ) : (
-            <span style={invitedUserPlaceholderStyle}>Invited user</span>
-          )
-        ) : (
-          row.name
-        ),
+      cellType: "custom",
+      render: (row) => {
+        const palette = getAvatarColour(row.id);
+        const displayName = row.name?.trim() || row.email || "";
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: "50%",
+                backgroundColor: palette.bg,
+                color: palette.text,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 11,
+                fontWeight: 600,
+                flexShrink: 0,
+                fontFamily: "'Plus Jakarta Sans', sans-serif",
+                boxShadow: "0 0 0 2px #ffffff, 0 0 0 3px #e4ddd3",
+              }}
+            >
+              {row.isPendingInvite
+                ? row.name.trim()
+                  ? nameInitialsForTeammate(row.name)
+                  : emailInitialForPendingInvite(row.email)
+                : nameInitialsForTeammate(row.name)}
+            </div>
+            <span
+              style={{
+                fontWeight: row.isPendingInvite ? 400 : 600,
+                color: "var(--text-primary, #2e1c1c)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                minWidth: 0,
+              }}
+            >
+              {displayName}
+            </span>
+          </div>
+        );
+      },
     },
     {
       key: "role",
       label: "Role",
       width: "flex",
-      cellType: "text",
-      render: (row) =>
-        row.roleName?.trim() ? (
-          row.roleName
-        ) : (
-          <span style={EMPTY_CELL_STYLE}>—</span>
-        ),
+      cellType: "custom",
+      render: (row) => (
+        <span className={teammateKebabStyles.roleCell}>
+          {row.roleName?.trim() ? row.roleName : <span style={EMPTY_CELL_STYLE}>—</span>}
+        </span>
+      ),
     },
     {
       key: "email",
@@ -377,27 +424,38 @@ export function TeammatesSettingsPage({
     {
       key: "permission",
       label: "Permission",
-      width: "flex",
+      width: 180,
       cellType: "status",
       render: (row) =>
         row.isPending && !row.isPendingInvite ? (
           <Tag label="Pending" variant="neutral" size="sm" />
         ) : (
-          <Tooltip
-            label={PERMISSION_TOOLTIPS[row.permissionLevel]}
-            position="top"
-            passThroughFocus
+          <div
+            style={{
+              display: "flex",
+              gap: 4,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
           >
-            <span className={teammateKebabStyles.cellPillWrap} tabIndex={0}>
-              {renderPermissionPill(row.permissionLevel)}
-            </span>
-          </Tooltip>
+            <Tooltip
+              label={PERMISSION_TOOLTIPS[row.permissionLevel]}
+              position="top"
+              passThroughFocus
+            >
+              <span className={teammateKebabStyles.cellPillWrap} tabIndex={0}>
+                {renderPermissionPill(row.permissionLevel)}
+              </span>
+            </Tooltip>
+            {row.isAdmin ? (
+              <span className={teammateKebabStyles.cellPillWrap}>{renderAdminPill()}</span>
+            ) : null}
+          </div>
         ),
     },
     {
       key: "status",
       label: "Status",
-      width: "flex",
       cellType: "status",
       render: (row) => {
         const status = teammateStatus(row);
@@ -442,7 +500,6 @@ export function TeammatesSettingsPage({
     {
       key: "paid",
       label: "Paid",
-      width: 59,
       cellType: "badge",
       render: (row) =>
         row.isPaid ? (
@@ -456,7 +513,6 @@ export function TeammatesSettingsPage({
     {
       key: "actions",
       label: "",
-      width: 40,
       align: "center",
       cellType: "kebab",
       render: (row) => {
@@ -525,27 +581,29 @@ export function TeammatesSettingsPage({
     },
   ];
 
-  const permissionOptions = [
+  const contentPermissionOptions = [
     { value: "reviewer", label: "Reviewer" },
     { value: "editor", label: "Editor" },
-    { value: "admin", label: "Admin" },
   ];
 
   const openAdd = () => {
     setAddSubmitting(false);
     setFormError(null);
     setNameError(null);
-    setForm({ name: "", email: "", roleId: "", permissionLevel: "reviewer" });
+    setAdminAccessError(null);
+    setForm({ name: "", email: "", roleId: "", permissionLevel: "reviewer", isAdmin: false });
     setAddOpen(true);
   };
 
   const openEdit = (row: Teammate) => {
     setFormError(null);
+    setAdminAccessError(null);
     setForm({
       name: row.name,
       email: row.email ?? "",
       roleId: initialRoleFormValue(row, mergedRoleOptions),
       permissionLevel: row.permissionLevel,
+      isAdmin: row.isAdmin,
     });
     setEditRow(row);
     setOpenMenuId(null);
@@ -607,7 +665,7 @@ export function TeammatesSettingsPage({
         email: form.email.trim(),
         name: form.name.trim(),
         role: roleName ?? undefined,
-        permission_level: form.permissionLevel,
+        permission_level: toStoredPermissionLevel(form.permissionLevel, form.isAdmin),
       });
 
       if (result.status === "error") {
@@ -633,13 +691,20 @@ export function TeammatesSettingsPage({
       form.roleId,
       roleOptionsRef.current,
     );
-    const permission_level = form.permissionLevel;
+    const roleFields = await resolveContributorRoleFields(supabase, roleText);
+    if (!form.isAdmin && editingLastAdmin) {
+      setAdminAccessError(LAST_ADMIN_ERROR);
+      return;
+    }
+
+    const permission_level = toStoredPermissionLevel(form.permissionLevel, form.isAdmin);
     const { data, error } = await supabase
       .from("contributors")
       .update({
         name: form.name.trim(),
         email: form.email.trim() || null,
-        role: roleText,
+        role: roleFields.role,
+        role_id: roleFields.role_id,
       })
       .eq("id", editRow.id)
       .select(
@@ -682,9 +747,16 @@ export function TeammatesSettingsPage({
       }
     }
 
+    const contributorPermissionPatch =
+      canEditPermission && !editingOwnRow
+        ? {
+            permission_level,
+            is_paid: isPaidPermissionLevel(permission_level),
+          }
+        : { is_paid: isPaidPermissionLevel(permission_level) };
     const { error: paidError } = await supabase
       .from("contributors")
-      .update({ is_paid: isPaidPermissionLevel(permission_level) })
+      .update(contributorPermissionPatch)
       .eq("id", editRow.id);
     void paidError;
 
@@ -692,7 +764,8 @@ export function TeammatesSettingsPage({
     upsertTeammate({
       ...updated,
       userId: updated.userId ?? editRow.userId ?? null,
-      permissionLevel: permission_level,
+      permissionLevel: form.permissionLevel,
+      isAdmin: form.isAdmin,
       isPaid: isPaidPermissionLevel(permission_level),
     });
     setEditRow(null);
@@ -712,34 +785,34 @@ export function TeammatesSettingsPage({
 
   return (
     <>
-      <div style={{ width: "100%" }}>
+      <div className={settingsTableLayoutStyles.pageContent} style={{ width: "100%" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-            <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800, color: "var(--text-heading, #6b1e2e)", letterSpacing: "-0.96px" }}>
-              Teammates
-            </h1>
-            <p style={{ margin: 0, fontSize: 15, color: "var(--text-secondary, #6b5e55)" }}>
-              Vital for working towards project goals and contributing to reviews.
-            </p>
-          </div>
+          <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800, color: "var(--text-heading, #6b1e2e)", letterSpacing: "-0.96px" }}>
+            Teammates
+          </h1>
           {canManageTeammates ? (
             <Button label="+ Teammate" variant="primary" size="sm" onClick={openAdd} />
           ) : null}
         </div>
 
-        <Table
-          columns={columns}
-          rows={pagedRows}
-          selectedRowId={selectedRowId ?? undefined}
-          onRowClick={(row) => setSelectedRowId(row.id)}
-          emptyState={
-            <span style={{ color: "var(--text/secondary, #6b5e55)" }}>
-              {noWorkspace
-                ? "No workspace found"
-                : "No teammates yet - add your first teammate to start collaborating."}
-            </span>
-          }
-          pagination={{
+        <div className={settingsTableLayoutStyles.tableShell}>
+          <div className={settingsTableLayoutStyles.tableScroll}>
+            <div className={settingsTableLayoutStyles.tableScrollInner}>
+            <Table
+              layout="auto"
+              className={`${settingsTableLayoutStyles.tableBorderless} ${teammateKebabStyles.teammatesTable}`}
+            columns={columns}
+            rows={pagedRows}
+            selectedRowId={selectedRowId ?? undefined}
+            onRowClick={(row) => setSelectedRowId(row.id)}
+            emptyState={
+              <span style={{ color: "var(--text/secondary, #6b5e55)" }}>
+                {noWorkspace
+                  ? "No workspace found"
+                  : "No teammates yet - add your first teammate to start collaborating."}
+              </span>
+            }
+            pagination={{
             totalCount: total,
             pageSize: effectivePageSize,
             pageIndex: safePage,
@@ -757,7 +830,10 @@ export function TeammatesSettingsPage({
             onPrev: () => setPage((p) => Math.max(0, p - 1)),
             onNext: () => setPage((p) => Math.min(pageCount - 1, p + 1)),
           }}
-        />
+            />
+            </div>
+          </div>
+        </div>
       </div>
 
       <Modal
@@ -835,18 +911,27 @@ export function TeammatesSettingsPage({
         />
         <Select
           label="Permission Level"
-          options={permissionOptions}
+          options={contentPermissionOptions}
           value={form.permissionLevel}
           onChange={(value) => {
             setFormError(null);
             setForm((prev) => ({
               ...prev,
-              permissionLevel: value as "admin" | "editor" | "reviewer",
+              permissionLevel: value as ContentPermissionLevel,
             }));
           }}
           placeholder="Select permission"
           size="sm"
           portaled
+        />
+        <AdminAccessField
+          checked={form.isAdmin}
+          disabled={false}
+          error={null}
+          onChange={(checked) => {
+            setFormError(null);
+            handleAdminAccessChange(checked);
+          }}
         />
       </Modal>
 
@@ -905,22 +990,49 @@ export function TeammatesSettingsPage({
           }}
         />
         {showPermissionFieldInEdit ? (
-          <Select
-            label="Permission Level"
-            options={permissionOptions}
-            value={form.permissionLevel}
-            onChange={(value) => {
-              setFormError(null);
-              setForm((prev) => ({
-                ...prev,
-                permissionLevel: value as "admin" | "editor" | "reviewer",
-              }));
-            }}
-            placeholder="Select permission"
-            size="sm"
-            portaled
-          />
-        ) : editingOwnRow ? null : (
+          <>
+            <Select
+              label="Permission Level"
+              options={contentPermissionOptions}
+              value={form.permissionLevel}
+              onChange={(value) => {
+                setFormError(null);
+                setForm((prev) => ({
+                  ...prev,
+                  permissionLevel: value as ContentPermissionLevel,
+                }));
+              }}
+              placeholder="Select permission"
+              size="sm"
+              portaled
+            />
+            <AdminAccessField
+              checked={form.isAdmin}
+              disabled={editingLastAdmin && form.isAdmin}
+              error={adminAccessError}
+              onChange={handleAdminAccessChange}
+            />
+          </>
+        ) : editingOwnRow ? (
+          <>
+            <Select
+              label="Permission Level"
+              options={contentPermissionOptions}
+              value={form.permissionLevel}
+              onChange={() => {}}
+              placeholder="Select permission"
+              disabled
+              size="sm"
+              portaled
+            />
+            <AdminAccessField
+              checked={form.isAdmin}
+              disabled={true}
+              error={null}
+              onChange={() => {}}
+            />
+          </>
+        ) : (
           <Tooltip
             label="Only admins can change permission levels."
             position="top"
@@ -928,7 +1040,7 @@ export function TeammatesSettingsPage({
           >
             <Select
               label="Permission Level"
-              options={permissionOptions}
+              options={contentPermissionOptions}
               value={form.permissionLevel}
               onChange={() => {}}
               placeholder="Select permission"
@@ -1153,26 +1265,126 @@ function teammateStatus(row: Teammate): "active" | "pending" | "inactive" {
 
 function mapTeammateRow(raw: Record<string, unknown>): Teammate {
   const roleJoin = raw.contributor_roles as { name?: string } | null;
+  const { contentPermissionLevel, isAdmin } = normalizeTeammatePermissionFields(
+    raw.permission_level,
+    raw.is_admin,
+  );
+  const storedLevel = toStoredPermissionLevel(contentPermissionLevel, isAdmin);
   return {
     id: String(raw.id ?? ""),
     name: String(raw.name ?? ""),
     email: raw.email == null ? null : String(raw.email),
     roleId: raw.role_id == null ? null : String(raw.role_id),
     roleName: roleJoin?.name ?? (raw.role == null ? null : String(raw.role)),
-    permissionLevel: normalizeWorkspacePermission(raw.permission_level),
-    isPaid: isPaidPermissionLevel(normalizeWorkspacePermission(raw.permission_level)),
+    permissionLevel: contentPermissionLevel,
+    isAdmin,
+    isPaid: isPaidPermissionLevel(storedLevel),
     userId: raw.user_id == null ? null : String(raw.user_id),
   };
 }
 
-function labelPermission(value: Teammate["permissionLevel"]) {
+function AdminAccessField({
+  checked,
+  disabled,
+  error,
+  onChange,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  error: string | null;
+  onChange: (checked: boolean) => void;
+}) {
+  const fieldId = useId();
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        marginTop: 16,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          minHeight: 24,
+        }}
+      >
+        <Checkbox
+          id={fieldId}
+          checked={checked}
+          disabled={disabled}
+          onChange={onChange}
+        />
+        <label
+          htmlFor={fieldId}
+          style={{
+            fontSize: 13,
+            fontWeight: 500,
+            color: "var(--text-primary, #2e1c1c)",
+            cursor: disabled ? "not-allowed" : "pointer",
+            margin: 0,
+            lineHeight: 1,
+          }}
+        >
+          Admin access
+        </label>
+      </div>
+      <p
+        style={{
+          fontSize: 12,
+          color: "var(--text-secondary, #6b5e55)",
+          margin: 0,
+          paddingLeft: 32,
+          lineHeight: 1.5,
+        }}
+      >
+        {ADMIN_ACCESS_HELPER}
+      </p>
+      {error ? (
+        <p
+          role="alert"
+          style={{
+            margin: 0,
+            paddingLeft: 32,
+            fontSize: 12,
+            color: "#8b2020",
+            lineHeight: 1.5,
+          }}
+        >
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function labelPermission(value: ContentPermissionLevel) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function renderPermissionPill(level: Teammate["permissionLevel"]) {
+function renderPermissionPill(level: ContentPermissionLevel) {
   return (
     <StatusPill
       label={labelPermission(level)}
+      color="mushroom"
+      appearance="outline"
+      size="md"
+      labelTypography="body"
+      className={[
+        teammateKebabStyles.tablePillMd,
+        teammateKebabStyles.permissionPill,
+      ].join(" ")}
+    />
+  );
+}
+
+function renderAdminPill() {
+  return (
+    <StatusPill
+      label="Admin"
       color="mushroom"
       appearance="outline"
       size="md"
@@ -1279,31 +1491,6 @@ function formFooter({
     </div>
   );
 }
-
-const teammateAvatarStyle: CSSProperties = {
-  width: 24,
-  height: 24,
-  borderRadius: "50%",
-  background: "var(--brand-primary-subtle, #f5eaec)",
-  color: "var(--text-heading, #6b1e2e)",
-  fontSize: 10,
-  fontWeight: 600,
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  fontFamily: "'Plus Jakarta Sans', sans-serif",
-};
-
-const pendingInviteAvatarStyle: CSSProperties = {
-  ...teammateAvatarStyle,
-  background: "var(--neutral-200, #e8e4df)",
-  color: "var(--text-secondary, #6b5e55)",
-};
-
-const invitedUserPlaceholderStyle: CSSProperties = {
-  color: "var(--text-tertiary, #998c82)",
-  fontSize: 13,
-};
 
 const paidIconWrapStyle: CSSProperties = {
   display: "inline-flex",

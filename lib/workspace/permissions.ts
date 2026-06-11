@@ -1,5 +1,31 @@
 export type WorkspacePermissionLevel = "admin" | "editor" | "reviewer";
 
+export type ContentPermissionLevel = "editor" | "reviewer";
+
+/** Splits stored permission into content role + Admin flag for UI. */
+export function normalizeTeammatePermissionFields(
+  permissionLevelRaw: unknown,
+  isAdminRaw?: unknown,
+): { contentPermissionLevel: ContentPermissionLevel; isAdmin: boolean } {
+  const stored = normalizeWorkspacePermission(permissionLevelRaw);
+  const isAdmin =
+    stored === "admin" ||
+    isAdminRaw === true ||
+    String(isAdminRaw ?? "").toLowerCase() === "true";
+  const contentPermissionLevel: ContentPermissionLevel =
+    stored === "reviewer" ? "reviewer" : "editor";
+  return { contentPermissionLevel, isAdmin };
+}
+
+/** Encodes content role + Admin flag for DB / API (no migration). */
+export function toStoredPermissionLevel(
+  content: ContentPermissionLevel,
+  isAdmin: boolean,
+): WorkspacePermissionLevel {
+  if (isAdmin) return "admin";
+  return content;
+}
+
 export function normalizeWorkspacePermission(
   value: unknown,
 ): WorkspacePermissionLevel {

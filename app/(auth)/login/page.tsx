@@ -29,6 +29,19 @@ export default function LoginPage() {
   const [passwordVisible, setPasswordVisible] = useState(false);
 
   useEffect(() => {
+    const checkSession = async () => {
+      const supabase = createSupabaseBrowserClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (session) {
+        router.replace(getPostAuthPath(session.user.user_metadata));
+      }
+    };
+    void checkSession();
+  }, [router]);
+
+  useEffect(() => {
     const emailParam = new URLSearchParams(window.location.search).get("email");
     if (emailParam) {
       setEmail(emailParam);

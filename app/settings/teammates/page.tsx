@@ -8,6 +8,15 @@ import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import { fetchWorkspaceRoleOptions } from "@/lib/workspace/contributorRoles";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createClient } from "@supabase/supabase-js";
+import type { WorkspaceTeammate } from "@/lib/workspace/teammates";
+
+function sortTeammatesByName(rows: WorkspaceTeammate[]): WorkspaceTeammate[] {
+  return [...rows].sort((a, b) => {
+    const nameA = a.name?.trim() || "zzz";
+    const nameB = b.name?.trim() || "zzz";
+    return nameA.localeCompare(nameB);
+  });
+}
 
 export default async function SettingsTeammatesPage() {
   const supabase = await createSupabaseServerClient();
@@ -27,9 +36,7 @@ export default async function SettingsTeammatesPage() {
     activeWorkspaceId,
   );
 
-  if (process.env.NODE_ENV === "development") {
-    console.log("contributor_roles (merged with workspace):", initialContributorRoles);
-  }
+  // Intentionally no debug logging here.
 
   if (!activeWorkspaceId) {
     return (
@@ -78,9 +85,11 @@ export default async function SettingsTeammatesPage() {
         .eq("workspace_id", activeWorkspaceId)
         .eq("status", "pending");
 
-      const initialTeammates = appendPendingWorkspaceInvites(
-        teammates,
-        mapPendingWorkspaceInvites((pendingInvites ?? []) as Parameters<typeof mapPendingWorkspaceInvites>[0]),
+      const initialTeammates = sortTeammatesByName(
+        appendPendingWorkspaceInvites(
+          teammates,
+          mapPendingWorkspaceInvites((pendingInvites ?? []) as Parameters<typeof mapPendingWorkspaceInvites>[0]),
+        ),
       );
 
       return (
@@ -108,9 +117,11 @@ export default async function SettingsTeammatesPage() {
     .eq("workspace_id", activeWorkspaceId)
     .eq("status", "pending");
 
-  const initialTeammates = appendPendingWorkspaceInvites(
-    teammates,
-    mapPendingWorkspaceInvites((pendingInvites ?? []) as Parameters<typeof mapPendingWorkspaceInvites>[0]),
+  const initialTeammates = sortTeammatesByName(
+    appendPendingWorkspaceInvites(
+      teammates,
+      mapPendingWorkspaceInvites((pendingInvites ?? []) as Parameters<typeof mapPendingWorkspaceInvites>[0]),
+    ),
   );
 
   return (

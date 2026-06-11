@@ -166,9 +166,9 @@
   color: #8b2020;
 }
 
-/* neutral - neutral/150 bg, neutral/300 border, text-secondary text */
+/* neutral — Figma 99:369: white bg, border/subtle, text/secondary */
 .variant-neutral {
-  background: #ede8e0;
-  border-color: #c9c0b4;
+  background: #ffffff;
+  border-color: #ede8e0;
   color: #6b5e55;
 }

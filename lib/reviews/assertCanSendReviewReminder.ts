@@ -11,6 +11,11 @@ export async function assertCanSendReviewReminder(
     return { allowed: false };
   }
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const authUserId = user?.id?.trim() ?? "";
+
   const perm = String(contributor.permissionLevel ?? "")
     .trim()
     .toLowerCase();
@@ -18,15 +23,55 @@ export async function assertCanSendReviewReminder(
     return { allowed: true, contributorId: contributor.id };
   }
 
+  if (authUserId) {
+    const { data: projectRow } = await supabase
+      .from("projects")
+      .select("workspace_id")
+      .eq("id", projectId)
+      .maybeSingle();
+    const workspaceId = String(
+      (projectRow as { workspace_id?: string | null } | null)?.workspace_id ?? "",
+    ).trim();
+    if (workspaceId) {
+      const { data: member } = await supabase
+        .from("workspace_members")
+        .select("permission_level, role")
+        .eq("workspace_id", workspaceId)
+        .eq("user_id", authUserId)
+        .maybeSingle();
+      const memberRow = member as {
+        permission_level?: string | null;
+        role?: string | null;
+      } | null;
+      const workspacePerm = String(memberRow?.permission_level ?? "")
+        .trim()
+        .toLowerCase();
+      if (
+        workspacePerm === "editor" ||
+        workspacePerm === "admin" ||
+        String(memberRow?.role ?? "").trim().toLowerCase() === "admin"
+      ) {
+        return { allowed: true, contributorId: contributor.id };
+      }
+    }
+  }
+
   const { data: review } = await supabase
     .from("reviews")
-    .select("owner_display_name")
+    .select("owner_display_name, creator_id")
     .eq("id", reviewId)
     .maybeSingle();
 
-  const ownerName = String(
-    (review as { owner_display_name?: string | null } | null)?.owner_display_name ?? "",
-  )
+  const reviewRow = review as {
+    owner_display_name?: string | null;
+    creator_id?: string | null;
+  } | null;
+  const creatorAuthUserId = String(reviewRow?.creator_id ?? "").trim();
+  if (creatorAuthUserId && authUserId && creatorAuthUserId === authUserId) {
+    return { allowed: true, contributorId: contributor.id };
+  }
+
+  const ownerName = String(reviewRow?.owner_display_name ?? "")
     .trim()
     .toLowerCase();
   const contributorName = contributor.name.trim().toLowerCase();

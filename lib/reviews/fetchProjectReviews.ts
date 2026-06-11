@@ -1,4 +1,8 @@
 import { formatDistanceToNow } from "@/lib/formatDistanceToNow";
+import {
+  resolveCanonicalContributorIds,
+  type ResolvedContributor,
+} from "@/lib/contributors/resolveCanonicalContributorIds";
 import type {
   ReviewArtifactStored,
   ReviewCardData,
@@ -7,6 +11,11 @@ import type {
   ReviewType
 } from "@/types/review";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+type ReviewCardCounts = {
+  feedbackCount: number;
+  changeRequestCount: number;
+};
 
 function parseReviewType(raw: string | null | undefined): ReviewType {
   const s = String(raw ?? "").toLowerCase();
@@ -77,6 +86,110 @@ export function reviewRowHasRecordedDecision(r: Record<string, unknown>): boolea
   return !!(dc || dt);
 }
 
+function getOrCreateReviewCardCounts(
+  countsByReviewId: Map<string, ReviewCardCounts>,
+  reviewId: string,
+): ReviewCardCounts {
+  const existing = countsByReviewId.get(reviewId);
+  if (existing) return existing;
+  const next = { feedbackCount: 0, changeRequestCount: 0 };
+  countsByReviewId.set(reviewId, next);
+  return next;
+}
+
+export type ResolvedReviewCardReviewer = ResolvedContributor;
+
+/** Build ReviewCard reviewer props using canonical contributors.id values. */
+export function buildReviewCardReviewers(
+  rawContributorIds: unknown,
+  resolutionByRawId: Map<string, ResolvedReviewCardReviewer>,
+): Array<{ id: string; name: string }> {
+  if (!Array.isArray(rawContributorIds)) return [];
+  return rawContributorIds
+    .map((rawId) => {
+      const raw = String(rawId ?? "").trim();
+      const match = resolutionByRawId.get(raw);
+      if (!raw || !match) return null;
+      return { id: match.contributorId, name: match.name };
+    })
+    .filter((item): item is { id: string; name: string } => item != null);
+}
+
+export async function fetchReviewCardMeta(
+  supabase: SupabaseClient,
+  {
+    reviewIds,
+    reviewerIds,
+  }: {
+    reviewIds: string[];
+    reviewerIds: string[];
+  },
+): Promise<{
+  reviewerNameById: Map<string, string>;
+  reviewerResolutionByRawId: Map<string, ResolvedReviewCardReviewer>;
+  countsByReviewId: Map<string, ReviewCardCounts>;
+}> {
+  const reviewerNameById = new Map<string, string>();
+  const countsByReviewId = new Map<string, ReviewCardCounts>();
+  const reviewerResolutionByRawId = await resolveCanonicalContributorIds(
+    supabase,
+    reviewerIds,
+  );
+  for (const [rawId, match] of reviewerResolutionByRawId) {
+    reviewerNameById.set(rawId, match.name);
+  }
+
+  const [feedbackResponse, changeRequestResponse] = await Promise.all([
+    reviewIds.length > 0
+      ? supabase
+          .from("reviewer_feedback")
+          .select("id, review_id, feedback_kind")
+          .eq("feedback_status", "submitted")
+          .in("review_id", reviewIds)
+      : Promise.resolve({ data: [], error: null }),
+    reviewIds.length > 0
+      ? supabase
+          .from("change_requests")
+          .select("review_id, reviewer_feedback_id, completed_at")
+          .in("review_id", reviewIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  const feedbackIdsWithChangeRequests = new Set<string>();
+
+  for (const row of changeRequestResponse.data ?? []) {
+    const changeRequest = row as Record<string, unknown>;
+    const reviewId = String(changeRequest.review_id ?? "").trim();
+    if (!reviewId) continue;
+    const reviewerFeedbackId = String(changeRequest.reviewer_feedback_id ?? "").trim();
+    if (reviewerFeedbackId) {
+      feedbackIdsWithChangeRequests.add(reviewerFeedbackId);
+    }
+    const completedAt = changeRequest.completed_at;
+    if (completedAt != null && String(completedAt).trim() !== "") continue;
+    const counts = getOrCreateReviewCardCounts(countsByReviewId, reviewId);
+    counts.changeRequestCount += 1;
+  }
+
+  for (const row of feedbackResponse.data ?? []) {
+    const feedback = row as Record<string, unknown>;
+    const reviewId = String(feedback.review_id ?? "").trim();
+    if (!reviewId) continue;
+    const feedbackId = String(feedback.id ?? "").trim();
+    const rawKind = String(feedback.feedback_kind ?? "").trim().toLowerCase();
+    const hasChangeRequests = feedbackId ? feedbackIdsWithChangeRequests.has(feedbackId) : false;
+    const isPureFeedback =
+      rawKind === "approval" ||
+      rawKind === "generic" ||
+      (!rawKind && !hasChangeRequests);
+    if (!isPureFeedback) continue;
+    const counts = getOrCreateReviewCardCounts(countsByReviewId, reviewId);
+    counts.feedbackCount += 1;
+  }
+
+  return { reviewerNameById, reviewerResolutionByRawId, countsByReviewId };
+}
+
 export async function fetchProjectReviewsForCards(
   supabase: SupabaseClient,
   projectId: string
@@ -84,7 +197,7 @@ export async function fetchProjectReviewsForCards(
   const { data, error } = await supabase
     .from("reviews")
     .select(
-      "id, title, status, created_at, owner_display_name, review_focus, artifacts, review_type, decision_status, decision_comments, decision_selected_artifact_ids, decision_text, require_decision_maker, artifact_file_name, artifact_file_type, artifact_name, artifact_iteration, artifact_description, artifact_file_url"
+      "id, title, status, created_at, owner_display_name, review_focus, reviewer_contributor_ids, artifacts, review_type, decision_status, decision_comments, decision_selected_artifact_ids, decision_text, require_decision_maker, artifact_file_name, artifact_file_type, artifact_name, artifact_iteration, artifact_description, artifact_file_url"
     )
     .eq("project_id", projectId)
     .order("created_at", { ascending: false });
@@ -94,20 +207,19 @@ export async function fetchProjectReviewsForCards(
   const reviewIds = data
     .map((row) => String((row as Record<string, unknown>).id ?? ""))
     .filter(Boolean);
-  const commentCountsByReviewId = new Map<string, number>();
-  if (reviewIds.length > 0) {
-    const { data: feedbackRows } = await supabase
-      .from("reviewer_feedback")
-      .select("review_id")
-      .eq("feedback_status", "submitted")
-      .in("review_id", reviewIds);
-    for (const feedbackRow of feedbackRows ?? []) {
-      const reviewId = String((feedbackRow as Record<string, unknown>).review_id ?? "");
-      if (!reviewId) continue;
-      commentCountsByReviewId.set(reviewId, (commentCountsByReviewId.get(reviewId) ?? 0) + 1);
-    }
-  }
-
+  const reviewerIds = [...new Set(
+    data.flatMap((row) =>
+      Array.isArray((row as Record<string, unknown>).reviewer_contributor_ids)
+        ? ((row as Record<string, unknown>).reviewer_contributor_ids as unknown[])
+            .map((id) => String(id).trim())
+            .filter(Boolean)
+        : [],
+    ),
+  )];
+  const { reviewerResolutionByRawId, countsByReviewId } = await fetchReviewCardMeta(supabase, {
+    reviewIds,
+    reviewerIds,
+  });
   return data.map((row) => {
     const r = row as Record<string, unknown>;
     const artifacts = parseArtifacts(r.artifacts);
@@ -128,10 +240,15 @@ export async function fetchProjectReviewsForCards(
       focusRaw == null || String(focusRaw).trim() === ""
         ? null
         : String(focusRaw).trim();
+    const reviewers = buildReviewCardReviewers(
+      r.reviewer_contributor_ids,
+      reviewerResolutionByRawId,
+    );
     return {
       id: String(r.id ?? ""),
       title: String(r.title ?? ""),
       status: parseStatus(r.status as string | undefined),
+      reviewType: parseReviewType(r.review_type as string | undefined),
       decisionStatus:
         r.decision_status == null || String(r.decision_status).trim() === ""
           ? null
@@ -139,11 +256,16 @@ export async function fetchProjectReviewsForCards(
       requireDecisionMaker: Boolean(r.require_decision_maker),
       ownerName: String(r.owner_display_name ?? "Reviewer"),
       dateLabel,
+      dateTooltipIso:
+        r.created_at == null ? null : String(r.created_at),
       description: reviewFocus,
       review_focus: reviewFocus,
+      review_focus_summary: null,
+      review_focus_summary_source: null,
       iterationLabel,
-      commentCount: commentCountsByReviewId.get(String(r.id ?? "")) ?? 0,
-      decisionCount: reviewRowHasRecordedDecision(r) ? 1 : 0,
+      feedbackCount: countsByReviewId.get(String(r.id ?? ""))?.feedbackCount ?? 0,
+      changeRequestCount: countsByReviewId.get(String(r.id ?? ""))?.changeRequestCount ?? 0,
+      reviewers,
       artifact_file_name:
         r.artifact_file_name == null ? null : String(r.artifact_file_name),
       artifact_file_type: parseArtifactType(r.artifact_file_type),

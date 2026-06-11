@@ -43,23 +43,6 @@ const TYPE_CARDS: Array<{
   description: string;
 }> = [
   {
-    key: 'compare',
-    label: 'COMPARE',
-    labelColor: '#7a5500',
-    defaultOuterBg: '#ffffff',
-    defaultOuterBorder: '#ede8e0',
-    hoverOuterBg: '#ffffff',
-    hoverOuterBorder: '#c9c0b4',
-    activeOuterBg: '#fff6d7',
-    activeOuterBorder: '#e5c820',
-    defaultIconBg: '#ffecac',
-    defaultIconBorder: '#e5c820',
-    activeIconBg: '#ffffff',
-    activeIconBorder: '#e5c820',
-    description:
-      'When you are seeking design direction by comparing options against each other. Reviewers will select a preferred option. A decision will be recorded when feedback is complete.',
-  },
-  {
     key: 'align',
     label: 'ALIGNMENT',
     labelColor: '#1a527a',
@@ -75,6 +58,23 @@ const TYPE_CARDS: Array<{
     activeIconBorder: '#6baed4',
     description:
       'Does the proposed direction align with the project goals and brand guidelines?',
+  },
+  {
+    key: 'compare',
+    label: 'COMPARE',
+    labelColor: '#7a5500',
+    defaultOuterBg: '#ffffff',
+    defaultOuterBorder: '#ede8e0',
+    hoverOuterBg: '#ffffff',
+    hoverOuterBorder: '#c9c0b4',
+    activeOuterBg: '#fff6d7',
+    activeOuterBorder: '#e5c820',
+    defaultIconBg: '#ffecac',
+    defaultIconBorder: '#e5c820',
+    activeIconBg: '#ffffff',
+    activeIconBorder: '#e5c820',
+    description:
+      'When you are seeking design direction by comparing options against each other. Reviewers will select a preferred option. A decision will be recorded when feedback is complete.',
   },
   {
     key: 'critique',

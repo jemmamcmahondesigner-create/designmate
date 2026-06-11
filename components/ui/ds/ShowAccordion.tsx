@@ -9,6 +9,7 @@ export interface ShowAccordionProps {
   state?: ShowAccordionState;
   onClick?: () => void;
   className?: string;
+  showLines?: boolean;
 }
 
 const LABELS: Record<ShowAccordionState, string> = {
@@ -21,6 +22,7 @@ export function ShowAccordion({
   state = 'more',
   onClick,
   className,
+  showLines = true,
 }: ShowAccordionProps) {
   const rootClass = [styles.root, className ?? ''].filter(Boolean).join(' ');
 
@@ -31,7 +33,7 @@ export function ShowAccordion({
 
   return (
     <div className={rootClass}>
-      <span className={styles.line} aria-hidden="true" />
+      {showLines ? <span className={styles.line} aria-hidden="true" /> : null}
 
       <button
         type="button"
@@ -48,7 +50,7 @@ export function ShowAccordion({
         )}
       </button>
 
-      <span className={styles.line} aria-hidden="true" />
+      {showLines ? <span className={styles.line} aria-hidden="true" /> : null}
     </div>
   );
 }

@@ -22,11 +22,13 @@ const PLACEHOLDER =
 type ProblemsSectionProps = {
   projectId: string;
   initialProblems: ProjectProblem[];
+  hideAddActions?: boolean;
 };
 
 export function ProblemsSection({
   projectId,
-  initialProblems
+  initialProblems,
+  hideAddActions = false,
 }: ProblemsSectionProps) {
   const { showToast } = useToast();
   const [problems, setProblems] = useState<ProjectProblem[]>(initialProblems);
@@ -235,22 +237,24 @@ export function ProblemsSection({
         )}
       </div>
 
-      <div>
-        <Button
-          type="button"
-          variant="ghost"
-          label="Create a new problem"
-          icon="leading"
-          iconName="plus"
-          size="sm"
-          onClick={() => {
-            setEditingProblem(null);
-            setEditText("");
-            setNewProblemText("");
-            setProblemModalOpen(true);
-          }}
-        />
-      </div>
+      {!hideAddActions ? (
+        <div>
+          <Button
+            type="button"
+            variant="ghost"
+            label="Create a new problem"
+            icon="leading"
+            iconName="plus"
+            size="sm"
+            onClick={() => {
+              setEditingProblem(null);
+              setEditText("");
+              setNewProblemText("");
+              setProblemModalOpen(true);
+            }}
+          />
+        </div>
+      ) : null}
 
       <Modal
         open={problemModalOpen}

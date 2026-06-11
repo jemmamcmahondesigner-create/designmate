@@ -23,7 +23,7 @@ export default async function ProjectsPage() {
       <ProjectsView
         grouped={{ active: [], paused: [], complete: [] }}
         reviewCounts={{}}
-        searchPlaceholder="Filter by project, client, or teammate..."
+        searchPlaceholder="Filter by project, group, or teammate..."
         workspaceEmptyMessage="Set up your workspace to see projects."
       />
     );
@@ -67,8 +67,8 @@ export default async function ProjectsPage() {
     rows.length === 0 ||
     (rows[0] != null && Object.prototype.hasOwnProperty.call(rows[0], "contributors"));
   const searchPlaceholder = teammateLabelOk
-    ? "Filter by project, client, or teammate..."
-    : "Filter by project or client...";
+    ? "Filter by project, group, or teammate..."
+    : "Filter by project or group...";
 
   function contributorNamesFromRow(r: Record<string, unknown>): string[] {
     const raw = r.contributors;

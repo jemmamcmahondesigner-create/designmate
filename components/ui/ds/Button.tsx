@@ -33,8 +33,12 @@ export interface ButtonProps {
   iconName?: string
   /** Click handler */
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
+  /** Stretch to 100% width of the parent (overrides inline-flex shrink) */
+  fullWidth?: boolean
   /** Additional class names — use sparingly, only for layout positioning */
   className?: string
+  /** Optional inline slot rendered after the label, before trailing icon */
+  trailingContent?: React.ReactNode
   /** Inline styles — use sparingly (e.g. dynamic status colours); overrides variant where both apply */
   style?: React.CSSProperties
   /** DOM id — for anchors, `aria-labelledby`, or tests */
@@ -62,7 +66,9 @@ export function Button({
   iconOnly = false,
   iconName,
   onClick,
+  fullWidth = false,
   className,
+  trailingContent,
   style,
   id,
   type = 'button',
@@ -80,6 +86,7 @@ export function Button({
     styles[`variant-${variant}`],
     styles[`size-${size}`],
     iconOnly ? styles.iconOnly : '',
+    fullWidth ? styles.fullWidth : '',
     className ?? '',
   ]
     .filter(Boolean)
@@ -109,6 +116,10 @@ export function Button({
       {!iconOnly && (
         <span className={styles.label}>{label}</span>
       )}
+
+      {!iconOnly && trailingContent ? (
+        <span className={styles.trailingContent}>{trailingContent}</span>
+      ) : null}
 
       {icon === 'trailing' && resolvedIcon && (
         <span className={styles.icon}>

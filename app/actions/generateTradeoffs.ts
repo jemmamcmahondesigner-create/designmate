@@ -81,12 +81,6 @@ export async function generateTradeoffs(
 ): Promise<
   { ok: true; tradeoffs: Tradeoff[] } | { ok: false; error: string }
 > {
-  console.log('[AI Tradeoffs] Called with labels:', input.artifactLabels);
-  console.log(
-    '[AI Tradeoffs] API key present:',
-    !!process.env.ANTHROPIC_API_KEY,
-  );
-
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     console.error(
@@ -132,8 +126,6 @@ Return JSON only. Use exactly one of the two labels above for each tradeoff's ar
   if (tradeoffs.length === 0) {
     return { ok: false, error: 'Empty or malformed response from AI.' };
   }
-
-  console.log('[AI Tradeoffs] Result:', tradeoffs);
 
   return { ok: true, tradeoffs };
 }

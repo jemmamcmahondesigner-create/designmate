@@ -16,6 +16,7 @@ export type ReviewCardData = {
   id?: string;
   title: string;
   status: ReviewDbStatus;
+  reviewType?: ReviewType;
   /** `reviews.decision_status` for Complete pill colour on cards. */
   decisionStatus?: string | null;
   /** `reviews.require_decision_maker` */
@@ -23,12 +24,22 @@ export type ReviewCardData = {
   ownerName: string;
   /** Relative / formatted date string for display */
   dateLabel: string;
+  dateTooltipIso?: string | null;
   /** Short focus text from DB, shown as card description when set */
   description?: string | null;
   review_focus?: string | null;
+  review_focus_summary?: string | null;
+  review_focus_summary_source?: string | null;
   iterationLabel?: string;
+  feedbackCount?: number;
+  changeRequestCount?: number;
   commentCount?: number;
   decisionCount?: number;
+  reviewers?: Array<{
+    id?: string;
+    name: string;
+    avatarSrc?: string | null;
+  }>;
   tags?: Array<{
     label: string;
     variant?:

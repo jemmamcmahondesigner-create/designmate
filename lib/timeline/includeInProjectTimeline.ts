@@ -26,9 +26,22 @@ export function includeInProjectTimeline(event: ProjectTimelineEventLike): boole
   ) {
     return true;
   }
+  if (t === "project_updated") return true;
   if (t === "status_changed") {
     const payload = (event.payload ?? {}) as Record<string, unknown>;
-    const to = String(payload.to_status ?? payload.new_status ?? "")
+    const entity = String(payload.entity ?? "")
+      .trim()
+      .toLowerCase();
+    if (entity === "project") return true;
+    if (
+      entity === "review" &&
+      String(payload.status_transition_trigger ?? "")
+        .trim()
+        .toLowerCase() === "auto"
+    ) {
+      return true;
+    }
+    const to = String(payload.to_status ?? payload.new_status ?? payload.to ?? "")
       .trim()
       .toLowerCase();
     return STATUS_TIMELINE_HIGH_SIGNAL.has(to);

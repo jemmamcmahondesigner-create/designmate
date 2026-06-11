@@ -1,0 +1,46 @@
+.groupsTable {
+  min-width: 600px;
+  width: 100%;
+}
+
+.groupsTable :global(table) {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 600px;
+}
+
+.groupsTable :global(table td) {
+  max-width: none !important;
+}
+
+.groupsTable :global(table th:nth-child(1)),
+.groupsTable :global(table td:nth-child(1)) {
+  width: 240px;
+  white-space: normal;
+  overflow: hidden;
+  word-wrap: break-word;
+}
+
+.groupsTable :global(table td:nth-child(2)),
+.groupsTable :global(table th:nth-child(2)) {
+  width: 140px;
+  white-space: nowrap;
+}
+
+.groupsTable :global(table td:nth-child(3)),
+.groupsTable :global(table th:nth-child(3)) {
+  width: 160px;
+  white-space: nowrap;
+}
+
+.groupsTable :global(table td:nth-child(4)),
+.groupsTable :global(table th:nth-child(4)) {
+  width: 80px;
+  white-space: nowrap;
+}
+
+.groupsTable :global(table td:nth-child(5)),
+.groupsTable :global(table th:nth-child(5)) {
+  width: 48px;
+  white-space: nowrap;
+}

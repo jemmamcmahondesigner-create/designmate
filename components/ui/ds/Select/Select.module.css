@@ -29,7 +29,7 @@
 }
 
 .required {
-  color: #2e1c1c;
+  color: var(--feedback-error-text, #a31d1d);
   margin-left: 1px;
 }
 

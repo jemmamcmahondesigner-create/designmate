@@ -33,9 +33,10 @@ export interface TooltipProps {
   passThroughFocus?: boolean;
   /** Block-level trigger spanning full width (sidebar nav rows). */
   fullWidth?: boolean;
+  maxWidth?: number;
 }
 
-type PortalPlacement = 'top' | 'bottom' | 'right';
+type PortalPlacement = 'top' | 'bottom' | 'left' | 'right';
 
 export function Tooltip({
   label,
@@ -45,6 +46,7 @@ export function Tooltip({
   className,
   passThroughFocus = false,
   fullWidth = false,
+  maxWidth,
 }: TooltipProps) {
   const tooltipId = useId();
   const wrapRef = useRef<HTMLSpanElement>(null);
@@ -76,14 +78,19 @@ export function Tooltip({
     const gap = 8;
     const margin = 8;
 
-    if (positionProp === 'right') {
+    if (positionProp === 'right' || positionProp === 'left') {
+      const placement: PortalPlacement = positionProp;
       const left = tr.right + gap;
+      const resolvedLeft = Math.min(
+        Math.max(positionProp === 'left' ? tr.left - gap - br.width : left, margin),
+        Math.max(margin, window.innerWidth - br.width - margin)
+      );
       let top = tr.top + tr.height / 2 - br.height / 2;
       top = Math.min(
         Math.max(top, margin),
         Math.max(margin, window.innerHeight - br.height - margin)
       );
-      setCoords({ top, left, placement: 'right' });
+      setCoords({ top, left: resolvedLeft, placement });
       setPlaced(true);
       return;
     }
@@ -148,6 +155,8 @@ export function Tooltip({
   const arrowClass =
     coords.placement === 'right'
       ? styles.portalArrowRight
+      : coords.placement === 'left'
+        ? styles.portalArrowLeft
       : coords.placement === 'top'
         ? styles.portalArrowTop
         : styles.portalArrowBottom;
@@ -172,6 +181,7 @@ export function Tooltip({
             style={{
               top: coords.top,
               left: coords.left,
+              ...(maxWidth ? { maxWidth } : {}),
             }}
           >
             <span className={styles.label}>{label}</span>

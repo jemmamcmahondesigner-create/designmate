@@ -1,15 +1,11 @@
 export const DESIGN_TRACE_RESEND_FROM = "DesignTrace <hello@designtrace.ai>";
+import { getDesignTraceWordmarkHtml } from "@/lib/emails/brand-wordmark";
 
 export type InviteEmailProps = {
   inviterName: string;
   workspaceName: string;
   inviteUrl: string;
 };
-
-function getInviteLogoUrl(): string {
-  const base = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
-  return `${base}/assets/logo/wordmark-expanded-default.svg`;
-}
 
 export function getInviteEmailHtml({
   inviterName,
@@ -19,8 +15,6 @@ export function getInviteEmailHtml({
   const safeInviter = escapeHtml(inviterName);
   const safeWorkspace = escapeHtml(workspaceName);
   const safeUrl = escapeHtml(inviteUrl);
-  const logoUrl = escapeHtml(getInviteLogoUrl());
-
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
@@ -31,7 +25,9 @@ export function getInviteEmailHtml({
         <table width="560" cellpadding="0" cellspacing="0" style="background:white;border-radius:12px;border:1px solid #ede8e0;max-width:560px;">
           <tr>
             <td style="padding:32px 40px 24px;">
-              <img src="${logoUrl}" alt="DesignTrace" width="148" height="25" style="display:block;border:0;"/>
+              <p style="margin:0 0 20px;font-size:20px;line-height:1.2;">
+                ${getDesignTraceWordmarkHtml()}
+              </p>
               <hr style="border:none;border-top:1px solid #ede8e0;margin:20px 0;"/>
               <h2 style="margin:0 0 16px;font-size:20px;font-weight:700;color:#6b1e2e;line-height:1.3;">
                 ${safeInviter} has invited you to join ${safeWorkspace}

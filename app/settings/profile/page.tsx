@@ -1,42 +1,117 @@
-import { ProfileSettingsPage } from "@/components/settings/ProfileSettingsPage";
-import { getDevImpersonatedContributorId } from "@/lib/auth/devImpersonation";
+import { ProfilePageClient } from "@/components/settings/ProfilePageClient";
+import { fetchWorkspaceRoleOptions } from "@/lib/workspace/contributorRoles";
+import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export default async function SettingsProfilePage() {
-  const contributorId = await getDevImpersonatedContributorId();
   const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  if (!contributorId) {
-    return <ProfileSettingsPage contributor={null} />;
+  if (!user?.id) {
+    return (
+      <ProfilePageClient
+        userId={null}
+        email={null}
+        activeWorkspaceId={null}
+        contributor={null}
+        roleOptions={[]}
+        workspaces={[]}
+      />
+    );
   }
 
-  const { data } = await supabase
-    .from("contributors")
-    .select("id, name, email, role, role_id, contributor_roles(name)")
-    .eq("id", contributorId)
-    .maybeSingle();
+  const activeWorkspaceId = getActiveWorkspaceIdFromUser(user);
+  const email = user.email?.trim() || null;
 
-  if (!data) {
-    return <ProfileSettingsPage contributor={null} />;
+  let contributor: { id: string; name: string; roleName: string | null } | null = null;
+
+  if (activeWorkspaceId) {
+    const { data: contributorRow } = await supabase
+      .from("contributors")
+      .select("id, name, role")
+      .eq("user_id", user.id)
+      .eq("workspace_id", activeWorkspaceId)
+      .maybeSingle();
+
+    if (contributorRow) {
+      const raw = contributorRow as Record<string, unknown>;
+      const roleRaw = raw.role;
+      contributor = {
+        id: String(raw.id ?? ""),
+        name: String(raw.name ?? ""),
+        roleName:
+          roleRaw == null || String(roleRaw).trim() === ""
+            ? null
+            : String(roleRaw).trim(),
+      };
+    }
   }
 
-  const raw = data as Record<string, unknown>;
-  const roleJoin = raw.contributor_roles as { name?: string } | null;
-  const roleNameFromJoin = roleJoin?.name ?? null;
-  const roleName =
-    roleNameFromJoin && String(roleNameFromJoin).trim() !== ""
-      ? String(roleNameFromJoin)
-      : raw.role == null || String(raw.role).trim() === ""
-        ? null
-        : String(raw.role);
+  const roleOptions = await fetchWorkspaceRoleOptions(supabase, activeWorkspaceId);
 
-  const contributor = {
-    id: String(raw.id ?? ""),
-    name: String(raw.name ?? ""),
-    email: raw.email == null ? null : String(raw.email),
-    roleId: raw.role_id == null ? null : String(raw.role_id),
-    roleName,
-  };
+  const { data: membershipRows } = await supabase
+    .from("workspace_members")
+    .select("role, status, workspace_id, workspaces(id, name)")
+    .eq("user_id", user.id)
+    .eq("status", "active");
 
-  return <ProfileSettingsPage contributor={contributor} />;
+  const workspaceIds = (membershipRows ?? [])
+    .map((row) => {
+      const item = row as Record<string, unknown>;
+      const workspaces = item.workspaces as { id?: string } | null;
+      return String(item.workspace_id ?? workspaces?.id ?? "").trim();
+    })
+    .filter(Boolean);
+
+  const adminCountByWorkspace: Record<string, number> = {};
+  if (workspaceIds.length > 0) {
+    const { data: adminRows } = await supabase
+      .from("workspace_members")
+      .select("workspace_id")
+      .in("workspace_id", workspaceIds)
+      .eq("role", "admin")
+      .eq("status", "active");
+
+    for (const row of adminRows ?? []) {
+      const workspaceId = String(
+        (row as { workspace_id?: string }).workspace_id ?? "",
+      ).trim();
+      if (!workspaceId) continue;
+      adminCountByWorkspace[workspaceId] =
+        (adminCountByWorkspace[workspaceId] ?? 0) + 1;
+    }
+  }
+
+  const workspaces = (membershipRows ?? [])
+    .map((row) => {
+      const item = row as Record<string, unknown>;
+      const workspacesJoin = item.workspaces as { id?: string; name?: string } | null;
+      const id = String(item.workspace_id ?? workspacesJoin?.id ?? "").trim();
+      const name = String(workspacesJoin?.name ?? id).trim();
+      const memberRole = String(item.role ?? "member").trim();
+      if (!id) return null;
+      const adminCount = adminCountByWorkspace[id] ?? 0;
+      return {
+        id,
+        name: name || id,
+        memberRole,
+        status: String(item.status ?? "active"),
+        isOnlyAdmin: memberRole === "admin" && adminCount <= 1,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item != null)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+
+  return (
+    <ProfilePageClient
+      userId={user.id}
+      email={email}
+      activeWorkspaceId={activeWorkspaceId}
+      contributor={contributor}
+      roleOptions={roleOptions}
+      workspaces={workspaces}
+    />
+  );
 }

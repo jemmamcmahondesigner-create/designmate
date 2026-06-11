@@ -11,8 +11,15 @@ export function getActiveWorkspaceIdFromUser(
 export async function getActiveWorkspaceId(
   supabase: SupabaseClient,
 ): Promise<string | null> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return getActiveWorkspaceIdFromUser(user);
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    return getActiveWorkspaceIdFromUser(user);
+  } catch (err) {
+    // Auth lock contention — return null gracefully
+    // The caller should handle null workspace ID
+    console.warn("[getActiveWorkspaceId] auth lock error:", err);
+    return null;
+  }
 }

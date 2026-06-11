@@ -82,6 +82,39 @@
   pointer-events: none;
 }
 
+.loadingBtnLabelled {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle, #ede8e0);
+  background: #ffffff;
+  color: var(--text-primary, #2e1c1c);
+  pointer-events: none;
+  cursor: default;
+  box-sizing: border-box;
+}
+
+.loadingBtnGhostLabel {
+  visibility: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.26px;
+  white-space: nowrap;
+}
+
+.loadingBtnSpinnerWrap {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 @keyframes textareaAiSpin {
   to {
     transform: rotate(360deg);
@@ -90,5 +123,9 @@
 
 .loadingBtnSpin {
   display: block;
+  animation: textareaAiSpin 1s linear infinite;
+}
+
+.loadingAiButton :global(svg) {
   animation: textareaAiSpin 1s linear infinite;
 }

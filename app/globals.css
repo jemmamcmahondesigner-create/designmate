@@ -57,11 +57,17 @@ body {
   height: 100%;
 }
 
+html {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   @apply antialiased;
   color: #2e1c1c;
   background-color: #faf8f6;
   font-family: 'Plus Jakarta Sans', sans-serif;
+  letter-spacing: 0.2px;
 }
 
 [data-radix-popper-content-wrapper] {
@@ -90,6 +96,22 @@ body {
 
 [role="menuitem"]:hover {
   background-color: #f3efe9;
+}
+
+@keyframes skeleton-wave {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-wave {
+  background: linear-gradient(
+    90deg,
+    var(--surface-card-recessed, #f3efe9) 25%,
+    var(--neutral-200, #e4ddd3) 50%,
+    var(--surface-card-recessed, #f3efe9) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-wave 1.5s ease-in-out infinite;
 }
 
 [role="menuitem"].destructive {

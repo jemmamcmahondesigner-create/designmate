@@ -6,6 +6,7 @@ import {
   mapInvitePermissionLevel,
   mapWorkspaceMemberRole,
 } from "@/lib/workspace/permissions";
+import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
 
 export async function POST(request: Request) {
   let body: { invite_code?: string };
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
   const service = createServiceClient();
   const { data: invite, error: inviteError } = await service
     .from("workspace_invites")
-    .select("id, workspace_id, role, status, expires_at, email")
+    .select("id, workspace_id, role, status, expires_at, email, job_role")
     .eq("invite_code", inviteCode)
     .maybeSingle();
 
@@ -88,12 +89,19 @@ export async function POST(request: Request) {
     .eq("user_id", user.id)
     .maybeSingle();
 
+  const jobRole =
+    (typeof invite.job_role === "string" ? invite.job_role.trim() : "") ||
+    (user.user_metadata?.role as string | undefined)?.trim() ||
+    null;
+  const roleFields = await resolveContributorRoleFields(service, jobRole);
+
   const contributorPayload = {
     workspace_id: invite.workspace_id,
     user_id: user.id,
     name: displayName,
     email: invite.email,
-    role: (user.user_metadata?.role as string | undefined)?.trim() || null,
+    role: roleFields.role,
+    role_id: roleFields.role_id,
     permission_level: permissionLevel,
     is_paid: isPaidPermissionLevel(permissionLevel),
     project_id: null as string | null,

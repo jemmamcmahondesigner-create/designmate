@@ -4,10 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Checkbox,
+  Divider,
   Icon,
-  Input,
+  Menu,
   Select,
-  ShowAccordion,
+  SelectField,
   StatusPill,
   Tag,
   Textarea,
@@ -30,6 +31,12 @@ type DrawerReview = {
   artifacts: DrawerReviewArtifact[];
 };
 
+type DrawerAssignedReviewer = {
+  id: string;
+  name: string;
+  hasSubmitted?: boolean;
+};
+
 type SubmitFeedbackDrawerProps = {
   review: DrawerReview;
   /** When the review lifecycle is `complete` — no further submissions. */
@@ -39,12 +46,27 @@ type SubmitFeedbackDrawerProps = {
     feedbackText: string;
     selectedOption: string | null;
   } | null;
+  /** Resubmit / prefill flow — footer shows "Re-submit" (Align) or "Update feedback". */
+  resubmitMode?: boolean;
+  /** Existing `reviewer_feedback` row id when amending submitted Align feedback. */
+  existingFeedbackId?: string | null;
+  /** Approve resubmit: empty change-request UI; do not carry prior approvals. */
+  clearChangeRequests?: boolean;
+  /** Align edit: pre-populate saved change request rows from the server. */
+  initialChangeRequests?: SavedChangeRequest[];
+  /** Defer parent refresh until the drawer closes after a change request is saved. */
+  deferRevalidate?: boolean;
+  onChangeRequestCreated?: () => void;
   currentContributorId: string | null;
+  isReviewCreator?: boolean;
+  defaultOnBehalfOf?: string | null;
+  assignedReviewers?: DrawerAssignedReviewer[];
   onClose: () => void;
   onSubmitSuccess: () => void;
 };
 
 type SavedChangeRequest = {
+  batchId: string;
   artifactIds: string[];
   changesNeeded: string;
 };
@@ -63,6 +85,22 @@ function artifactTitleStoreKey(artifact: DrawerReviewArtifact) {
   return title !== "" ? title : artifact.id;
 }
 
+function displayVersion(label: string | null | undefined) {
+  return label?.replace(/^Iteration\s+(\d+)$/i, "v$1") ?? label ?? "";
+}
+
+function artifactLabelsForKeys(
+  keys: string[],
+  artifacts: DrawerReviewArtifact[],
+): string[] {
+  return keys.map((key) => {
+    const match = artifacts.find(
+      (artifact) => artifactTitleStoreKey(artifact) === key,
+    );
+    return match?.label ?? key;
+  });
+}
+
 function toReviewTypeLabel(reviewType: string) {
   const normalized = reviewType.trim().toLowerCase();
   if (normalized === "compare") return "Compare";
@@ -76,7 +114,16 @@ export function SubmitFeedbackDrawer({
   review,
   reviewClosed = false,
   existingFeedbackDraft = null,
+  resubmitMode = false,
+  existingFeedbackId = null,
+  clearChangeRequests = false,
+  initialChangeRequests = [],
+  deferRevalidate = false,
+  onChangeRequestCreated,
   currentContributorId,
+  isReviewCreator = false,
+  defaultOnBehalfOf = null,
+  assignedReviewers = [],
   onClose,
   onSubmitSuccess,
 }: SubmitFeedbackDrawerProps) {
@@ -89,9 +136,9 @@ export function SubmitFeedbackDrawer({
   const [showChangeRequestModal, setShowChangeRequestModal] = useState(false);
   const [showFocusAccordion, setShowFocusAccordion] = useState(false);
   const focusMeasureRef = useRef<HTMLParagraphElement | null>(null);
-  const approveSearchRef = useRef<HTMLDivElement | null>(null);
-  const [approveSearch, setApproveSearch] = useState("");
-  const [approveMenuOpen, setApproveMenuOpen] = useState(false);
+  const approveSelectAnchorRef = useRef<HTMLDivElement | null>(null);
+  const [approveArtifactsMenuOpen, setApproveArtifactsMenuOpen] = useState(false);
+  const [selectedReviewerId, setSelectedReviewerId] = useState<string>("");
 
   const [selectedComparisonArtifactIds, setSelectedComparisonArtifactIds] =
     useState<string[]>([]);
@@ -100,6 +147,7 @@ export function SubmitFeedbackDrawer({
   const [selectedApproveArtifactIds, setSelectedApproveArtifactIds] = useState<string[]>(
     []
   );
+  const [approveComments, setApproveComments] = useState("");
   const [approveRequestedChange, setApproveRequestedChange] = useState(false);
 
   const [alignmentFeedbackText, setAlignmentFeedbackText] = useState("");
@@ -115,11 +163,62 @@ export function SubmitFeedbackDrawer({
   const isCritique = reviewType === "critique";
 
   const isEditing = Boolean(existingFeedbackDraft);
-  const footerPrimaryLabel = isEditing ? "Update feedback" : "Submit feedback";
-  const headerTitle = isEditing ? "Edit your feedback" : "Submit Feedback";
-  const dialogLabel = isEditing ? "Edit your feedback" : "Submit Feedback";
+  const footerPrimaryLabel =
+    resubmitMode && isAlign
+      ? "Re-submit"
+      : resubmitMode
+        ? "Update feedback"
+        : "Submit feedback";
+  const headerTitle = isApprove ? "Submit Feedback" : isEditing ? "Edit your feedback" : "Submit Feedback";
+  const dialogLabel = isApprove ? "Submit Feedback" : isEditing ? "Edit your feedback" : "Submit Feedback";
   const focusText = review.reviewFocus || "No review focus provided.";
   const displayFocusText = focusExpanded ? focusText : focusText;
+
+  const dedupedAssignedReviewers = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          assignedReviewers.map((reviewer) => [reviewer.id, reviewer] as const),
+        ).values(),
+      ),
+    [assignedReviewers],
+  );
+  const isAssignedReviewer = dedupedAssignedReviewers.some(
+    (reviewer) => reviewer.id === String(currentContributorId ?? "").trim(),
+  );
+  const effectiveReviewerId = isReviewCreator && !isAssignedReviewer
+    ? selectedReviewerId.trim()
+    : String(currentContributorId ?? "").trim();
+  const shouldShowOnBehalfSelect = isReviewCreator && !isAssignedReviewer;
+
+  useEffect(() => {
+    if (!clearChangeRequests) return;
+    setSavedChangeRequests([]);
+    setChangeRequestCount(0);
+    setSelectedApproveArtifactIds([]);
+  }, [clearChangeRequests]);
+
+  useEffect(() => {
+    if (!resubmitMode || !isAlign || initialChangeRequests.length === 0) return;
+    setSavedChangeRequests(initialChangeRequests);
+    setChangeRequestCount(initialChangeRequests.length);
+  }, [resubmitMode, isAlign, initialChangeRequests, review.id]);
+
+  useEffect(() => {
+    if (!isReviewCreator) {
+      setSelectedReviewerId("");
+      return;
+    }
+    const preferredReviewerId = String(defaultOnBehalfOf ?? "").trim();
+    if (
+      preferredReviewerId &&
+      dedupedAssignedReviewers.some((reviewer) => reviewer.id === preferredReviewerId)
+    ) {
+      setSelectedReviewerId(preferredReviewerId);
+      return;
+    }
+    setSelectedReviewerId("");
+  }, [isReviewCreator, defaultOnBehalfOf, dedupedAssignedReviewers]);
 
   useEffect(() => {
     function updateFocusOverflow() {
@@ -131,26 +230,6 @@ export function SubmitFeedbackDrawer({
     window.addEventListener("resize", updateFocusOverflow);
     return () => window.removeEventListener("resize", updateFocusOverflow);
   }, [focusText]);
-
-  useEffect(() => {
-    function onPointerDown(e: PointerEvent) {
-      if (!approveMenuOpen) return;
-      if (!approveSearchRef.current?.contains(e.target as Node)) {
-        setApproveMenuOpen(false);
-      }
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [approveMenuOpen]);
-
-  useEffect(() => {
-    if (!isAlign) return;
-    console.info("[submit-feedback-drawer] align-validation", {
-      alignmentFeedbackText,
-      trimmedLength: alignmentFeedbackText.trim().length,
-      changeRequestCount,
-    });
-  }, [isAlign, alignmentFeedbackText, changeRequestCount]);
 
   useEffect(() => {
     if (!existingFeedbackDraft) return;
@@ -169,6 +248,7 @@ export function SubmitFeedbackDrawer({
         .map((s) => s.trim())
         .filter(Boolean);
       if (keys.length > 0) setSelectedApproveArtifactIds(keys);
+      setApproveComments(text);
     } else if (isAlign) {
       setAlignmentFeedbackText(text);
     } else if (isCritique) {
@@ -178,17 +258,55 @@ export function SubmitFeedbackDrawer({
     }
   }, [existingFeedbackDraft, isCompare, isApprove, isAlign, isCritique, review.id]);
 
-  const filteredApproveArtifacts = review.artifacts.filter(
-    (artifact) =>
-      !selectedApproveArtifactIds.includes(artifactTitleStoreKey(artifact)) &&
-      artifact.label.toLowerCase().includes(approveSearch.trim().toLowerCase())
+  const changeRequestArtifactKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const entry of savedChangeRequests) {
+      for (const id of entry.artifactIds) {
+        keys.add(id);
+      }
+    }
+    return keys;
+  }, [savedChangeRequests]);
+
+  const approveArtifactMenuOptions = review.artifacts.filter((artifact) => {
+    const key = artifactTitleStoreKey(artifact);
+    return !changeRequestArtifactKeys.has(key);
+  });
+  const allArtifactsHaveChangeRequests =
+    review.artifacts.length > 0 && approveArtifactMenuOptions.length === 0;
+
+  const selectedApproveArtifactLabel = useMemo(() => {
+    const labels = review.artifacts
+      .filter((artifact) =>
+        selectedApproveArtifactIds.includes(artifactTitleStoreKey(artifact)),
+      )
+      .map((artifact) => artifact.label);
+    return labels.join(", ");
+  }, [review.artifacts, selectedApproveArtifactIds]);
+
+  const allArtifactsApproved = useMemo(() => {
+    if (review.artifacts.length === 0) return false;
+    return review.artifacts.every((artifact) =>
+      selectedApproveArtifactIds.includes(artifactTitleStoreKey(artifact)),
+    );
+  }, [review.artifacts, selectedApproveArtifactIds]);
+
+  const changeRequestArtifacts = useMemo(
+    () =>
+      review.artifacts.filter(
+        (artifact) =>
+          !selectedApproveArtifactIds.includes(artifactTitleStoreKey(artifact)),
+      ),
+    [review.artifacts, selectedApproveArtifactIds],
   );
   const mappedSavedChanges = savedChangeRequests.map((entry, index) => ({
     id: `saved-change-${index}`,
     description:
       entry.changesNeeded.trim() || entry.artifactIds.join(", ") || "Change request",
+    artifactLabels: artifactLabelsForKeys(entry.artifactIds, review.artifacts),
   }));
-  const hasLoggedChangeRequests = changeRequestCount > 0;
+  const hasLoggedChangeRequests =
+    changeRequestCount > 0 || savedChangeRequests.length > 0;
 
   const submitEnabled = useMemo(() => {
     if (isCompare) {
@@ -221,10 +339,41 @@ export function SubmitFeedbackDrawer({
     selectedApproveArtifactIds,
     selectedComparisonArtifactIds,
   ]);
+  const alignResubmitBaseline = useMemo(() => {
+    if (!resubmitMode || !isAlign) return null;
+    return JSON.stringify({
+      text: (existingFeedbackDraft?.feedbackText ?? "").trim(),
+      requests: initialChangeRequests.map((entry) => ({
+        batchId: entry.batchId,
+        artifactIds: [...entry.artifactIds].sort().join(","),
+        changesNeeded: entry.changesNeeded.trim(),
+      })),
+    });
+  }, [resubmitMode, isAlign, existingFeedbackDraft, initialChangeRequests]);
+
+  const alignResubmitDirty = useMemo(() => {
+    if (!alignResubmitBaseline) return true;
+    const current = JSON.stringify({
+      text: alignmentFeedbackText.trim(),
+      requests: savedChangeRequests.map((entry) => ({
+        batchId: entry.batchId,
+        artifactIds: [...entry.artifactIds].sort().join(","),
+        changesNeeded: entry.changesNeeded.trim(),
+      })),
+    });
+    return current !== alignResubmitBaseline;
+  }, [
+    alignResubmitBaseline,
+    alignmentFeedbackText,
+    savedChangeRequests,
+  ]);
+
   const submitDisabled =
     reviewClosed ||
     loading ||
     !currentContributorId ||
+    !effectiveReviewerId ||
+    (resubmitMode && isAlign && !alignResubmitDirty) ||
     (isAlign
       ? alignmentFeedbackText.trim().length === 0 && changeRequestCount === 0
       : !submitEnabled);
@@ -233,6 +382,11 @@ export function SubmitFeedbackDrawer({
     if (reviewClosed) return "This review is closed";
     if (loading) return "Please wait…";
     if (!currentContributorId) return "Sign in to continue as a reviewer";
+    if (!effectiveReviewerId) {
+      return isReviewCreator
+        ? "Select who you're submitting on behalf of"
+        : "Sign in to continue as a reviewer";
+    }
     if (isCompare) {
       const parts: string[] = [];
       if (selectedComparisonArtifactIds.length === 0) parts.push("Selected option");
@@ -242,7 +396,7 @@ export function SubmitFeedbackDrawer({
     }
     if (isApprove) {
       if (selectedApproveArtifactIds.length === 0 && !hasLoggedChangeRequests) {
-        return "Select artifacts or add a change request";
+        return "Select at least one artifact to approve, or request a change";
       }
       return "Complete required fields to proceed";
     }
@@ -272,6 +426,8 @@ export function SubmitFeedbackDrawer({
     alignmentFeedbackText,
     changeRequestCount,
     critiqueWhere,
+    effectiveReviewerId,
+    isReviewCreator,
   ]);
 
   async function handleSubmit() {
@@ -289,6 +445,8 @@ export function SubmitFeedbackDrawer({
           : [];
       const feedbackText = isCompare
         ? comparisonFeedbackText
+        : isApprove
+          ? approveComments
         : isAlign
           ? alignmentFeedbackText
           : isCritique
@@ -300,11 +458,17 @@ export function SubmitFeedbackDrawer({
 
       const result = await submitReviewerFeedbackAction({
         reviewId: review.id,
-        reviewerId: currentContributorId,
+        reviewerId: effectiveReviewerId,
         feedbackType: reviewType,
         selectedArtifactIds,
         feedbackText,
         feedbackLocation,
+        changeRequestBatchIds:
+          isApprove || isAlign
+            ? [...new Set(savedChangeRequests.map((entry) => entry.batchId).filter(Boolean))]
+            : [],
+        resubmitMode: resubmitMode && isAlign,
+        existingFeedbackId: resubmitMode && isAlign ? existingFeedbackId ?? undefined : undefined,
       });
       if (result.error) {
         setInlineError(result.error);
@@ -320,11 +484,9 @@ export function SubmitFeedbackDrawer({
 
   return (
     <>
-      <div
-        aria-hidden="true"
-        onClick={onClose}
-        style={{ position: "fixed", inset: 0, zIndex: 399, background: "transparent" }}
-      />
+      {/* No full-viewport backdrop: the drawer is a right-side fixed panel so the
+          main content (artifact list) remains independently scrollable. Close
+          via the header X or Cancel button. */}
       <aside
         role="dialog"
         aria-modal="true"
@@ -440,24 +602,51 @@ export function SubmitFeedbackDrawer({
               color: "#6b5e55",
               lineHeight: 1.5,
               letterSpacing: "0.26px",
-              display: "-webkit-box",
-              WebkitLineClamp: focusExpanded ? "unset" : 4,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
+              ...(showFocusAccordion && !focusExpanded
+                ? { maxHeight: 80, overflow: "hidden" }
+                : {}),
             }}
           >
             {displayFocusText}
           </p>
           {showFocusAccordion ? (
-            <ShowAccordion
-              state={focusExpanded ? "less" : "more"}
-              onClick={() => setFocusExpanded((prev) => !prev)}
-            />
+            <div className="flex w-full items-center gap-4 py-1">
+              <span className="h-px min-w-0 flex-1 bg-[#e4ddd3]" aria-hidden="true" />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                icon="leading"
+                iconName={focusExpanded ? "chevron-up" : "chevron-down"}
+                label={focusExpanded ? "Show less" : "Show more"}
+                onClick={() => setFocusExpanded((prev) => !prev)}
+              />
+              <span className="h-px min-w-0 flex-1 bg-[#e4ddd3]" aria-hidden="true" />
+            </div>
           ) : null}
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "20px 24px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {shouldShowOnBehalfSelect ? (
+              <Select
+                label="Submitting on behalf of"
+                size="sm"
+                placeholder="Select a reviewer"
+                value={effectiveReviewerId || undefined}
+                onChange={setSelectedReviewerId}
+                options={dedupedAssignedReviewers.map((reviewer) => ({
+                  value: reviewer.id,
+                  label: reviewer.name,
+                }))}
+                errorText={
+                  feedbackSubmitAttempted && !effectiveReviewerId
+                    ? "Select a reviewer to continue"
+                    : undefined
+                }
+              />
+            ) : null}
+
             {isCompare && (
               <>
                 <p style={{ margin: 0, fontSize: 13, fontWeight: 500, color: "#2e1c1c" }}>
@@ -506,7 +695,11 @@ export function SubmitFeedbackDrawer({
                           >
                             {artifact.label}
                           </span>
-                          <Tag label={artifact.iteration} variant="default" size="sm" />
+                          <Tag
+                            label={displayVersion(artifact.iteration)}
+                            variant="default"
+                            size="sm"
+                          />
                         </div>
                       );
                     })()
@@ -539,12 +732,11 @@ export function SubmitFeedbackDrawer({
             )}
 
             {isApprove && (
-              <>
-                <div ref={approveSearchRef} style={{ position: "relative" }}>
+              <div className="flex w-full flex-col gap-4">
+                <div className="flex w-full flex-col gap-1.5">
                   <label
                     style={{
                       display: "block",
-                      marginBottom: 6,
                       fontSize: 13,
                       fontWeight: 500,
                       color: "#2e1c1c",
@@ -552,210 +744,236 @@ export function SubmitFeedbackDrawer({
                   >
                     Select which artifacts are approved*
                   </label>
-                  <div style={{ position: "relative" }}>
-                    <input
-                      type="text"
-                      placeholder="Find artifacts"
-                      value={approveSearch}
-                      onChange={(e) => {
-                        setApproveSearch(e.target.value);
-                        setApproveMenuOpen(true);
-                      }}
-                      onFocus={() => setApproveMenuOpen(true)}
-                      style={{
-                        height: 32,
-                        width: "100%",
-                        border: "1px solid #6b1e2e",
-                        borderRadius: 6,
-                        padding: "0 30px 0 8px",
-                        fontSize: 13,
-                        fontFamily: "'Plus Jakarta Sans', sans-serif",
-                        color: "#2e1c1c",
-                        outline: "none",
-                        boxSizing: "border-box",
-                      }}
-                    />
-                    <span
-                      style={{
-                        position: "absolute",
-                        right: 8,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        color: "#998c82",
-                        display: "inline-flex",
-                        alignItems: "center",
-                      }}
+                  <div ref={approveSelectAnchorRef} className="relative w-full">
+                    {allArtifactsHaveChangeRequests ? (
+                      <Tooltip label="You've requested changes on all artifacts.">
+                        <span className="inline-flex w-full">
+                          <SelectField
+                            label=""
+                            type="single"
+                            size="sm"
+                            placeholder="Select an option"
+                            selectedLabel={
+                              selectedApproveArtifactIds.length > 0
+                                ? undefined
+                                : selectedApproveArtifactLabel || undefined
+                            }
+                            isOpen={approveArtifactsMenuOpen}
+                            onOpen={() => setApproveArtifactsMenuOpen((prev) => !prev)}
+                            aria-controls="submit-feedback-approve-artifacts-menu"
+                            className="!gap-0 w-full [&>label]:hidden"
+                            disabled
+                            error={
+                              feedbackSubmitAttempted &&
+                              selectedApproveArtifactIds.length === 0 &&
+                              !hasLoggedChangeRequests
+                            }
+                            errorMessage="Select at least one approved artifact or add a change request"
+                          />
+                        </span>
+                      </Tooltip>
+                    ) : (
+                      <SelectField
+                        label=""
+                        type="single"
+                        size="sm"
+                        placeholder="Select an option"
+                        selectedLabel={
+                          selectedApproveArtifactIds.length > 0
+                            ? undefined
+                            : selectedApproveArtifactLabel || undefined
+                        }
+                        isOpen={approveArtifactsMenuOpen}
+                        onOpen={() => setApproveArtifactsMenuOpen((prev) => !prev)}
+                        aria-controls="submit-feedback-approve-artifacts-menu"
+                        className="!gap-0 w-full [&>label]:hidden"
+                        error={
+                          feedbackSubmitAttempted &&
+                          selectedApproveArtifactIds.length === 0 &&
+                          !hasLoggedChangeRequests
+                        }
+                        errorMessage="Select at least one approved artifact or add a change request"
+                      />
+                    )}
+                    <Menu
+                      id="submit-feedback-approve-artifacts-menu"
+                      open={!allArtifactsHaveChangeRequests && approveArtifactsMenuOpen}
+                      onClose={() => setApproveArtifactsMenuOpen(false)}
+                      anchorRef={approveSelectAnchorRef}
+                      align="left"
+                      type="multi-select"
                     >
-                      <Icon name="search" size={14} />
-                    </span>
-                  </div>
-                  {approveMenuOpen && filteredApproveArtifacts.length > 0 ? (
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: "calc(100% + 4px)",
-                        left: 0,
-                        right: 0,
-                        maxHeight: 180,
-                        overflowY: "auto",
-                        border: "1px solid #e4ddd3",
-                        borderRadius: 8,
-                        background: "#ffffff",
-                        boxShadow: "0px 8px 16px rgba(41,33,28,0.15)",
-                        zIndex: 5,
-                      }}
-                    >
-                      {filteredApproveArtifacts.map((artifact) => (
-                        <button
-                          key={artifact.id}
-                          type="button"
-                          onClick={() => {
-                            const artifactIdentifier = artifactTitleStoreKey(artifact);
-                            setSelectedApproveArtifactIds((prev) =>
-                              prev.includes(artifactIdentifier)
-                                ? prev
-                                : [...prev, artifactIdentifier]
-                            );
-                            setApproveSearch("");
-                          }}
-                          style={{
-                            width: "100%",
-                            border: "none",
-                            background: "transparent",
-                            textAlign: "left",
-                            padding: "8px 12px",
-                            fontSize: 13,
-                            color: "#2e1c1c",
-                            cursor: "pointer",
-                          }}
-                        >
-                          {artifact.label}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {selectedApproveArtifactIds.length > 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
-                      {review.artifacts
-                        .filter((artifact) =>
-                          selectedApproveArtifactIds.includes(artifactTitleStoreKey(artifact))
-                        )
-                        .map((artifact) => (
-                          <div
-                            key={artifact.id}
-                            style={{
-                              height: 32,
-                              padding: "0 8px",
-                              borderRadius: 4,
-                              border: "1px solid #e4ddd3",
-                              background: "#f3efe9",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
+                      <li role="none" className="list-none px-3 py-2">
+                        <label className="flex cursor-pointer items-center gap-2">
+                          <Checkbox
+                            label=""
+                            checked={
+                              approveArtifactMenuOptions.length > 0 &&
+                              approveArtifactMenuOptions.every((artifact) =>
+                                selectedApproveArtifactIds.includes(
+                                  artifactTitleStoreKey(artifact),
+                                ),
+                              )
+                            }
+                            onChange={(checked) => {
+                              const allKeys = approveArtifactMenuOptions.map((artifact) =>
+                                artifactTitleStoreKey(artifact),
+                              );
+                              setSelectedApproveArtifactIds(checked ? allKeys : []);
                             }}
-                          >
-                            <span style={{ fontSize: 13, color: "#6b5e55", fontWeight: 500 }}>
-                              {artifact.label}
-                            </span>
-                            <Tag label={artifact.iteration} variant="default" size="sm" />
-                            <button
-                              type="button"
-                              aria-label={`Remove ${artifact.label}`}
-                              onClick={() =>
-                                setSelectedApproveArtifactIds((prev) =>
-                                  prev.filter((id) => id !== artifactTitleStoreKey(artifact))
-                                )
-                              }
-                              style={{
-                                marginLeft: "auto",
-                                border: "none",
-                                background: "transparent",
-                                padding: 0,
-                                width: 16,
-                                height: 16,
-                                color: "#998c82",
-                                display: "inline-flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                cursor: "pointer",
-                              }}
-                            >
-                              <Icon name="close" size={16} />
-                            </button>
-                          </div>
-                        ))}
-                    </div>
+                          />
+                          <span className="text-[13px] text-[#2e1c1c]">All</span>
+                        </label>
+                      </li>
+                      <li role="none" className="list-none px-3 py-1">
+                        <Divider className="w-full" />
+                      </li>
+                      {approveArtifactMenuOptions.map((artifact) => {
+                        const artifactIdentifier = artifactTitleStoreKey(artifact);
+                        const isSelected =
+                          selectedApproveArtifactIds.includes(artifactIdentifier);
+                        return (
+                          <li key={artifact.id} role="none" className="list-none px-3 py-2">
+                            <label className="flex cursor-pointer items-center gap-2">
+                              <Checkbox
+                                label=""
+                                checked={isSelected}
+                                onChange={(checked) => {
+                                  setSelectedApproveArtifactIds((prev) =>
+                                    checked
+                                      ? prev.includes(artifactIdentifier)
+                                        ? prev
+                                        : [...prev, artifactIdentifier]
+                                      : prev.filter((id) => id !== artifactIdentifier),
+                                  );
+                                  if (checked) {
+                                    setSavedChangeRequests((prev) => {
+                                      const next = prev
+                                        .map((entry) => ({
+                                          ...entry,
+                                          artifactIds: entry.artifactIds.filter(
+                                            (id) => id !== artifactIdentifier,
+                                          ),
+                                        }))
+                                        .filter((entry) => entry.artifactIds.length > 0);
+                                      setChangeRequestCount(next.length);
+                                      return next;
+                                    });
+                                  }
+                                }}
+                              />
+                              <span className="min-w-0 flex-1 text-[13px] text-[#2e1c1c]">
+                                {artifact.label}
+                              </span>
+                              <Tag
+                                label={displayVersion(artifact.iteration)}
+                                variant="default"
+                                size="sm"
+                              />
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </Menu>
+                  </div>
+                  {feedbackSubmitAttempted &&
+                  selectedApproveArtifactIds.length === 0 &&
+                  !hasLoggedChangeRequests ? (
+                    <p style={{ margin: 0, fontSize: 12, color: "#8b2020" }} role="alert">
+                      Select at least one artifact to approve, or request a change
+                    </p>
                   ) : null}
                 </div>
-                {feedbackSubmitAttempted &&
-                selectedApproveArtifactIds.length === 0 &&
-                !hasLoggedChangeRequests ? (
-                  <p style={{ margin: 0, fontSize: 12, color: "#8b2020" }} role="alert">
-                    Select at least one approved artifact or add a change request
-                  </p>
+
+                {selectedApproveArtifactIds.length > 0 ? (
+                  <div className="flex w-full flex-col gap-2">
+                    {review.artifacts
+                      .filter((artifact) =>
+                        selectedApproveArtifactIds.includes(artifactTitleStoreKey(artifact)),
+                      )
+                      .map((artifact) => (
+                        <div
+                          key={artifact.id}
+                          className="flex h-[52px] w-full items-center gap-2 rounded-[8px] border border-solid border-[#c9c0b4] bg-[#fff6d7] px-3"
+                        >
+                          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#6b1e2e]">
+                            {artifact.label}
+                          </span>
+                          <Tag
+                            label={displayVersion(artifact.iteration)}
+                            variant="brand"
+                            size="sm"
+                          />
+                          <button
+                            type="button"
+                            aria-label={`Remove ${artifact.label}`}
+                            className="inline-flex shrink-0 items-center justify-center border-0 bg-transparent p-0 text-[#6b1e2e] cursor-pointer"
+                            onClick={() =>
+                              setSelectedApproveArtifactIds((prev) =>
+                                prev.filter((id) => id !== artifactTitleStoreKey(artifact)),
+                              )
+                            }
+                          >
+                            <Icon name="close" size={16} />
+                          </button>
+                        </div>
+                      ))}
+                  </div>
                 ) : null}
-                {!hasLoggedChangeRequests ? (
-                  <>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ height: 1, background: "#e4ddd3", flex: 1 }} />
-                      <span style={{ fontSize: 12, color: "#998c82" }}>OR</span>
-                      <div style={{ height: 1, background: "#e4ddd3", flex: 1 }} />
-                    </div>
-                    <Button
-                      label="Request a change"
-                      variant="accent"
+
+                {selectedApproveArtifactIds.length > 0 ? (
+                  <div className="flex w-full flex-col gap-[6px]">
+                    <p className="m-0 text-[13px] font-medium tracking-[0.26px] text-[var(--text/primary,#2e1c1c)]">
+                      Any comments to add to these approvals?
+                    </p>
+                    <Textarea
+                      label=""
+                      showLabel={false}
                       size="md"
-                      className="w-full"
-                      onClick={() => {
-                        setApproveRequestedChange(true);
-                        setShowChangeRequestModal(true);
-                      }}
+                      placeholder="Add your comments..."
+                      value={approveComments}
+                      onChange={(event) => setApproveComments(event.target.value)}
+                      fieldShellOuterClassName="[&_textarea]:min-h-[100px]"
                     />
-                  </>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
-                    <label style={{ fontSize: 13, fontWeight: 500, color: "#2e1c1c" }}>
-                      Changes
-                    </label>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
+                  </div>
+                ) : null}
+
+                <div className="flex w-full items-center gap-2">
+                  <div className="h-px min-w-0 flex-1 bg-[#e4ddd3]" />
+                  <span className="shrink-0 text-[12px] text-[#998c82]">OR</span>
+                  <div className="h-px min-w-0 flex-1 bg-[#e4ddd3]" />
+                </div>
+
+                {hasLoggedChangeRequests ? (
+                  <div className="flex w-full flex-col gap-2 items-start">
+                    <label className="text-[13px] font-medium text-[#2e1c1c]">Changes</label>
+                    <div className="flex w-full flex-col gap-1">
                       {mappedSavedChanges.map((problem, index) => (
                         <div
                           key={problem.id}
-                          style={{
-                            width: "100%",
-                            height: 40,
-                            display: "flex",
-                            alignItems: "center",
-                            background: "#f3efe9",
-                            border: "1px solid #e4ddd3",
-                            borderRadius: 4,
-                            padding: "0 10px 0 12px",
-                            gap: 4,
-                          }}
+                          className="flex w-full min-h-[40px] items-center gap-2 rounded-[4px] border border-[#e4ddd3] bg-[#f3efe9] px-3 py-2"
                         >
-                          <span
-                            style={{
-                              color: "#6b5e55",
-                              fontSize: 13,
-                              fontWeight: 500,
-                              flexShrink: 0,
-                              marginRight: 8,
-                            }}
-                          >
+                          <span className="shrink-0 text-[13px] font-medium text-[#6b5e55]">
                             {index + 1}.
                           </span>
-                          <span
-                            style={{
-                              fontSize: 13,
-                              fontWeight: 500,
-                              color: "#2e1c1c",
-                              textAlign: "left",
-                              flex: 1,
-                              minWidth: 0,
-                            }}
-                          >
+                          <span className="min-w-0 flex-1 text-[13px] font-medium text-[#2e1c1c]">
                             {problem.description}
                           </span>
+                          <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-1">
+                            <Tag
+                              label={`Change ${index + 1}`}
+                              variant="butter"
+                              size="sm"
+                            />
+                            {problem.artifactLabels.map((label) => (
+                              <Tag
+                                key={`${problem.id}-${label}`}
+                                label={label}
+                                variant="neutral"
+                                size="sm"
+                              />
+                            ))}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -768,8 +986,33 @@ export function SubmitFeedbackDrawer({
                       onClick={() => setShowChangeRequestModal(true)}
                     />
                   </div>
+                ) : (
+                  <Tooltip
+                    label={
+                      allArtifactsApproved
+                        ? "You have already approved all artifacts"
+                        : "Request changes on artifacts you have not approved"
+                    }
+                  >
+                    <span className="inline-flex w-full">
+                      <Button
+                        label="Request a change"
+                        variant="accent"
+                        size="md"
+                        fullWidth
+                        className="w-full"
+                        disabled={allArtifactsApproved}
+                        aria-disabled={allArtifactsApproved}
+                        onClick={() => {
+                          if (allArtifactsApproved) return;
+                          setApproveRequestedChange(true);
+                          setShowChangeRequestModal(true);
+                        }}
+                      />
+                    </span>
+                  </Tooltip>
                 )}
-              </>
+              </div>
             )}
 
             {isAlign && (
@@ -807,6 +1050,7 @@ export function SubmitFeedbackDrawer({
                       label="Request a change"
                       variant="accent"
                       size="md"
+                      fullWidth
                       className="w-full"
                       onClick={() => {
                         setAlignRequestedChange(true);
@@ -823,41 +1067,29 @@ export function SubmitFeedbackDrawer({
                       {mappedSavedChanges.map((problem, index) => (
                         <div
                           key={problem.id}
-                          style={{
-                            width: "100%",
-                            height: 40,
-                            display: "flex",
-                            alignItems: "center",
-                            background: "#f3efe9",
-                            border: "1px solid #e4ddd3",
-                            borderRadius: 4,
-                            padding: "0 10px 0 12px",
-                            gap: 4,
-                          }}
+                          className="flex w-full min-h-[40px] items-center gap-2 rounded-[4px] border border-[#e4ddd3] bg-[#f3efe9] px-3 py-2"
                         >
-                          <span
-                            style={{
-                              color: "#6b5e55",
-                              fontSize: 13,
-                              fontWeight: 500,
-                              flexShrink: 0,
-                              marginRight: 8,
-                            }}
-                          >
+                          <span className="shrink-0 text-[13px] font-medium text-[#6b5e55]">
                             {index + 1}.
                           </span>
-                          <span
-                            style={{
-                              fontSize: 13,
-                              fontWeight: 500,
-                              color: "#2e1c1c",
-                              textAlign: "left",
-                              flex: 1,
-                              minWidth: 0,
-                            }}
-                          >
+                          <span className="min-w-0 flex-1 text-[13px] font-medium text-[#2e1c1c]">
                             {problem.description}
                           </span>
+                          <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-1">
+                            <Tag
+                              label={`Change ${index + 1}`}
+                              variant="butter"
+                              size="sm"
+                            />
+                            {problem.artifactLabels.map((label) => (
+                              <Tag
+                                key={`${problem.id}-${label}`}
+                                label={label}
+                                variant="neutral"
+                                size="sm"
+                              />
+                            ))}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -938,11 +1170,7 @@ export function SubmitFeedbackDrawer({
             {!submitDisabled ? (
               <Button
                 label={
-                  loading
-                    ? isEditing
-                      ? "Updating…"
-                      : "Submitting…"
-                    : footerPrimaryLabel
+                  loading ? "Submitting…" : footerPrimaryLabel
                 }
                 variant="primary"
                 size="sm"
@@ -955,11 +1183,7 @@ export function SubmitFeedbackDrawer({
                 <span style={{ display: "inline-flex" }}>
                   <Button
                     label={
-                      loading
-                        ? isEditing
-                          ? "Updating…"
-                          : "Submitting…"
-                        : footerPrimaryLabel
+                      loading ? "Submitting…" : footerPrimaryLabel
                     }
                     variant="primary"
                     size="sm"
@@ -972,16 +1196,24 @@ export function SubmitFeedbackDrawer({
           </div>
         </div>
       </aside>
-      {showChangeRequestModal && currentContributorId && (
+      {showChangeRequestModal && currentContributorId && effectiveReviewerId && (
         <ChangeRequestModal
           reviewId={review.id}
-          reviewerContributorId={currentContributorId}
-          artifacts={review.artifacts}
+          reviewerContributorId={effectiveReviewerId}
+          artifacts={changeRequestArtifacts}
+          deferRevalidate={deferRevalidate}
           onClose={(savedEntries) => {
             setShowChangeRequestModal(false);
             if (!savedEntries?.length) return;
+            const addedKeys = new Set(
+              savedEntries.flatMap((entry) => entry.artifactIds),
+            );
+            setSelectedApproveArtifactIds((prev) =>
+              prev.filter((id) => !addedKeys.has(id)),
+            );
             setSavedChangeRequests((prev) => [...prev, ...savedEntries]);
             setChangeRequestCount((prev) => prev + savedEntries.length);
+            onChangeRequestCreated?.();
           }}
         />
       )}

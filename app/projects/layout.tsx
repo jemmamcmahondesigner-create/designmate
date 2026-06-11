@@ -22,10 +22,11 @@ export default async function ProjectsLayout({
     <NewReviewDrawerProvider allProjects={allProjects}>
       <CreateProjectModalProvider>
         <div
-          className="flex min-h-screen min-w-0 flex-1"
+          className="flex h-full min-h-0 min-w-0 flex-1"
           style={{
             display: "flex",
-            minHeight: "100vh",
+            height: "100%",
+            minHeight: 0,
             width: "100%",
             maxWidth: "100%",
             minWidth: 0,

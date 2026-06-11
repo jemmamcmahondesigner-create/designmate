@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button,
   Checkbox,
+  Divider,
   Icon,
   Menu,
   SelectField,
@@ -21,6 +22,8 @@ import {
 export type DecisionChangeRequestRow = {
   artifactIds: string[];
   changesNeeded: string;
+  /** Pre-loaded from an approved direction — not removable in edit mode. */
+  isExisting?: boolean;
 };
 
 interface FinalDecisionDrawerProps {
@@ -36,10 +39,20 @@ interface FinalDecisionDrawerProps {
   }>;
   onDecisionSubmitted: () => void;
   currentContributorId: string | null;
+  /** Pre-fill when changing an approved compare direction. */
+  initialComments?: string;
+  initialSelectedIds?: string[];
+  /** Existing change requests on the approved direction (edit / change direction). */
+  initialChangeRequests?: DecisionChangeRequestRow[];
+  changeDirection?: boolean;
 }
 
 function mapDecisionStatus(reviewType: FinalDecisionDrawerProps['reviewType']): DecisionStatus {
   return reviewType === 'approve' ? 'approved' : 'changes-needed';
+}
+
+function displayVersion(label: string | null | undefined) {
+  return label?.replace(/^Iteration\s+(\d+)$/i, 'v$1') ?? label ?? '';
 }
 
 export function FinalDecisionDrawer({
@@ -51,10 +64,14 @@ export function FinalDecisionDrawer({
   artifacts,
   onDecisionSubmitted,
   currentContributorId,
+  initialComments = '',
+  initialSelectedIds = [],
+  initialChangeRequests = [],
+  changeDirection = false,
 }: FinalDecisionDrawerProps) {
-  const [expanded, setExpanded] = useState(false);
-  const [focusOverflows, setFocusOverflows] = useState(false);
-  const focusRef = useRef<HTMLParagraphElement | null>(null);
+  const [focusExpanded, setFocusExpanded] = useState(false);
+  const [showFocusAccordion, setShowFocusAccordion] = useState(false);
+  const focusMeasureRef = useRef<HTMLParagraphElement | null>(null);
   const [comments, setComments] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -66,11 +83,13 @@ export function FinalDecisionDrawer({
   >([]);
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const approveSelectAnchorRef = useRef<HTMLDivElement | null>(null);
+  const wasOpenRef = useRef(false);
 
   useEffect(() => {
     if (!open) {
-      setExpanded(false);
-      setFocusOverflows(false);
+      wasOpenRef.current = false;
+      setFocusExpanded(false);
+      setShowFocusAccordion(false);
       setComments('');
       setSelectedIds([]);
       setError(null);
@@ -78,25 +97,32 @@ export function FinalDecisionDrawer({
       setShowChangeRequestModal(false);
       setDecisionChangeRequestRows([]);
       setSubmitAttempted(false);
+      return;
     }
-  }, [open]);
+    if (!wasOpenRef.current) {
+      wasOpenRef.current = true;
+      setComments(initialComments);
+      setSelectedIds(initialSelectedIds);
+      setDecisionChangeRequestRows(
+        initialChangeRequests.map((row) => ({
+          artifactIds: [...row.artifactIds],
+          changesNeeded: row.changesNeeded,
+          isExisting: true,
+        })),
+      );
+    }
+  }, [open, initialComments, initialSelectedIds, initialChangeRequests]);
 
-  useLayoutEffect(() => {
-    if (!open || !reviewFocus.trim()) {
-      setFocusOverflows(false);
-      return;
+  useEffect(() => {
+    function updateFocusOverflow() {
+      const node = focusMeasureRef.current;
+      if (!node) return;
+      setShowFocusAccordion(node.scrollHeight > 80);
     }
-    const el = focusRef.current;
-    if (!el) {
-      setFocusOverflows(false);
-      return;
-    }
-    if (expanded) {
-      setFocusOverflows(false);
-      return;
-    }
-    setFocusOverflows(el.scrollHeight > el.clientHeight + 1);
-  }, [open, reviewFocus, expanded]);
+    updateFocusOverflow();
+    window.addEventListener('resize', updateFocusOverflow);
+    return () => window.removeEventListener('resize', updateFocusOverflow);
+  }, [reviewFocus, open]);
 
   const reviewTypeLabel =
     reviewType === 'approve'
@@ -108,7 +134,7 @@ export function FinalDecisionDrawer({
   const canSubmit = useMemo(() => {
     const hasComments = comments.trim().length > 0;
     if (reviewType === 'approve') return selectedIds.length > 0 && hasComments;
-    if (reviewType === 'compare') return selectedIds.length === 1 && hasComments;
+    if (reviewType === 'compare') return selectedIds.length > 0 && hasComments;
     return hasComments;
   }, [comments, reviewType, selectedIds]);
 
@@ -118,8 +144,8 @@ export function FinalDecisionDrawer({
     if (reviewType === 'approve' && selectedIds.length === 0) {
       parts.push('Select at least one artifact');
     }
-    if (reviewType === 'compare' && selectedIds.length !== 1) {
-      parts.push('Select exactly one preferred option');
+    if (reviewType === 'compare' && selectedIds.length === 0) {
+      parts.push('Select at least one preferred option');
     }
     if (!hasComments) parts.push('Final comments');
     if (parts.length === 0) return 'Complete required fields to proceed';
@@ -145,28 +171,52 @@ export function FinalDecisionDrawer({
     [artifacts],
   );
 
-  function labelForArtifactIds(ids: string[]) {
-    return ids
-      .map((id) => artifacts.find((a) => a.id === id)?.title ?? id)
-      .filter(Boolean)
-      .join(', ');
+  function artifactLabelsForKeys(keys: string[]) {
+    return keys.map((key) => {
+      const trimmed = key.trim();
+      const match = artifacts.find(
+        (artifact) =>
+          artifact.id === trimmed ||
+          (artifact.title?.trim() ?? '') === trimmed ||
+          artifact.title === trimmed,
+      );
+      return match?.title?.trim() || match?.title || trimmed;
+    });
   }
+
+  function labelForArtifactIds(ids: string[]) {
+    return artifactLabelsForKeys(ids).filter(Boolean).join(', ');
+  }
+
+  const isEditMode = changeDirection || initialChangeRequests.length > 0;
+  const submitLabel = isEditMode ? 'Resubmit Decision' : 'Submit Decision';
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/15" onClick={onClose} />
+    <>
+      {/* No full-viewport backdrop — fixed right panel so main content stays scrollable. */}
       <aside
-        className="absolute right-0 top-0 flex h-full w-[480px] flex-col bg-white"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Final Decision"
+        className="flex h-full flex-col bg-white"
         style={{
+          position: 'fixed',
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: 480,
+          zIndex: 50,
           boxShadow:
             '-2px 0px 2px rgba(41,33,28,0.08), -8px 0px 12px rgba(41,33,28,0.18)',
         }}
       >
         <div className="flex items-center justify-between border-b border-[#ede8e0] px-6 py-3">
           <div className="flex items-center gap-2">
-            <h2 className="m-0 text-[18px] font-semibold text-[#6b1e2e]">Final Decision</h2>
+            <h2 className="m-0 text-[18px] font-semibold text-[#6b1e2e]">
+              {changeDirection ? 'Change Direction' : 'Final Decision'}
+            </h2>
             <StatusPill color="mushroom" appearance="filled" label={reviewTypeLabel} size="sm" />
           </div>
           <Button
@@ -187,66 +237,71 @@ export function FinalDecisionDrawer({
             Review Focus
           </p>
           {!reviewFocus.trim() ? (
-            <div
-              className="flex items-center justify-center"
+            <p
+              className="m-0 text-left text-[13px] leading-snug"
               style={{
-                minHeight: 60,
-                borderRadius: 'var(--radius/sm, 6px)',
-                backgroundColor: 'var(--surface/card/recessed, #f3efe9)',
-                border: '1px solid var(--border/subtle, #ede8e0)',
+                color: 'var(--text/secondary, #6b5e55)',
+                fontFamily: "'Plus Jakarta Sans', sans-serif",
               }}
             >
-              <p
-                className="m-0 text-center text-[13px] leading-snug"
-                style={{
-                  color: 'var(--text/secondary, #6b5e55)',
-                  fontFamily: "'Plus Jakarta Sans', sans-serif",
-                }}
-              >
-                No details have been provided for this review.
-              </p>
-            </div>
+              No review focus provided.
+            </p>
           ) : (
             <>
               <p
-                ref={focusRef}
-                className="m-0 text-[13px] text-[#6b5e55]"
-                style={
-                  expanded
-                    ? undefined
-                    : {
-                        maxHeight: 102,
-                        overflow: 'hidden',
-                        fontFamily: "'Plus Jakarta Sans', sans-serif",
-                      }
-                }
+                ref={focusMeasureRef}
+                aria-hidden="true"
+                className="m-0"
+                style={{
+                  position: 'absolute',
+                  visibility: 'hidden',
+                  pointerEvents: 'none',
+                  zIndex: -1,
+                  fontFamily: "'Plus Jakarta Sans', sans-serif",
+                  fontSize: 13,
+                  fontWeight: 400,
+                  color: '#6b5e55',
+                  lineHeight: 1.5,
+                  letterSpacing: '0.26px',
+                  width: 'calc(100% - 48px)',
+                }}
               >
                 {reviewFocus}
               </p>
-              {focusOverflows ? (
-                <button
-                  type="button"
-                  className="inline-flex w-fit items-center gap-1 border-none bg-transparent p-0 text-[13px] text-[#6b5e55]"
-                  onClick={() => setExpanded((prev) => !prev)}
-                >
-                  <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={14} />
-                  {expanded ? 'Show less' : 'Show more'}
-                </button>
+              <p
+                className="m-0"
+                style={{
+                  margin: 0,
+                  fontFamily: "'Plus Jakarta Sans', sans-serif",
+                  fontSize: 13,
+                  fontWeight: 400,
+                  color: '#6b5e55',
+                  lineHeight: 1.5,
+                  letterSpacing: '0.26px',
+                  ...(showFocusAccordion && !focusExpanded
+                    ? { maxHeight: 80, overflow: 'hidden' }
+                    : {}),
+                }}
+              >
+                {reviewFocus}
+              </p>
+              {showFocusAccordion ? (
+                <div className="flex w-full items-center gap-4 py-1">
+                  <span className="h-px min-w-0 flex-1 bg-[#e4ddd3]" aria-hidden="true" />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    icon="leading"
+                    iconName={focusExpanded ? 'chevron-up' : 'chevron-down'}
+                    label={focusExpanded ? 'Show less' : 'Show more'}
+                    onClick={() => setFocusExpanded((prev) => !prev)}
+                  />
+                  <span className="h-px min-w-0 flex-1 bg-[#e4ddd3]" aria-hidden="true" />
+                </div>
               ) : null}
             </>
           )}
-          {/* TODO: wire feedback summary content (Fix 5 stub) */}
-          <button
-            type="button"
-            className="mt-1 inline-flex w-fit items-center gap-1 border-none bg-transparent p-0 text-[13px] font-medium text-[#6b1e2e]"
-            onClick={() => {
-              /* TODO: expand to show feedback summary */
-            }}
-            aria-expanded={false}
-          >
-            <Icon name="chevron-down" size={14} />
-            Show feedback summary
-          </button>
         </div>
 
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-6 py-5">
@@ -292,6 +347,9 @@ export function FinalDecisionDrawer({
                         <span className="text-[13px] text-[#2e1c1c]">All</span>
                       </label>
                     </li>
+                    <li role="none" className="list-none px-3 py-1">
+                      <Divider className="w-full" />
+                    </li>
                     {artifacts.map((artifact) => (
                       <li key={artifact.id} role="none" className="list-none px-3 py-2">
                         <label className="flex cursor-pointer items-center gap-2">
@@ -314,66 +372,62 @@ export function FinalDecisionDrawer({
                 </div>
               ) : (
                 <>
-                  <div
-                    className="flex flex-col gap-1"
-                    style={
-                      submitAttempted && selectedIds.length !== 1
-                        ? {
-                            borderRadius: 8,
-                            padding: 8,
-                            outline: '1px solid #e07070',
-                            outlineOffset: 0,
-                            background: '#fceaea',
-                          }
-                        : undefined
-                    }
-                  >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {artifacts.map((artifact) => {
-                      const checked = selectedIds.includes(artifact.id);
+                      const isSelected = selectedIds.includes(artifact.id);
                       return (
-                        <label
+                        <div
                           key={artifact.id}
-                          className="flex h-[52px] cursor-pointer items-center gap-4 rounded-[8px] border px-4"
                           style={{
-                            borderColor: checked
-                              ? 'var(--brand/primary, #6b1e2e)'
-                              : 'var(--border/default, #e4ddd3)',
-                            backgroundColor: checked
-                              ? 'var(--brand/accent/subtle, #fff6d7)'
-                              : 'transparent',
+                            border: isSelected ? '1px solid #ffe96c' : '1px solid #e4ddd3',
+                            background: '#ffffff',
+                            borderRadius: 8,
+                            minHeight: 52,
+                            padding: '10px 12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
                           }}
                         >
                           <Checkbox
+                            id={`decision-artifact-${artifact.id}`}
                             label=""
-                            checked={checked}
-                            onChange={() => setSelectedIds([artifact.id])}
+                            checked={isSelected}
+                            onChange={(checked) =>
+                              setSelectedIds((prev) =>
+                                checked
+                                  ? prev.includes(artifact.id)
+                                    ? prev
+                                    : [...prev, artifact.id]
+                                  : prev.filter((id) => id !== artifact.id),
+                              )
+                            }
                           />
-                          <div className="flex min-w-0 flex-1 items-center gap-2">
-                            <span
-                              className="truncate text-[13px] font-medium"
-                              style={{
-                                color: checked
-                                  ? 'var(--brand/primary, #6b1e2e)'
-                                  : 'var(--text/primary, #2e1c1c)',
-                              }}
-                            >
-                              {artifact.title}
-                            </span>
-                            {artifact.iterationLabel ? (
-                              <Tag
-                                label={artifact.iterationLabel}
-                                variant={checked ? 'brand' : 'neutral'}
-                                size="sm"
-                              />
-                            ) : null}
-                          </div>
-                        </label>
+                          <span
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              fontSize: 13,
+                              color: '#2e1c1c',
+                              letterSpacing: '0.26px',
+                            }}
+                          >
+                            {artifact.title}
+                          </span>
+                          {artifact.iterationLabel ? (
+                            <Tag
+                              label={displayVersion(artifact.iterationLabel)}
+                              variant="default"
+                              size="sm"
+                            />
+                          ) : null}
+                        </div>
                       );
                     })}
                   </div>
-                  {submitAttempted && selectedIds.length !== 1 ? (
+                  {submitAttempted && selectedIds.length === 0 ? (
                     <p className="m-0 mt-1 text-[12px] text-[#8b2020]" role="alert">
-                      Preferred option is required
+                      Select at least one preferred option
                     </p>
                   ) : null}
                 </>
@@ -402,50 +456,83 @@ export function FinalDecisionDrawer({
 
           {reviewType === 'compare' && currentContributorId ? (
             <div className="flex flex-col gap-3">
-              <Button
-                type="button"
-                label="Request a change"
-                variant="accent"
-                size="md"
-                className="w-full"
-                style={{
-                  width: '100%',
-                  backgroundColor: 'var(--brand/accent, #ffe96c)',
-                  color: 'var(--text/on-accent, #2a221b)',
-                  borderColor: 'transparent',
-                }}
-                onClick={() => setShowChangeRequestModal(true)}
-              />
-              {decisionChangeRequestRows.length > 0 ? (
-                <ul className="m-0 flex list-none flex-col gap-2 p-0">
-                  {decisionChangeRequestRows.map((row, idx) => (
-                    <li
-                      key={`${row.artifactIds.join(',')}-${idx}`}
-                      className="rounded-[6px] border border-[#e4ddd3] bg-white px-3 py-2 text-[13px] text-[#2e1c1c]"
-                    >
-                      <span className="font-medium text-[#6b1e2e]">
-                        {labelForArtifactIds(row.artifactIds)}
-                      </span>
-                      {row.changesNeeded ? (
-                        <p className="m-0 mt-1 text-[12px] leading-snug text-[#6b5e55]">
-                          {row.changesNeeded}
-                        </p>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {decisionChangeRequestRows.length > 0 ? (
+              {decisionChangeRequestRows.length === 0 ? (
                 <Button
                   type="button"
-                  label="Add another change"
-                  variant="ghost"
-                  size="sm"
-                  icon="leading"
-                  iconName="plus"
-                  className="self-start"
+                  label="Request a change"
+                  variant="accent"
+                  size="md"
+                  className="w-full"
+                  style={{
+                    width: '100%',
+                    backgroundColor: 'var(--brand/accent, #ffe96c)',
+                    color: 'var(--text/on-accent, #2a221b)',
+                    borderColor: 'transparent',
+                  }}
                   onClick={() => setShowChangeRequestModal(true)}
                 />
+              ) : null}
+              {decisionChangeRequestRows.length > 0 ? (
+                <div className="flex w-full flex-col gap-2">
+                  <label className="text-[13px] font-medium text-[#2e1c1c]">Changes</label>
+                  <div className="flex w-full flex-col gap-1">
+                    {decisionChangeRequestRows.map((row, idx) => {
+                      const artifactLabels = artifactLabelsForKeys(row.artifactIds).filter(
+                        Boolean,
+                      );
+                      return (
+                        <div
+                          key={`${row.artifactIds.join(',')}-${idx}`}
+                          className="flex w-full min-h-[40px] items-center gap-2 rounded-[4px] border border-[#e4ddd3] bg-[#f3efe9] px-3 py-2"
+                        >
+                          <span className="shrink-0 text-[13px] font-medium text-[#6b5e55]">
+                            {idx + 1}.
+                          </span>
+                          <span className="min-w-0 flex-1 text-[13px] font-medium text-[#2e1c1c]">
+                            {row.changesNeeded}
+                          </span>
+                          <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-1">
+                            <Tag
+                              label={`Change ${idx + 1}`}
+                              variant="butter"
+                              size="sm"
+                            />
+                            {artifactLabels.map((label) => (
+                              <Tag
+                                key={`${idx}-${label}`}
+                                label={label}
+                                variant="neutral"
+                                size="sm"
+                              />
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            aria-label="Remove change request"
+                            className="inline-flex shrink-0 items-center justify-center border-0 bg-transparent p-0 text-[#6b1e2e] cursor-pointer"
+                            onClick={() =>
+                              setDecisionChangeRequestRows((prev) =>
+                                prev.filter((_, rowIndex) => rowIndex !== idx),
+                              )
+                            }
+                          >
+                            <Icon name="close" size={16} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <Button
+                    type="button"
+                    label="Add another change"
+                    variant="ghost"
+                    size="sm"
+                    icon="leading"
+                    iconName="plus"
+                    className="self-start"
+                    onClick={() => setShowChangeRequestModal(true)}
+                  />
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -465,7 +552,7 @@ export function FinalDecisionDrawer({
             >
               {canSubmit && !submitting ? (
                 <Button
-                  label="Submit Decision"
+                  label={submitLabel}
                   variant="primary"
                   size="md"
                   onClick={async () => {
@@ -482,6 +569,12 @@ export function FinalDecisionDrawer({
                             ? selectedIds
                             : undefined,
                         hasChangeRequests: reviewType === 'compare' ? hasCr : undefined,
+                        changeDirection:
+                          reviewType === 'compare' ? changeDirection : undefined,
+                        decisionChangeRequests:
+                          reviewType === 'compare' && hasCr
+                            ? decisionChangeRequestRows
+                            : undefined,
                       });
                       onDecisionSubmitted();
                       onClose();
@@ -496,7 +589,7 @@ export function FinalDecisionDrawer({
                 <Tooltip label={submitting ? 'Please wait…' : submitTooltipLabel}>
                   <span className="inline-flex">
                     <Button
-                      label={submitting ? 'Submitting...' : 'Submit Decision'}
+                      label={submitting ? 'Submitting...' : submitLabel}
                       variant="primary"
                       size="md"
                       disabled
@@ -515,6 +608,7 @@ export function FinalDecisionDrawer({
           reviewId={reviewId}
           reviewerContributorId={currentContributorId}
           artifacts={changeRequestModalArtifacts}
+          persistToDatabase={false}
           onClose={(saved) => {
             setShowChangeRequestModal(false);
             if (saved?.length) {
@@ -523,12 +617,13 @@ export function FinalDecisionDrawer({
                 ...saved.map((s) => ({
                   artifactIds: s.artifactIds,
                   changesNeeded: s.changesNeeded,
+                  isExisting: false,
                 })),
               ]);
             }
           }}
         />
       ) : null}
-    </div>
+    </>
   );
 }

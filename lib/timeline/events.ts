@@ -6,17 +6,26 @@ export type TimelineEventType =
   | "review_created"
   | "artifact_uploaded"
   | "review_focus_edited"
+  | "tradeoff_added"
+  | "tradeoff_edited"
   | "feedback_provided"
   | "changes_requested"
+  | "change_requested"
+  | "change_request_closed"
   | "concept_selected"
   | "review_approved"
   | "partial_approval"
   | "reviewer_added"
+  | "reviewers_notified"
   | "status_changed"
+  | "review_paused"
+  | "review_reactivated"
   | "decision_recorded"
   | "decision_made"
   | "review_deleted"
-  | "artifact_deleted";
+  | "artifact_deleted"
+  | "artifact_description_edited"
+  | "project_updated";
 
 export type TimelineEventRow = {
   id: string;
@@ -33,38 +42,65 @@ export type TimelineEventRow = {
   } | null;
 };
 
+function formatMonthDay(date: Date) {
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
 export function formatTimelineTimestamp(iso: string) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
   const now = new Date();
   const isSameYear = now.getFullYear() === date.getFullYear();
-  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-
-  const sameDay = now.toDateString() === date.toDateString();
-  if (sameDay) return time;
-
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (yesterday.toDateString() === date.toDateString()) return `Yesterday, ${time}`;
-
-  if (isSameYear) {
-    const monthDay = date.toLocaleDateString([], { month: "short", day: "numeric" });
-    return `${monthDay}, ${time}`;
-  }
-
-  const monthDayYear = date.toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-    year: "numeric"
+  const dateLabel = isSameYear
+    ? formatMonthDay(date)
+    : date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+  const timeLabel = date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
   });
-  return `${monthDayYear}, ${time}`;
+  return `${dateLabel}, ${timeLabel}`;
+}
+
+export function shouldShowTimelineTimestampTooltip(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return false;
+  return Math.abs(Date.now() - date.getTime()) >= 60 * 60 * 1000;
+}
+
+export function formatTimelineTimestampTooltip(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const dateLabel = date.toLocaleDateString("en-US", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  const timeLabel = date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${dateLabel} at ${timeLabel.toLowerCase()}`;
 }
 
 export function monthGroupLabel(iso: string) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-  const month = date.toLocaleDateString([], { month: "long" }).toUpperCase();
-  return `${month}, ${date.getFullYear()}`;
+  const now = new Date();
+  if (now.getFullYear() === date.getFullYear()) {
+    return formatMonthDay(date);
+  }
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 /** Calendar day label for timeline grouping: Today / Yesterday / "6 May". */

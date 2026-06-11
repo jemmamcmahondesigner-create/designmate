@@ -1,8 +1,12 @@
 'use client';
 
+import type { CSSProperties } from 'react';
+import { getAvatarColour } from '@/lib/utils/avatarColour';
 import styles from './Avatar.module.css';
 
-export type AvatarSize = 'md' | 'lg';
+export type AvatarSize = 'sm' | 'md' | 'lg';
+
+export type AvatarProminence = 'default' | 'high';
 
 export interface AvatarProps {
   /** Image URL. If omitted, falls back to initials. */
@@ -11,8 +15,13 @@ export interface AvatarProps {
   alt?: string;
   /** Displayed as initials when no image src is provided */
   name?: string;
+  /** Stable contributor id — preferred key for deterministic background colour. */
+  contributorId?: string;
   size?: AvatarSize;
+  prominence?: AvatarProminence;
   className?: string;
+  /** Optional override for initials avatar colours (activity log, etc.). */
+  style?: CSSProperties;
 }
 
 /**
@@ -30,12 +39,16 @@ export function Avatar({
   src,
   alt,
   name,
+  contributorId,
   size = 'md',
+  prominence = 'default',
   className,
+  style,
 }: AvatarProps) {
   const rootClass = [
     styles.root,
     styles[`size-${size}`],
+    prominence === 'high' ? styles.prominenceHigh : '',
     className ?? '',
   ]
     .filter(Boolean)
@@ -54,10 +67,23 @@ export function Avatar({
   }
 
   const initials = name ? getDisplayNameInitials(name) : '?';
+  const colourKey = (contributorId ?? name ?? '').trim() || initials;
+  const palette = getAvatarColour(colourKey);
 
   return (
-    <span className={rootClass} aria-label={name ?? 'Avatar'} role="img">
-      <span className={styles.initials}>{initials}</span>
+    <span
+      className={rootClass}
+      aria-label={name ?? 'Avatar'}
+      role="img"
+      style={{
+        backgroundColor: palette.bg,
+        color: palette.text,
+        ...style,
+      }}
+    >
+      <span className={styles.initials} style={{ color: 'inherit' }}>
+        {initials}
+      </span>
     </span>
   );
 }

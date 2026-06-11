@@ -13,6 +13,7 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/admin';
 import { getEffectiveCurrentContributor } from '@/lib/auth/effectiveContributor';
+import { getDevImpersonatedContributorId } from '@/lib/auth/devImpersonation';
 import { fetchContactDisplayNames } from '@/lib/contacts/fetchContactDisplayNames';
 import { getDecisionMakerReviewerId } from '@/lib/reviews/workflow';
 import { ReviewDetailView } from './ReviewDetailView';
@@ -32,14 +33,17 @@ const DEBUG_LOADER = process.env.NODE_ENV !== 'production';
 // Supabase returns a to-one relation either as an object or (in looser
 // inference scenarios) as a single-element array. Support both shapes.
 type ProjectRelation =
-  | { name: string | null }
-  | Array<{ name: string | null }>
+  | { name: string | null; status?: string | null }
+  | Array<{ name: string | null; status?: string | null }>
   | null;
 
-function pickProjectName(rel: ProjectRelation): string {
-  if (!rel) return 'Project';
-  if (Array.isArray(rel)) return rel[0]?.name ?? 'Project';
-  return rel.name ?? 'Project';
+function pickProjectField(rel: ProjectRelation): { name: string; status: string | null } {
+  if (!rel) return { name: 'Project', status: null };
+  const row = Array.isArray(rel) ? rel[0] : rel;
+  return {
+    name: row?.name ?? 'Project',
+    status: row?.status ?? null,
+  };
 }
 
 function parseReviewTradeoffsFromRow(raw: unknown): Tradeoff[] {
@@ -97,7 +101,7 @@ type RawArtifact = {
 /** When `artifact_versions` rows exist for this review, overlay canonical name + v{n}. */
 function applyArtifactVersionDisplay(
   base: ReviewArtifact[],
-  fromDb: { version_number: number; artifact_name: string }[]
+  fromDb: { version_number: number; artifact_name: string; artifact_id: string | null }[]
 ): ReviewArtifact[] {
   return base.map((a, i) => {
     const row = fromDb[i];
@@ -107,6 +111,7 @@ function applyArtifactVersionDisplay(
       title: row.artifact_name,
       label: row.artifact_name,
       iteration: `v${row.version_number}`,
+      canonicalArtifactId: row.artifact_id,
     };
   });
 }
@@ -174,6 +179,8 @@ export default async function ReviewDetailPage({
       title,
       status,
       created_at,
+      updated_at,
+      creator_id,
       review_focus,
       review_type,
       owner_display_name,
@@ -191,7 +198,8 @@ export default async function ReviewDetailPage({
       related_problem_ids,
       reviewer_contributor_ids,
       artifacts,
-      projects ( name )
+      last_reminder_sent_at,
+      projects ( name, status )
     `
     )
     .eq('id', params.reviewId)
@@ -221,6 +229,7 @@ export default async function ReviewDetailPage({
     title: string | null;
     status: string | null;
     created_at: string | null;
+    updated_at: string | null;
     review_type: string | null;
     review_focus: string | null;
     require_decision_maker: boolean | null;
@@ -238,6 +247,7 @@ export default async function ReviewDetailPage({
     decision_trade_off_is_ai: boolean | null;
     decision_text: string | null;
     tradeoffs: unknown;
+    last_reminder_sent_at: string | null;
     projects: ProjectRelation;
   };
 
@@ -247,7 +257,7 @@ export default async function ReviewDetailPage({
 
   const { data: versionRows } = await supabase
     .from('artifact_versions')
-    .select('version_number, created_at, artifacts ( name )')
+    .select('artifact_id, version_number, created_at, artifacts ( name )')
     .eq('review_id', row.id)
     .order('created_at', { ascending: true });
 
@@ -262,6 +272,10 @@ export default async function ReviewDetailPage({
         ? rel[0]?.name
         : rel?.name;
       return {
+        artifact_id:
+          o.artifact_id == null || String(o.artifact_id).trim() === ''
+            ? null
+            : String(o.artifact_id),
         version_number: Number(o.version_number ?? 0),
         artifact_name: String(name ?? '').trim(),
       };
@@ -292,11 +306,24 @@ export default async function ReviewDetailPage({
   let contributors: Array<{ id: string; name: string; role: string }> = [];
   let assignedReviewers: ReviewerAssignment[] = [];
   let feedbackEntries: ReviewerFeedbackEntry[] = [];
+  let allFeedbackRows: ReviewerFeedbackEntry[] = [];
   let changeRequests: ReviewChangeRequestEntry[] = [];
   let cardReplies: CardReplyRow[] = [];
   let currentContributorId: string | null = null;
   let currentContributorRole: string | null = null;
   let currentContributorPermissionLevel: string | null = null;
+  let workspacePermissionLevel: string | null = null;
+  let currentAuthUserId: string | null = null;
+  const reviewCreatorAuthUserId =
+    (row as { creator_id?: string | null }).creator_id == null
+      ? null
+      : String((row as { creator_id?: string | null }).creator_id);
+
+  const {
+    data: { user: authUser },
+  } = await supabase.auth.getUser();
+  currentAuthUserId = authUser?.id ?? null;
+
   if (row.project_id) {
     const { data: problemsData } = await supabase
       .from('problems')
@@ -350,6 +377,52 @@ export default async function ReviewDetailPage({
       currentContributorId = null;
     }
 
+    if (currentContributorId) {
+      const { data: contributorAuthRow } = await supabase
+        .from('contributors')
+        .select('user_id')
+        .eq('id', currentContributorId)
+        .maybeSingle();
+      const contributorAuthUserId = String(
+        (contributorAuthRow as { user_id?: string | null } | null)?.user_id ?? '',
+      ).trim();
+      const devImpersonatedContributorId = await getDevImpersonatedContributorId();
+      if (contributorAuthUserId) {
+        currentAuthUserId = contributorAuthUserId;
+      } else if (devImpersonatedContributorId === currentContributorId) {
+        currentAuthUserId = null;
+      }
+    }
+
+    if (currentAuthUserId) {
+      const { data: projectRow } = await supabase
+        .from('projects')
+        .select('workspace_id')
+        .eq('id', row.project_id)
+        .maybeSingle();
+      const workspaceId = String(
+        (projectRow as { workspace_id?: string | null } | null)?.workspace_id ?? '',
+      ).trim();
+      if (workspaceId) {
+        const { data: member } = await supabase
+          .from('workspace_members')
+          .select('permission_level, role')
+          .eq('workspace_id', workspaceId)
+          .eq('user_id', currentAuthUserId)
+          .maybeSingle();
+        const memberRow = member as {
+          permission_level?: string | null;
+          role?: string | null;
+        } | null;
+        const fromLevel = memberRow?.permission_level?.trim();
+        if (fromLevel) {
+          workspacePermissionLevel = fromLevel;
+        } else if (String(memberRow?.role ?? '').trim().toLowerCase() === 'admin') {
+          workspacePermissionLevel = 'admin';
+        }
+      }
+    }
+
     const reviewerIds = reviewerIdsEarly;
 
     let reviewerContributors: Array<{
@@ -380,19 +453,16 @@ export default async function ReviewDetailPage({
     );
 
     const rt = String(row.review_type ?? '').trim().toLowerCase();
-    const hasDecisionMakerFlow = rt === 'approve' || rt === 'compare';
+    const hasDecisionMakerFlow = rt === 'compare';
     assignedReviewers = reviewerIds
       .map((reviewerId, index) => {
         const contributor = reviewerContributorById.get(reviewerId);
         if (!contributor) return null;
-        const reviewRole =
-          hasDecisionMakerFlow && index === 0
-            ? 'Decision Maker'
-            : 'Reviewer';
+        const jobRole = String(contributor.role ?? '').trim();
         return {
           id: contributor.id,
           name: contributor.name,
-          role: reviewRole,
+          role: jobRole,
           isDecisionMaker: hasDecisionMakerFlow && index === 0,
         } satisfies ReviewerAssignment;
       })
@@ -402,9 +472,10 @@ export default async function ReviewDetailPage({
     const { data: feedbackRows, error: feedbackError } = await serviceSupabase
       .from('reviewer_feedback')
       .select(
-        'id, reviewer_id, feedback_status, feedback_text, selected_option, feedback_submitted_at, reply_text, reply_by_id, reply_at, created_at'
+        'id, reviewer_id, feedback_status, feedback_text, selected_option, feedback_submitted_at, reply_text, reply_by_id, reply_at, created_at, feedback_kind, submitted_by_id'
       )
-      .eq('review_id', row.id);
+      .eq('review_id', row.id)
+      .order('created_at', { ascending: true });
     if (feedbackError && DEBUG_LOADER) {
       console.warn('[review-detail-loader] feedback-query-failed', {
         message: feedbackError.message,
@@ -426,6 +497,37 @@ export default async function ReviewDetailPage({
       rowsByReviewer.set(reviewerId, list);
     }
 
+    const submittedByIds = [...new Set(
+      (feedbackRows ?? [])
+        .map((item) =>
+          String((item as Record<string, unknown>).submitted_by_id ?? '').trim(),
+        )
+        .filter(Boolean),
+    )];
+    const knownContributorNames = new Map(
+      [...contributors, ...reviewerContributors].map((contributor) => [
+        contributor.id,
+        contributor.name,
+      ] as const),
+    );
+    const missingSubmittedByIds = submittedByIds.filter(
+      (contributorId) => !knownContributorNames.has(contributorId),
+    );
+    if (missingSubmittedByIds.length > 0) {
+      const { data: submittedByRows } = await serviceSupabase
+        .from('contributors')
+        .select('id, name')
+        .in('id', missingSubmittedByIds);
+      for (const row of submittedByRows ?? []) {
+        const contributor = row as Record<string, unknown>;
+        const id = String(contributor.id ?? '').trim();
+        const name = String(contributor.name ?? '').trim();
+        if (id && name) {
+          knownContributorNames.set(id, name);
+        }
+      }
+    }
+
     const assignedById = new Map(
       assignedReviewers.map((reviewer) => [reviewer.id, reviewer] as const)
     );
@@ -435,76 +537,126 @@ export default async function ReviewDetailPage({
     // Only reviewers explicitly assigned on this review — ignore orphan
     // reviewer_feedback rows (e.g. stale data or wrong review_id).
     const reviewerIdsForFeedback = [...new Set(reviewerIds)];
-    feedbackEntries = reviewerIdsForFeedback.flatMap((reviewerId) => {
+
+    function mapFeedbackRow(
+      reviewerId: string,
+      reviewerName: string,
+      reviewerRole: string,
+      feedback: Record<string, unknown>,
+    ): ReviewerFeedbackEntry {
+      const rawStatus = String(feedback.feedback_status ?? '');
+      const status: ReviewerFeedbackEntry['status'] =
+        rawStatus === 'submitted' ? 'submitted' : 'pending';
+      return {
+        feedbackId: feedback.id == null ? null : String(feedback.id),
+        reviewerId,
+        reviewerName,
+        reviewerRole,
+        status,
+        feedbackText:
+          feedback.feedback_text == null ? null : String(feedback.feedback_text),
+        selectedOption:
+          feedback.selected_option == null ? null : String(feedback.selected_option),
+        feedbackKind: (() => {
+          const raw = feedback.feedback_kind == null ? null : String(feedback.feedback_kind);
+          if (
+            raw === 'approval' ||
+            raw === 'change-request' ||
+            raw === 'mixed' ||
+            raw === 'generic'
+          ) {
+            return raw;
+          }
+          return null;
+        })(),
+        submittedAt:
+          feedback.feedback_submitted_at == null
+            ? null
+            : String(feedback.feedback_submitted_at),
+        replyText: feedback.reply_text == null ? null : String(feedback.reply_text),
+        replyById: feedback.reply_by_id == null ? null : String(feedback.reply_by_id),
+        replyAt: feedback.reply_at == null ? null : String(feedback.reply_at),
+        requestedAt: feedback.created_at == null ? null : String(feedback.created_at),
+        submittedById:
+          feedback.submitted_by_id == null ? null : String(feedback.submitted_by_id),
+        submittedByName:
+          feedback.submitted_by_id == null
+            ? null
+            : knownContributorNames.get(String(feedback.submitted_by_id)) ?? null,
+      };
+    }
+
+    function pickLatestFeedbackRow(rows: Record<string, unknown>[]) {
+      if (rows.length === 0) return null;
+      return [...rows].sort((a, b) => {
+        const aTs = new Date(
+          String(a.feedback_submitted_at ?? a.created_at ?? 0),
+        ).getTime();
+        const bTs = new Date(
+          String(b.feedback_submitted_at ?? b.created_at ?? 0),
+        ).getTime();
+        return bTs - aTs;
+      })[0];
+    }
+
+    allFeedbackRows = reviewerIdsForFeedback.flatMap((reviewerId) => {
       const assigned = assignedById.get(reviewerId);
       const contributor = contributorById.get(reviewerId);
       const reviewerName = assigned?.name ?? contributor?.name ?? 'Reviewer';
       const reviewerRole = assigned?.role ?? contributor?.role ?? '';
       const rows = rowsByReviewer.get(reviewerId) ?? [];
-      if (rows.length === 0) {
-        return [
-          {
-            feedbackId: null,
-            reviewerId,
-            reviewerName,
-            reviewerRole,
-            status: 'pending',
-            feedbackText: null,
-            selectedOption: null,
-            submittedAt: null,
-            replyText: null,
-            replyById: null,
-            replyAt: null,
-            requestedAt: null,
-          } satisfies ReviewerFeedbackEntry,
-        ];
-      }
-      rows.sort(
-        (a, b) =>
-          new Date(String(a.created_at ?? 0)).getTime() -
-          new Date(String(b.created_at ?? 0)).getTime()
+      return rows.map((feedback) =>
+        mapFeedbackRow(reviewerId, reviewerName, reviewerRole, feedback),
       );
-      return rows.map((feedback) => {
-        const rawStatus = String(feedback.feedback_status ?? '');
-        const status: ReviewerFeedbackEntry['status'] =
-          rawStatus === 'submitted' ? 'submitted' : 'pending';
+    });
+
+    feedbackEntries = reviewerIdsForFeedback.map((reviewerId) => {
+      const assigned = assignedById.get(reviewerId);
+      const contributor = contributorById.get(reviewerId);
+      const reviewerName = assigned?.name ?? contributor?.name ?? 'Reviewer';
+      const reviewerRole = assigned?.role ?? contributor?.role ?? '';
+      const rows = rowsByReviewer.get(reviewerId) ?? [];
+      const latest = pickLatestFeedbackRow(rows);
+      if (!latest) {
         return {
-          feedbackId: feedback.id == null ? null : String(feedback.id),
+          feedbackId: null,
           reviewerId,
           reviewerName,
           reviewerRole,
-          status,
-          feedbackText:
-            feedback.feedback_text == null ? null : String(feedback.feedback_text),
-          selectedOption:
-            feedback.selected_option == null ? null : String(feedback.selected_option),
-          submittedAt:
-            feedback.feedback_submitted_at == null
-              ? null
-              : String(feedback.feedback_submitted_at),
-          replyText:
-            feedback.reply_text == null ? null : String(feedback.reply_text),
-          replyById:
-            feedback.reply_by_id == null ? null : String(feedback.reply_by_id),
-          replyAt: feedback.reply_at == null ? null : String(feedback.reply_at),
-          requestedAt:
-            feedback.created_at == null ? null : String(feedback.created_at),
+          status: 'pending' as const,
+          feedbackText: null,
+          selectedOption: null,
+          feedbackKind: null,
+          submittedAt: null,
+          replyText: null,
+          replyById: null,
+          replyAt: null,
+          requestedAt: null,
+          submittedById: null,
+          submittedByName: null,
         } satisfies ReviewerFeedbackEntry;
-      });
+      }
+      return mapFeedbackRow(reviewerId, reviewerName, reviewerRole, latest);
     });
 
     const { data: changeRequestsData } = await supabase
       .from('change_requests')
       .select(
-        'id, reviewer_id, artifact_ids, changes_needed, reply_text, reply_by_id, reply_at, created_at, batch_id'
+        'id, reviewer_id, artifact_ids, changes_needed, reply_text, reply_by_id, reply_at, created_at, batch_id, batch_number, reviewer_feedback_id, change_number, completed_at, completed_by_id, reviewer:contributors!reviewer_id(id, name)'
       )
       .eq('review_id', row.id)
       .order('created_at', { ascending: false });
     changeRequests = (changeRequestsData ?? []).map((item) => {
       const data = item as Record<string, unknown>;
+      const reviewerJoin = data.reviewer as Record<string, unknown> | null | undefined;
+      const reviewerNameFromJoin =
+        reviewerJoin && reviewerJoin.name != null
+          ? String(reviewerJoin.name).trim()
+          : '';
       return {
         id: String(data.id ?? ''),
         reviewer_id: data.reviewer_id == null ? null : String(data.reviewer_id),
+        reviewer_name: reviewerNameFromJoin || null,
         artifact_ids: Array.isArray(data.artifact_ids)
           ? data.artifact_ids.map((value) => String(value))
           : [],
@@ -514,6 +666,15 @@ export default async function ReviewDetailPage({
         reply_at: data.reply_at == null ? null : String(data.reply_at),
         created_at: String(data.created_at ?? ''),
         batch_id: data.batch_id == null ? null : String(data.batch_id),
+        batch_number:
+          data.batch_number == null ? null : Number(data.batch_number),
+        reviewer_feedback_id:
+          data.reviewer_feedback_id == null ? null : String(data.reviewer_feedback_id),
+        change_number:
+          data.change_number == null ? null : Number(data.change_number),
+        completed_at: data.completed_at == null ? null : String(data.completed_at),
+        completed_by_id:
+          data.completed_by_id == null ? null : String(data.completed_by_id),
       } satisfies ReviewChangeRequestEntry;
     });
 
@@ -529,21 +690,92 @@ export default async function ReviewDetailPage({
         .select('id, card_type, card_id, reply_text, reply_by_id, created_at')
         .in('card_id', cardIds)
         .order('created_at', { ascending: true });
+
+      // Resolve replier display names server-side so attribution does not depend
+      // on the replier being present in the client `contributors` list.
+      const replyAuthorIds = [
+        ...new Set(
+          (cardRepliesData ?? [])
+            .map((item) => {
+              const value = (item as Record<string, unknown>).reply_by_id;
+              return value == null ? '' : String(value);
+            })
+            .filter(Boolean),
+        ),
+      ];
+      const replyAuthorNameById = new Map<string, string>();
+      if (replyAuthorIds.length > 0) {
+        const { data: replyAuthors } = await supabase
+          .from('contributors')
+          .select('id, name')
+          .in('id', replyAuthorIds);
+        for (const author of (replyAuthors ?? []) as Array<{
+          id?: string | null;
+          name?: string | null;
+        }>) {
+          const id = String(author.id ?? '').trim();
+          const name = String(author.name ?? '').trim();
+          if (id && name) replyAuthorNameById.set(id, name);
+        }
+      }
+
       cardReplies = (cardRepliesData ?? []).map((item) => {
         const data = item as Record<string, unknown>;
         const ct = String(data.card_type ?? '');
         const cardType: CardReplyRow['card_type'] =
           ct === 'change_request' ? 'change_request' : 'feedback';
+        const replyById = data.reply_by_id == null ? null : String(data.reply_by_id);
         return {
           id: String(data.id ?? ''),
           card_type: cardType,
           card_id: String(data.card_id ?? ''),
           reply_text: String(data.reply_text ?? ''),
-          reply_by_id: data.reply_by_id == null ? null : String(data.reply_by_id),
+          reply_by_id: replyById,
+          reply_by_name: replyById ? replyAuthorNameById.get(replyById) ?? null : null,
           created_at: String(data.created_at ?? ''),
         } satisfies CardReplyRow;
       });
     }
+  }
+
+  let decisionSnapshots: Array<{
+    id: string;
+    decision_status: string;
+    decision_comments: string | null;
+    decision_selected_artifact_ids: string[];
+    decision_owner_id: string | null;
+    decision_made_at: string;
+    superseded_at: string | null;
+    entry_role: 'approval' | 'change_request';
+  }> = [];
+  const { data: snapshotRows } = await supabase
+    .from('review_decision_snapshots')
+    .select(
+      'id, decision_status, decision_comments, decision_selected_artifact_ids, decision_owner_id, decision_made_at, superseded_at, entry_role',
+    )
+    .eq('review_id', row.id)
+    .order('decision_made_at', { ascending: false });
+  if (snapshotRows) {
+    decisionSnapshots = snapshotRows.map((item) => {
+      const data = item as Record<string, unknown>;
+      return {
+        id: String(data.id ?? ''),
+        decision_status: String(data.decision_status ?? ''),
+        decision_comments:
+          data.decision_comments == null ? null : String(data.decision_comments),
+        decision_selected_artifact_ids: Array.isArray(data.decision_selected_artifact_ids)
+          ? (data.decision_selected_artifact_ids as unknown[]).map((id) => String(id))
+          : [],
+        decision_owner_id:
+          data.decision_owner_id == null ? null : String(data.decision_owner_id),
+        decision_made_at: String(data.decision_made_at ?? ''),
+        superseded_at: data.superseded_at == null ? null : String(data.superseded_at),
+        entry_role:
+          String(data.entry_role ?? 'approval').trim() === 'change_request'
+            ? 'change_request'
+            : 'approval',
+      };
+    });
   }
 
   return (
@@ -554,23 +786,30 @@ export default async function ReviewDetailPage({
       reviewType={row.review_type ?? ''}
       reviewFocus={row.review_focus ?? ''}
       projectId={row.project_id ?? ''}
-      projectName={pickProjectName(row.projects)}
+      projectName={pickProjectField(row.projects).name}
+      projectStatus={pickProjectField(row.projects).status}
       mode={mode}
       artifacts={artifacts}
       problems={problems}
       contributors={contributors}
       assignedReviewers={assignedReviewers}
       feedbackEntries={feedbackEntries}
+      allFeedbackRows={allFeedbackRows}
       changeRequests={changeRequests}
       cardReplies={cardReplies}
       currentContributorId={currentContributorId}
       currentContributorRole={currentContributorRole}
       currentContributorPermissionLevel={currentContributorPermissionLevel}
+      workspacePermissionLevel={workspacePermissionLevel}
+      currentAuthUserId={currentAuthUserId}
+      reviewCreatorAuthUserId={reviewCreatorAuthUserId}
       requireDecisionMaker={row.require_decision_maker ?? false}
       decisionMakerId={row.decision_owner_id}
       contactDisplayById={contactDisplayById}
       reviewOwnerName={row.owner_display_name ?? null}
+      lastReminderSentAt={row.last_reminder_sent_at ?? null}
       reviewCreatedAt={row.created_at}
+      reviewUpdatedAt={row.updated_at}
       decision={{
         status: row.decision_status,
         // Canonical body from submitDecisionAction is decision_comments; decision_text is legacy-only.
@@ -585,6 +824,7 @@ export default async function ReviewDetailPage({
       }}
       activeTabIndex={0}
       tradeoffs={tradeoffs}
+      decisionSnapshots={decisionSnapshots}
     />
   );
 }

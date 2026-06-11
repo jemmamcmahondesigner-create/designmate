@@ -1,0 +1,53 @@
+.tableShell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border-width: 1px;
+  border-style: solid;
+  border-color: var(--border-default, #e4ddd3);
+  border-radius: var(--radius-lg, 8px);
+  overflow: hidden;
+}
+
+.tableScroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.tableScrollInner {
+  width: 100%;
+}
+
+/* Settings tables with fixed column layout — fill viewport, scroll only when needed */
+.tableScrollInnerFit {
+  width: 100%;
+  min-width: 0;
+}
+
+.tableBorderless {
+  border: none !important;
+  border-radius: 0 !important;
+  overflow: visible !important;
+  width: max-content;
+  min-width: 100%;
+}
+
+.tableBorderlessFit {
+  border: none !important;
+  border-radius: 0 !important;
+  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+}
+
+.pageContent {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding-bottom: 32px;
+}

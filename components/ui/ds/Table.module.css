@@ -18,6 +18,24 @@
   border: none;
 }
 
+.tableAuto {
+  table-layout: auto;
+}
+
+.tableAuto .row td {
+  max-width: none;
+  overflow: visible;
+}
+
+.tableAuto .cellCustom,
+.tableAuto .cellPill,
+.tableAuto .cellText,
+.tableAuto .cellTextBold {
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+}
+
 .theadRow {
   background: var(--surface-app-header, #fff);
   height: 44px;

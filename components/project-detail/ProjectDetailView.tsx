@@ -9,7 +9,8 @@ import {
   useRef,
   useState
 } from "react";
-import { Button, ReviewCard, Tooltip } from "@/components/ui/ds";
+import { ChevronDown, ChevronUp } from "@/lib/phosphor";
+import { Button, NotificationBadge, ReviewCard, Tooltip } from "@/components/ui/ds";
 import { useNewReviewDrawer } from "@/components/NewReviewDrawerProvider";
 import type {
   ProjectContributor,
@@ -17,7 +18,7 @@ import type {
   ProjectReference,
   ProjectStatus
 } from "@/types/project";
-import type { ReviewCardData, ReviewDbStatus } from "@/types/review";
+import type { ReviewCardData, ReviewDbStatus, ReviewType } from "@/types/review";
 import type { User } from "@/types/user";
 import { ProjectDescriptionField } from "@/components/project-detail/ProjectDescriptionField";
 import { ProjectDetailHeader } from "@/components/project-detail/ProjectDetailHeader";
@@ -27,7 +28,10 @@ import { ReferencesSection } from "@/components/project-detail/ReferencesSection
 import { SidebarDetailCollapsible } from "@/components/SidebarDetailCollapsible";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { formatDistanceToNow } from "@/lib/formatDistanceToNow";
-import { reviewRowHasRecordedDecision } from "@/lib/reviews/fetchProjectReviews";
+import {
+  buildReviewCardReviewers,
+  fetchReviewCardMeta,
+} from "@/lib/reviews/fetchProjectReviews";
 import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
 import { canCreateReviews, CREATE_REVIEW_DENIED_TOOLTIP } from "@/lib/workspace/permissions";
 import { TimelineTab } from "@/app/projects/[projectId]/TimelineTab";
@@ -38,6 +42,31 @@ const sectionHeadingClass =
   "text-[20px] font-semibold leading-[1.3] text-[#6b1e2e]";
 
 const sectionHeadingStyle = { letterSpacing: "-0.3px" as const };
+
+function reviewsAccordionStorageKey(projectId: string) {
+  return `designtrace_project_accordion_${projectId}_reviews`;
+}
+
+function readStoredBoolean(key: string, fallback: boolean) {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (stored == null) return fallback;
+    const parsed = JSON.parse(stored) as boolean;
+    return typeof parsed === "boolean" ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredBoolean(key: string, value: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage failures.
+  }
+}
 
 function parseStatus(s: string): ReviewDbStatus {
   const v = s.trim().toLowerCase();
@@ -54,6 +83,12 @@ function parseStatus(s: string): ReviewDbStatus {
   ];
   if (allowed.includes(v as ReviewDbStatus)) return v as ReviewDbStatus;
   return "in-review";
+}
+
+function parseReviewType(raw: string | null | undefined): ReviewType {
+  const s = String(raw ?? "").toLowerCase();
+  if (s === "critique" || s === "align" || s === "approve") return s;
+  return "compare";
 }
 
 function contributorsToTeammateUsers(rows: ProjectContributor[]): User[] {
@@ -137,6 +172,7 @@ export type ProjectDetailViewProps = {
     id: string;
     name: string;
     client: string | null;
+    clientId: string | null;
     description: string | null;
     status: ProjectStatus;
   };
@@ -166,9 +202,13 @@ export function ProjectDetailView({
   const { openNewReview } = useNewReviewDrawer();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [reviews, setReviews] = useState<ReviewCardData[]>(initialReviews);
+  const [reviewsAccordionOpen, setReviewsAccordionOpen] = useState(true);
+  const reviewsScrollRef = useRef<HTMLDivElement | null>(null);
+  const [isReviewsScrolled, setIsReviewsScrolled] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const { permissionLevel } = useActiveWorkspacePermission();
   const clientLabel = project.client?.trim() || "Unassigned";
+  const isProjectComplete = project.status === "complete";
   const descriptionText = project.description?.trim() ?? "";
   const descriptionPlaceholder =
     "Add a short overview of goals, scope, and success criteria…";
@@ -185,7 +225,7 @@ export function ProjectDetailView({
     const { data, error } = await supabase
       .from("reviews")
       .select(
-        "id, title, status, created_at, owner_display_name, review_focus, artifacts, review_type, decision_status, decision_comments, decision_selected_artifact_ids, decision_text, require_decision_maker, artifact_file_name, artifact_file_type, artifact_name, artifact_iteration, artifact_description, artifact_file_url"
+        "id, title, status, created_at, owner_display_name, review_focus, reviewer_contributor_ids, artifacts, review_type, decision_status, decision_comments, decision_selected_artifact_ids, decision_text, require_decision_maker, artifact_file_name, artifact_file_type, artifact_name, artifact_iteration, artifact_description, artifact_file_url"
       )
       .eq("project_id", project.id)
       .order("created_at", { ascending: false });
@@ -193,27 +233,36 @@ export function ProjectDetailView({
     const reviewIds = data
       .map((row) => String((row as Record<string, unknown>).id ?? ""))
       .filter(Boolean);
-    const commentCountsByReviewId = new Map<string, number>();
-    if (reviewIds.length > 0) {
-      const { data: feedbackRows } = await supabase
-        .from("reviewer_feedback")
-        .select("review_id")
-        .eq("feedback_status", "submitted")
-        .in("review_id", reviewIds);
-      for (const feedbackRow of feedbackRows ?? []) {
-        const reviewId = String((feedbackRow as Record<string, unknown>).review_id ?? "");
-        if (!reviewId) continue;
-        commentCountsByReviewId.set(reviewId, (commentCountsByReviewId.get(reviewId) ?? 0) + 1);
-      }
-    }
+    const reviewerIds = [...new Set(
+      data.flatMap((row) =>
+        Array.isArray((row as Record<string, unknown>).reviewer_contributor_ids)
+          ? ((row as Record<string, unknown>).reviewer_contributor_ids as unknown[])
+              .map((id) => String(id).trim())
+              .filter(Boolean)
+          : [],
+      ),
+    )];
+    const { reviewerResolutionByRawId, countsByReviewId } = await fetchReviewCardMeta(supabase, {
+      reviewIds,
+      reviewerIds,
+    });
     const mapped: ReviewCardData[] = data.map((row) => {
       const r = row as Record<string, unknown>;
       const created = r.created_at ? new Date(String(r.created_at)) : new Date();
       const dateLabel = `Updated ${formatDistanceToNow(created, { addSuffix: true })}`;
+      const reviewFocus =
+        r.review_focus == null || String(r.review_focus).trim() === ""
+          ? null
+          : String(r.review_focus).trim();
+      const reviewers = buildReviewCardReviewers(
+        r.reviewer_contributor_ids,
+        reviewerResolutionByRawId,
+      );
       return {
         id: String(r.id ?? ""),
         title: String(r.title ?? ""),
         status: parseStatus(String(r.status ?? "")),
+        reviewType: parseReviewType(r.review_type as string | undefined),
         decisionStatus:
           r.decision_status == null || String(r.decision_status).trim() === ""
             ? null
@@ -221,10 +270,15 @@ export function ProjectDetailView({
         requireDecisionMaker: Boolean(r.require_decision_maker),
         ownerName: String(r.owner_display_name ?? "Reviewer"),
         dateLabel,
-        description: r.review_focus ? String(r.review_focus) : null,
-        review_focus: r.review_focus ? String(r.review_focus) : null,
-        commentCount: commentCountsByReviewId.get(String(r.id ?? "")) ?? 0,
-        decisionCount: reviewRowHasRecordedDecision(r) ? 1 : 0,
+        dateTooltipIso:
+          r.created_at == null ? null : String(r.created_at),
+        description: reviewFocus,
+        review_focus: reviewFocus,
+        review_focus_summary: null,
+        review_focus_summary_source: null,
+        feedbackCount: countsByReviewId.get(String(r.id ?? ""))?.feedbackCount ?? 0,
+        changeRequestCount: countsByReviewId.get(String(r.id ?? ""))?.changeRequestCount ?? 0,
+        reviewers,
         artifact_file_name: r.artifact_file_name
           ? String(r.artifact_file_name)
           : null,
@@ -252,6 +306,14 @@ export function ProjectDetailView({
   }, [initialReviews]);
 
   useEffect(() => {
+    setReviewsAccordionOpen(readStoredBoolean(reviewsAccordionStorageKey(project.id), true));
+  }, [project.id]);
+
+  useEffect(() => {
+    writeStoredBoolean(reviewsAccordionStorageKey(project.id), reviewsAccordionOpen);
+  }, [project.id, reviewsAccordionOpen]);
+
+  useEffect(() => {
     void fetchReviews();
   }, [fetchReviews]);
 
@@ -275,6 +337,23 @@ export function ProjectDetailView({
       void supabase.removeChannel(channel);
     };
   }, [supabase, project.id, fetchReviews]);
+
+  useEffect(() => {
+    if (!reviewsAccordionOpen) {
+      setIsReviewsScrolled(false);
+      return;
+    }
+    const root = reviewsScrollRef.current;
+    if (!root) return;
+
+    const handleScroll = () => {
+      setIsReviewsScrolled(root.scrollTop > 0);
+    };
+
+    handleScroll();
+    root.addEventListener("scroll", handleScroll, { passive: true });
+    return () => root.removeEventListener("scroll", handleScroll);
+  }, [reviewsAccordionOpen]);
 
   const canCreateReview = canCreateReviews(permissionLevel);
 
@@ -335,6 +414,8 @@ export function ProjectDetailView({
           projectId={project.id}
           projectName={project.name}
           clientLabel={clientLabel}
+          clientId={project.clientId}
+          description={project.description}
           initialStatus={project.status}
           reviewSeed={reviewSeed}
         />
@@ -377,6 +458,7 @@ export function ProjectDetailView({
                       projectId={project.id}
                       initialValue={descriptionText}
                       placeholder={descriptionPlaceholder}
+                      readOnly={isProjectComplete}
                     />
                   </div>
                 </section>
@@ -384,16 +466,19 @@ export function ProjectDetailView({
                 <ProblemsSection
                   projectId={project.id}
                   initialProblems={initialProblems}
+                  hideAddActions={isProjectComplete}
                 />
 
                 <ContributorsSection
                   projectId={project.id}
                   initialContributors={initialContributors}
+                  hideAddActions={isProjectComplete}
                 />
 
                 <ReferencesSection
                   projectId={project.id}
                   initialReferences={initialReferences}
+                  hideAddActions={isProjectComplete}
                 />
               </div>
             ) : null}
@@ -432,16 +517,47 @@ export function ProjectDetailView({
               maxHeight: "100%",
             }}
           >
-            <h2
+            <div
               className={`${sectionHeadingClass} shrink-0`}
               style={{
                 ...sectionHeadingStyle,
-                padding: "24px 24px 16px 24px"
+                position: "sticky",
+                top: 0,
+                zIndex: 10,
+                backgroundColor: "#ffffff",
+                padding: "24px 24px 16px 24px",
+                boxShadow: isReviewsScrolled
+                  ? "0 4px 12px 0 rgba(107, 30, 46, 0.08)"
+                  : "none",
+                transition: "box-shadow 150ms ease",
               }}
             >
-              Reviews
-            </h2>
+              <button
+                type="button"
+                onClick={() => setReviewsAccordionOpen((prev) => !prev)}
+                className="flex w-full items-center border-0 bg-transparent p-0 text-left"
+                aria-expanded={reviewsAccordionOpen}
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center">
+                  {reviewsAccordionOpen ? (
+                    <ChevronUp size={12} weight="fill" color="#6b1e2e" />
+                  ) : (
+                    <ChevronDown size={12} weight="fill" color="#6b5e55" />
+                  )}
+                </span>
+                <span className="ml-2 shrink-0">Reviews</span>
+                <span className="ml-3 inline-flex shrink-0 items-center self-center">
+                  <NotificationBadge
+                    count={reviews.length}
+                    sentiment="brand"
+                    prominence={reviewsAccordionOpen ? "high" : "low"}
+                  />
+                </span>
+              </button>
+            </div>
+            {reviewsAccordionOpen ? (
             <div
+              ref={reviewsScrollRef}
               className="min-h-0 flex-1 px-6 pb-8"
               style={{
                 flex: 1,
@@ -470,7 +586,7 @@ export function ProjectDetailView({
                     No reviews yet. Create a review to start capturing design
                     decisions.
                   </p>
-                  {canCreateReview ? (
+                  {!isProjectComplete && canCreateReview ? (
                     <Button
                       type="button"
                       variant="secondary"
@@ -480,7 +596,7 @@ export function ProjectDetailView({
                       size="sm"
                       onClick={handleNewReview}
                     />
-                  ) : (
+                  ) : !isProjectComplete ? (
                     <Tooltip label={CREATE_REVIEW_DENIED_TOOLTIP}>
                       <span style={{ display: "inline-flex" }}>
                         <Button
@@ -495,7 +611,7 @@ export function ProjectDetailView({
                         />
                       </span>
                     </Tooltip>
-                  )}
+                  ) : null}
                 </div>
               ) : (
                 <div className="flex min-h-0 flex-1 flex-col" style={{ gap: 12 }}>
@@ -505,16 +621,19 @@ export function ProjectDetailView({
                         <ReviewCard
                           title={r.title}
                           status={r.status}
+                          reviewType={r.reviewType}
                           decisionStatus={r.decisionStatus}
                           requireDecisionMaker={r.requireDecisionMaker}
                           ownerName={r.ownerName}
                           dateLabel={r.dateLabel}
-                          showDescription={false}
+                          dateTooltipIso={r.dateTooltipIso ?? undefined}
+                          clientName={clientLabel}
+                          description={r.description ?? undefined}
                           hasArtifact={false}
                           showDetailCounts={true}
-                          commentCount={r.commentCount ?? 0}
-                          decisionCount={r.decisionCount ?? 0}
-                          iterationLabel={r.artifact_iteration ?? undefined}
+                          feedbackCount={r.feedbackCount ?? 0}
+                          changeRequestCount={r.changeRequestCount ?? 0}
+                          reviewers={r.reviewers ?? []}
                         />
                       );
 
@@ -539,6 +658,7 @@ export function ProjectDetailView({
                 </div>
               )}
             </div>
+            ) : null}
           </aside>
         </div>
       </div>

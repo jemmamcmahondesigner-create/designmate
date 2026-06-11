@@ -6,6 +6,7 @@ import { Button } from './Button';
 import { Icon } from './Icon';
 import { Tag } from './Tag';
 import { Tooltip } from './Tooltip';
+import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
 import styles from './CommentThread.module.css';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -60,6 +61,8 @@ export interface CommentThreadProps {
   isStakeholder?: boolean;
   authorName: string;
   authorAvatarSrc?: string;
+  /** Contributor id for deterministic avatar colour. */
+  authorContributorId?: string;
   timestamp?: string;
   body?: string;
   /** Option/artifact tags shown below the body */
@@ -71,6 +74,7 @@ export interface CommentThreadProps {
     authorName: string;
     authorInitials: string;
     timestamp: string;
+    authorContributorId?: string;
   }>;
   cardCategory?: 'feedback' | 'change_request' | 'notification';
   /** Called when user submits a reply */
@@ -87,6 +91,7 @@ export function CommentThread({
   isStakeholder = true,
   authorName,
   authorAvatarSrc,
+  authorContributorId,
   timestamp,
   body,
   options = [],
@@ -98,7 +103,6 @@ export function CommentThread({
   cardCategory,
   className,
 }: CommentThreadProps) {
-  const drillDownIcon = 'https://www.figma.com/api/mcp/asset/43bdab2f-901f-4cc6-9859-373bd6af658b';
   const [replyText, setReplyText] = useState('');
   const [replyFocused, setReplyFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -141,6 +145,11 @@ export function CommentThread({
     className ?? '',
   ].filter(Boolean).join(' ');
 
+  const authorColourKey = (authorContributorId ?? authorName).trim() || authorName;
+  const headerAvatarStyle = getAvatarInlineStyle(authorColourKey, {
+    ring: isDecisionRequired || isDecision,
+  });
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -149,7 +158,13 @@ export function CommentThread({
       {/* ── Header row ── */}
       <div className={styles.header}>
         {/* Avatar */}
-        <Avatar src={authorAvatarSrc} name={authorName} size="md" />
+        <Avatar
+          src={authorAvatarSrc}
+          name={authorName}
+          contributorId={authorContributorId}
+          size="md"
+          style={headerAvatarStyle}
+        />
 
         {/* Name + timestamp (feedback, with-reply, decision) */}
         {(isFeedback || isWithReply || isDecision) && (
@@ -159,7 +174,7 @@ export function CommentThread({
             {timestamp && <span className={styles.timestamp}>{timestamp}</span>}
             {/* Type tag — right side */}
             {isFeedback || isWithReply ? (
-              <Tag label="Feedback" variant="default" size="sm" />
+              <Tag label="Feedback" variant="neutral" size="sm" />
             ) : isDecision ? (
               <Tag label="Decision" variant="success" size="sm" />
             ) : null}
@@ -208,7 +223,7 @@ export function CommentThread({
             <Tag
               key={i}
               label={opt.label}
-              variant={isDecision ? 'butter' : 'brand'}
+              variant="brand"
               size="sm"
             />
           ))}
@@ -223,20 +238,18 @@ export function CommentThread({
               key={`${entry.authorName}-${entry.timestamp}-${idx}`}
               className="rounded-[4px] bg-[#f3efe9] p-3 flex gap-[10px] items-start"
             >
-              <img
-                src={drillDownIcon}
-                alt=""
-                style={{ width: 20, height: 20, display: 'block', flexShrink: 0 }}
-              />
               <div className="flex flex-col gap-1 flex-1 min-w-0">
                 <p className="text-[14px] text-[#2e1c1c] break-words m-0">{entry.text}</p>
                 <div className="flex items-center gap-2">
-                  <div
-                    className="h-6 w-6 rounded-full bg-[#f5eaec] text-[#6b1e2e] text-[10px] font-semibold uppercase inline-flex items-center justify-center shrink-0"
-                    aria-hidden="true"
-                  >
-                    {entry.authorInitials}
-                  </div>
+                  <Avatar
+                    name={entry.authorName}
+                    contributorId={entry.authorContributorId}
+                    size="md"
+                    style={getAvatarInlineStyle(
+                      entry.authorContributorId ?? entry.authorName,
+                      { ring: true },
+                    )}
+                  />
                   <span className="text-[13px] font-medium text-[#6b5e55]">{entry.authorName}</span>
                   <span className="text-[12px] text-[#998c82]">·</span>
                   <span className="text-[12px] text-[#998c82]">{entry.timestamp}</span>
@@ -246,15 +259,15 @@ export function CommentThread({
           ))}
           {isWithReply && reply && (
             <div className="rounded-[4px] bg-[#f3efe9] p-3 flex gap-[10px] items-start">
-              <img
-                src={drillDownIcon}
-                alt=""
-                style={{ width: 20, height: 20, display: 'block', flexShrink: 0 }}
-              />
               <div className="flex flex-col gap-1 flex-1 min-w-0">
                 <p className="text-[14px] text-[#2e1c1c] break-words m-0">{reply.body}</p>
                 <div className="flex items-center gap-2">
-                  <Avatar src={reply.authorAvatarSrc} name={reply.authorName} size="md" />
+                  <Avatar
+                    src={reply.authorAvatarSrc}
+                    name={reply.authorName}
+                    size="md"
+                    style={getAvatarInlineStyle(reply.authorName, { ring: true })}
+                  />
                   <span className="text-[13px] font-medium text-[#6b5e55]">{reply.authorName}</span>
                   <span className="text-[12px] text-[#998c82]">·</span>
                   <span className="text-[12px] text-[#998c82]">{reply.timestamp}</span>

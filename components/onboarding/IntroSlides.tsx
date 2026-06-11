@@ -891,7 +891,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       <canvas
         ref={canvasRef}
         className="onboarding-cursor-trail-canvas"
-        style={{ zIndex: 15 }}
+        style={{ zIndex: 15, pointerEvents: "none" }}
         aria-hidden
       />
 

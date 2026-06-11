@@ -5,10 +5,11 @@ export default function ProjectDetailLayout({
 }>) {
   return (
     <div
-      className="flex min-h-screen min-w-0 flex-1 flex-col"
+      className="flex h-full min-h-0 min-w-0 flex-1 flex-col"
       style={{
         display: "flex",
-        minHeight: "100vh",
+        height: "100%",
+        minHeight: 0,
         minWidth: 0,
         flex: 1,
         flexDirection: "column",

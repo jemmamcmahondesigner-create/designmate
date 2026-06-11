@@ -6,6 +6,7 @@ import {
   readDevImpersonationContributorIdFromBrowser,
   resolveEffectiveContributor,
 } from "@/lib/auth/resolveEffectiveContributor";
+import { logReviewersNotifiedEvent } from "@/lib/reviews/reviewersNotifiedActivity";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
 
 /** Tradeoff row shape stored on `reviews.tradeoffs` jsonb (same as AI generate payload). */
@@ -312,6 +313,8 @@ export async function submitReviewClient(
   }
   const createdBy = contributorResolved.contributorId;
 
+  const reviewStatus = input.sendNotification ? "in-review" : "draft";
+
   const { error } = await supabase.from("reviews").insert({
     id: input.reviewId,
     project_id: input.projectId,
@@ -332,12 +335,26 @@ export async function submitReviewClient(
     artifact_description: artifactDescription,
     artifact_file_url: artifactFileUrl,
     artifacts: stored,
-    status: "in-review",
+    status: reviewStatus,
     tradeoffs: input.tradeoffs ?? null,
   });
 
   if (error) {
     return { error: error.message };
+  }
+
+  if (input.reviewerContributorIds.length > 0) {
+    const feedbackRows = input.reviewerContributorIds.map((reviewerId) => ({
+      review_id: input.reviewId,
+      reviewer_id: reviewerId,
+      feedback_status: "pending",
+    }));
+    const { error: feedbackInsertError } = await supabase
+      .from("reviewer_feedback")
+      .insert(feedbackRows);
+    if (feedbackInsertError) {
+      return { error: feedbackInsertError.message };
+    }
   }
 
   for (let i = 0; i < input.artifacts.length; i++) {
@@ -400,7 +417,7 @@ export async function submitReviewClient(
     payload: {
       review_title: input.title.trim(),
       review_id: input.reviewId,
-      review_status: "in-review",
+      review_status: reviewStatus,
       review_type: input.reviewType
     }
   });
@@ -416,5 +433,39 @@ export async function submitReviewClient(
       review_id: input.reviewId
     }
   });
+
+  if (input.sendNotification) {
+    try {
+      const notifyResponse = await fetch(
+        `/api/reviews/${encodeURIComponent(input.reviewId)}/notify-created`,
+        { method: "POST" },
+      );
+      if (!notifyResponse.ok) {
+        const body = await notifyResponse.text().catch(() => "");
+        console.error(
+          "[submitReviewClient] review-created notify failed:",
+          notifyResponse.status,
+          body,
+        );
+      } else {
+        const activityResult = await logReviewersNotifiedEvent(supabase, {
+          projectId: input.projectId,
+          reviewId: input.reviewId,
+          actorId: createdBy,
+          actorName: ownerDisplayNameResolved,
+          trigger: "publish",
+        });
+        if (!activityResult.ok) {
+          console.error(
+            "[submitReviewClient] reviewers_notified activity failed:",
+            activityResult.error,
+          );
+        }
+      }
+    } catch (err) {
+      console.error("[submitReviewClient] review-created notify failed:", err);
+    }
+  }
+
   return { error: null };
 }

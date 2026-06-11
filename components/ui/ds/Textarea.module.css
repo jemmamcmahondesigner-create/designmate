@@ -19,6 +19,11 @@
   white-space: nowrap;
 }
 
+.required {
+  color: var(--feedback-error-text, #a31d1d);
+  margin-left: 1px;
+}
+
 .labelDisabled {
   color: #c9c0b4;
 }

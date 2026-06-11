@@ -7,6 +7,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  height: 100%;
   padding: 16px 20px;
   border-radius: 8px;
   border: 1px solid #e4ddd3;
@@ -47,7 +48,7 @@ a:hover .root {
 /* ─── Title ─────────────────────────────────────────────────────────────────── */
 
 .title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.5;
   color: #2e1c1c;
@@ -77,6 +78,11 @@ a:hover .root {
   width: 100%;
 }
 
+.breadcrumbRow {
+  width: 100%;
+  min-width: 0;
+}
+
 .date {
   font-size: 12px;
   font-weight: 400;
@@ -95,6 +101,11 @@ a:hover .root {
   color: #2e1c1c;
   width: 100%;
   margin: 0;
+  text-align: left;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* ─── Artifact ───────────────────────────────────────────────────────────────── */
@@ -123,25 +134,12 @@ a:hover .root {
   white-space: pre;
 }
 
-/* ─── Divider + counts ───────────────────────────────────────────────────────── */
-
-.divider {
-  display: block;
-  height: 1px;
-  background: #ede8e0;
-  width: 100%;
-  flex-shrink: 0;
-}
-
-.dividerStrong {
-  background: #c9c0b4;
-}
+/* ─── Footer ─────────────────────────────────────────────────────────────────── */
 
 .counts {
   display: flex;
   align-items: center;
-  gap: 16px;
-  width: 100%;
+  min-width: 0;
   font-size: 12px;
   font-weight: 400;
   line-height: 1.5;
@@ -154,8 +152,64 @@ a:hover .root {
   color: #6b5e55;
 }
 
+.iterationRow {
+  display: flex;
+  width: 100%;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding-top: 12px;
+  border-top: 1px solid #ede8e0;
+}
+
+.footerStrong {
+  border-top-color: #c9c0b4;
+}
+
 .iterationSlot {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
+}
+
+.reviewersSlot {
+  display: inline-flex;
+  align-items: center;
+}
+
+.reviewerAvatar {
+  display: inline-flex;
+  margin-right: -4px;
+}
+
+.reviewerAvatar > :global(span) {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #ffffff;
+  box-sizing: border-box;
+}
+
+.reviewerAvatar:last-child {
+  margin-right: 0;
+}
+
+.reviewerOverflow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 4px;
+  border-radius: 999px;
+  border: 1px solid #ffffff;
+  background: #f7eff2;
+  color: #7a2b3a;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.2px;
 }

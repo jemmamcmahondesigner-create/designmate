@@ -90,6 +90,73 @@
   flex-shrink: 0;
 }
 
+.roleCell {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.teammatesTable {
+  min-width: 800px;
+}
+
+.teammatesTable :global(.table) {
+  table-layout: auto;
+}
+
+.teammatesTable :global(.row td) {
+  max-width: none;
+  overflow: visible;
+}
+
+/* Avatar ring visibility */
+.teammatesTable :global(table td:nth-child(1)) {
+  overflow: visible;
+}
+
+.teammatesTable :global(table td:nth-child(1) span) {
+  overflow: visible;
+}
+
+/* Name column — fill */
+.teammatesTable :global(table td:nth-child(1)),
+.teammatesTable :global(table th:nth-child(1)) {
+  width: 100%;
+}
+
+/* Role column — fill */
+.teammatesTable :global(table td:nth-child(2)),
+.teammatesTable :global(table th:nth-child(2)) {
+  width: 100%;
+  white-space: nowrap;
+}
+
+/* Email column — fill */
+.teammatesTable :global(table td:nth-child(3)),
+.teammatesTable :global(table th:nth-child(3)) {
+  width: 100%;
+}
+
+/* Permission column — hug, no wrap */
+.teammatesTable :global(table td:nth-child(4)),
+.teammatesTable :global(table th:nth-child(4)) {
+  white-space: nowrap;
+  width: 1px;
+}
+
+/* Status column — hug, no wrap */
+.teammatesTable :global(table td:nth-child(5)),
+.teammatesTable :global(table th:nth-child(5)) {
+  white-space: nowrap;
+  width: 1px;
+}
+
+/* Paid column — hug */
+.teammatesTable :global(table td:nth-child(6)),
+.teammatesTable :global(table th:nth-child(6)) {
+  white-space: nowrap;
+  width: 1px;
+}
+
 /* Remove teammate modal — long names must wrap within dialog width */
 .removeModal :global(#modal-title) {
   max-width: 100%;

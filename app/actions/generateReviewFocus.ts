@@ -9,10 +9,27 @@ const GENERATE_SYSTEM_PROMPT =
   'Write a review focus statement for stakeholders based on these artifact descriptions and review type. 2-3 plain sentences. No markdown, no bullet points, no headers.';
 
 const OPTIMISE_SYSTEM_PROMPT =
-  'You are a copy editor. Fix grammar and spelling only. Do not change the structure, content, meaning, or length of the text. Do not rewrite sentences. Return only the corrected text with no explanation.';
+  'You are a copy editor. Fix grammar and spelling only. Do not change the structure, content, meaning, or length of the text. Do not rewrite sentences. Return ONLY the improved version of the text. If the text requires no changes, return the original text exactly as provided. Never add commentary, explanations, parenthetical notes, or meta-text about the quality of the original. Output only the final text, nothing else.';
+
+function looksLikeOptimiseMetaCommentary(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return (
+    trimmed.startsWith('(') ||
+    /no corrections/i.test(trimmed) ||
+    /already grammatically/i.test(trimmed) ||
+    /no changes needed/i.test(trimmed)
+  );
+}
+
+export type ReviewFocusArtifactContext = {
+  name: string;
+  description: string;
+};
 
 export type GenerateReviewFocusInput = {
   artifactDescriptions: string[];
+  artifactContext?: ReviewFocusArtifactContext[];
   reviewType: 'Approval' | 'Comparison';
   projectName?: string;
   selectedProblems?: string[];
@@ -26,20 +43,6 @@ export async function generateReviewFocus(
 ): Promise<{ ok: true; focus: string } | { ok: false; error: string }> {
   const existingTrimmed = input.existingContent?.trim() ?? '';
   const isOptimise = existingTrimmed.length > 0;
-
-  console.log('[AI Review Focus] Called with:', {
-    mode: isOptimise ? 'optimise' : 'generate',
-    descriptionsCount: input.artifactDescriptions.length,
-    reviewType: input.reviewType,
-    projectName: input.projectName,
-    problemsCount: input.selectedProblems?.length ?? 0,
-    tradeoffsCount: input.selectedTradeoffs?.length ?? 0,
-    existingLen: existingTrimmed.length,
-  });
-  console.log(
-    '[AI Review Focus] API key present:',
-    !!process.env.ANTHROPIC_API_KEY,
-  );
 
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
@@ -60,9 +63,17 @@ export async function generateReviewFocus(
   } else {
     system = GENERATE_SYSTEM_PROMPT;
 
-    const descriptionBlock = input.artifactDescriptions
-      .map((d, i) => `${i + 1}. ${d.trim() || '(no description)'}`)
-      .join('\n');
+    const artifactLines =
+      (input.artifactContext ?? []).length > 0
+        ? (input.artifactContext ?? []).map((artifact, i) => {
+            const name = artifact.name.trim() || 'Untitled';
+            const description = artifact.description.trim() || '(no description)';
+            return `${i + 1}. ${name}: ${description}`;
+          })
+        : input.artifactDescriptions.map(
+            (d, i) => `${i + 1}. ${d.trim() || '(no description)'}`,
+          );
+    const descriptionBlock = artifactLines.join('\n');
 
     const problems = (input.selectedProblems ?? [])
       .map((p) => p.trim())
@@ -110,13 +121,15 @@ ${descriptionBlock || '(none)'}${contextBlock}`;
   }
 
   const block = msg.content.find((b) => b.type === 'text');
-  const focus = block?.type === 'text' ? block.text.trim() : '';
+  const rawFocus = block?.type === 'text' ? block.text.trim() : '';
+  const focus =
+    isOptimise && looksLikeOptimiseMetaCommentary(rawFocus)
+      ? existingTrimmed
+      : rawFocus;
 
   if (!focus) {
     return { ok: false, error: 'Empty response from AI.' };
   }
-
-  console.log('[AI Review Focus] Result:', focus);
 
   return { ok: true, focus };
 }

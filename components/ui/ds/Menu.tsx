@@ -16,6 +16,7 @@ import { createPortal } from 'react-dom';
 import { Avatar } from './Avatar';
 import { Button } from './Button';
 import { Checkbox } from './Checkbox';
+import { FilterPanel } from './FilterPanel';
 import { Icon, type IconName } from './Icon';
 import styles from './Menu.module.css';
 
@@ -172,6 +173,15 @@ export function MenuItem({
         </span>
       )}
     </li>
+  );
+}
+
+/** Section label for grouped menu lists (matches FilterPanel / sections menu headers). */
+export function MenuSectionHeading({ children }: { children: ReactNode }) {
+  return (
+    <div className={styles.sectionsHeadingWrap} role="presentation">
+      <span className={styles.sectionsHeading}>{children}</span>
+    </div>
   );
 }
 
@@ -451,28 +461,28 @@ export function Menu({
     .filter(Boolean)
     .join(' ');
 
-  const sectionsRootClass = [styles.sectionsMenu, className ?? '']
+  const sectionsAnchorClass = [styles.sectionsMenuAnchor, className ?? '']
     .filter(Boolean)
     .join(' ');
 
   const hasChildren = Boolean(
     children && (!Array.isArray(children) || children.some((c) => c != null && c !== false))
   );
+  const tagKeys = ['feedback', 'changeRequests', 'replies', 'notifications'] as const;
   const selectedReviewerIds = draftSections.people.reviewerIds;
-  const tagsAllChecked = draftSections.tags.all;
-  const peopleAllChecked = draftSections.people.all;
-  const tagIndividualCount = [
-    draftSections.tags.feedback,
-    draftSections.tags.changeRequests,
-    draftSections.tags.replies,
-    draftSections.tags.notifications,
-  ].filter(Boolean).length;
-  const tagsIndeterminate =
-    !tagsAllChecked && tagIndividualCount > 0 && tagIndividualCount < 4;
+  const selectedTagCount = draftSections.tags.all
+    ? tagKeys.length
+    : tagKeys.filter((key) => draftSections.tags[key]).length;
+  const selectedPeopleCount = draftSections.people.all
+    ? reviewers.length
+    : selectedReviewerIds.length;
+  const tagsAllChecked = selectedTagCount === tagKeys.length;
+  const peopleAllChecked = reviewers.length === 0 ? draftSections.people.all : selectedPeopleCount === reviewers.length;
+  const tagsIndeterminate = selectedTagCount > 0 && selectedTagCount < tagKeys.length;
   const peopleIndeterminate =
-    !peopleAllChecked &&
-    selectedReviewerIds.length > 0 &&
-    selectedReviewerIds.length < reviewers.length;
+    reviewers.length > 0 &&
+    selectedPeopleCount > 0 &&
+    selectedPeopleCount < reviewers.length;
   const appliedSections = sections ?? defaultSections;
   const normalizedDraft: MenuSectionsState = {
     tags: { ...defaultTags, ...draftSections.tags },
@@ -497,27 +507,8 @@ export function Menu({
   }
 
   function setTagsAll(checked: boolean) {
-    if (checked) {
-      setDraftSections((prev) => ({
-        ...prev,
-        tags: {
-          all: true,
-          feedback: false,
-          changeRequests: false,
-          replies: false,
-          notifications: false,
-        },
-      }));
-      return;
-    }
     setDraftSections((prev) => {
-      const next = { ...prev.tags, all: false };
-      const anyIndividual =
-        next.feedback ||
-        next.changeRequests ||
-        next.replies ||
-        next.notifications;
-      if (!anyIndividual) {
+      if (checked) {
         return {
           ...prev,
           tags: {
@@ -529,7 +520,16 @@ export function Menu({
           },
         };
       }
-      return { ...prev, tags: next };
+      return {
+        ...prev,
+        tags: {
+          all: false,
+          feedback: false,
+          changeRequests: false,
+          replies: false,
+          notifications: false,
+        },
+      };
     });
   }
 
@@ -538,17 +538,15 @@ export function Menu({
     checked: boolean
   ) {
     setDraftSections((prev) => {
-      const nextTags = {
-        ...prev.tags,
-        all: false,
+      const nextSelections = {
+        feedback: prev.tags.all ? true : prev.tags.feedback,
+        changeRequests: prev.tags.all ? true : prev.tags.changeRequests,
+        replies: prev.tags.all ? true : prev.tags.replies,
+        notifications: prev.tags.all ? true : prev.tags.notifications,
         [key]: checked,
       };
-      const anyIndividual =
-        nextTags.feedback ||
-        nextTags.changeRequests ||
-        nextTags.replies ||
-        nextTags.notifications;
-      if (!anyIndividual) {
+      const nextSelectedCount = tagKeys.filter((tagKey) => nextSelections[tagKey]).length;
+      if (nextSelectedCount === tagKeys.length) {
         return {
           ...prev,
           tags: {
@@ -560,24 +558,31 @@ export function Menu({
           },
         };
       }
-      return { ...prev, tags: nextTags };
+      return {
+        ...prev,
+        tags: {
+          all: false,
+          feedback: nextSelections.feedback,
+          changeRequests: nextSelections.changeRequests,
+          replies: nextSelections.replies,
+          notifications: nextSelections.notifications,
+        },
+      };
     });
   }
 
   function setPeopleAll(checked: boolean) {
-    if (checked) {
-      setDraftSections((prev) => ({
-        ...prev,
-        people: { all: true, reviewerIds: [] },
-      }));
-      return;
-    }
     setDraftSections((prev) => {
-      const next = { ...prev.people, all: false };
-      if (next.reviewerIds.length === 0) {
-        return { ...prev, people: { all: true, reviewerIds: [] } };
+      if (checked) {
+        return {
+          ...prev,
+          people: { all: true, reviewerIds: [] },
+        };
       }
-      return { ...prev, people: next };
+      return {
+        ...prev,
+        people: { all: false, reviewerIds: [] },
+      };
     });
   }
 
@@ -590,154 +595,104 @@ export function Menu({
       ? portalStyle
       : undefined;
 
+  const filterPanelGroups = isSectionsType
+    ? [
+        {
+          id: 'tags',
+          heading: 'TAGS',
+          allRow: {
+            id: 'tags-all',
+            checked: tagsAllChecked,
+            indeterminate: tagsIndeterminate,
+            onChange: setTagsAll,
+          },
+          items: [
+            {
+              id: 'tags-feedback',
+              label: 'Feedback',
+              checked: draftSections.tags.all || draftSections.tags.feedback,
+              onChange: (checked: boolean) => setIndividualTag('feedback', checked),
+            },
+            {
+              id: 'tags-change-requests',
+              label: 'Change Requests',
+              checked: draftSections.tags.all || draftSections.tags.changeRequests,
+              onChange: (checked: boolean) => setIndividualTag('changeRequests', checked),
+            },
+            {
+              id: 'tags-replies',
+              label: 'Replies',
+              checked: draftSections.tags.all || draftSections.tags.replies,
+              onChange: (checked: boolean) => setIndividualTag('replies', checked),
+            },
+            {
+              id: 'tags-notifications',
+              label: 'Notifications',
+              checked: draftSections.tags.all || draftSections.tags.notifications,
+              onChange: (checked: boolean) => setIndividualTag('notifications', checked),
+            },
+          ],
+        },
+        {
+          id: 'people',
+          heading: 'PEOPLE',
+          allRow: {
+            id: 'people-all',
+            checked: peopleAllChecked,
+            indeterminate: peopleIndeterminate,
+            onChange: setPeopleAll,
+          },
+          people: reviewers.map((reviewer) => ({
+            id: reviewer.id,
+            name: reviewer.name,
+            initials: reviewer.initials,
+            checked: draftSections.people.all || selectedReviewerIds.includes(reviewer.id),
+            onChange: (checked: boolean) =>
+              setDraftSections((prev) => {
+                const allReviewerIds = reviewers.map((item) => item.id);
+                const currentIds = prev.people.all ? allReviewerIds : prev.people.reviewerIds;
+                const nextIds = checked
+                  ? Array.from(new Set([...currentIds, reviewer.id]))
+                  : currentIds.filter((idValue) => idValue !== reviewer.id);
+                if (nextIds.length === reviewers.length) {
+                  return {
+                    ...prev,
+                    people: { all: true, reviewerIds: [] },
+                  };
+                }
+                return {
+                  ...prev,
+                  people: {
+                    all: false,
+                    reviewerIds: nextIds,
+                  },
+                };
+              }),
+          })),
+        },
+      ]
+    : [];
+
   const menuTree = (
     <div
       ref={menuRef}
       id={id}
-      className={isSectionsType ? sectionsRootClass : rootClassResolved}
+      className={isSectionsType ? sectionsAnchorClass : rootClassResolved}
       style={floatingStyle}
     >
       {isSectionsType ? (
-        <div className={styles.sectionsRoot}>
-          <div className={styles.sectionsHeadingWrap}>
-            <span className={styles.sectionsHeading}>TAGS</span>
-          </div>
-          <div className={styles.sectionsDivider} />
-          <div className={styles.sectionsRows}>
-            <div className={styles.sectionsRow}>
-              <Checkbox
-                id={`${id ?? 'menu'}-tags-all`}
-                label="All"
-                checked={tagsAllChecked}
-                indeterminate={tagsIndeterminate}
-                onChange={setTagsAll}
-              />
-            </div>
-            <div className={styles.sectionsRow}>
-              <Checkbox
-                id={`${id ?? 'menu'}-tags-feedback`}
-                label="Feedback"
-                checked={draftSections.tags.feedback}
-                onChange={(checked) => setIndividualTag('feedback', checked)}
-              />
-            </div>
-            <div className={styles.sectionsRow}>
-              <Checkbox
-                id={`${id ?? 'menu'}-tags-change-requests`}
-                label="Change Requests"
-                checked={draftSections.tags.changeRequests}
-                onChange={(checked) => setIndividualTag('changeRequests', checked)}
-              />
-            </div>
-            <div className={styles.sectionsRow}>
-              <Checkbox
-                id={`${id ?? 'menu'}-tags-replies`}
-                label="Replies"
-                checked={draftSections.tags.replies}
-                onChange={(checked) => setIndividualTag('replies', checked)}
-              />
-            </div>
-            <div className={styles.sectionsRow}>
-              <Checkbox
-                id={`${id ?? 'menu'}-tags-notifications`}
-                label="Notifications"
-                checked={draftSections.tags.notifications}
-                onChange={(checked) => setIndividualTag('notifications', checked)}
-              />
-            </div>
-          </div>
-
-          <div className={styles.sectionsHeadingWrap}>
-            <span className={styles.sectionsHeading}>PEOPLE</span>
-          </div>
-          <div className={styles.sectionsDivider} />
-          <div className={styles.sectionsRows}>
-            <div className={styles.sectionsRow}>
-              <Checkbox
-                id={`${id ?? 'menu'}-people-all`}
-                label="All"
-                checked={peopleAllChecked}
-                indeterminate={peopleIndeterminate}
-                onChange={setPeopleAll}
-              />
-            </div>
-            {reviewers.map((reviewer) => {
-              const isChecked = selectedReviewerIds.includes(reviewer.id);
-              return (
-                <div key={reviewer.id} className={styles.sectionsRowReviewer}>
-                  <Checkbox
-                    id={`${id ?? 'menu'}-people-${reviewer.id}`}
-                    label=""
-                    checked={isChecked}
-                    onChange={(checked) =>
-                      setDraftSections((prev) => {
-                        const nextIds = checked
-                          ? Array.from(new Set([...prev.people.reviewerIds, reviewer.id]))
-                          : prev.people.reviewerIds.filter((idValue) => idValue !== reviewer.id);
-                        if (nextIds.length === 0) {
-                          return {
-                            ...prev,
-                            people: { all: true, reviewerIds: [] },
-                          };
-                        }
-                        return {
-                          ...prev,
-                          people: {
-                            all: false,
-                            reviewerIds: nextIds,
-                          },
-                        };
-                      })
-                    }
-                  />
-                  <span className={styles.sectionsReviewerChip}>{reviewer.initials}</span>
-                  <span className={styles.sectionsReviewerName}>{reviewer.name}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          <div
-            className={styles.sectionsFooter}
-            style={{
-              display: 'flex',
-              flexDirection: 'row',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 12,
-            }}
-          >
-            <button
-              type="button"
-              disabled={isSectionsAtDefault}
-              onClick={() => resetSectionsToDefault()}
-              style={{
-                border: 'none',
-                background: 'transparent',
-                padding: 0,
-                fontSize: 13,
-                fontWeight: 400,
-                color: '#6b5e55',
-                cursor: isSectionsAtDefault ? 'default' : 'pointer',
-                opacity: isSectionsAtDefault ? 0.4 : 1,
-                pointerEvents: isSectionsAtDefault ? 'none' : 'auto',
-              }}
-            >
-              Clear All
-            </button>
-            <Button
-              label="Apply"
-              size="sm"
-              variant="primary"
-              style={{ minWidth: 72 }}
-              disabled={!isApplyEnabled}
-              onClick={() => {
-                onApply?.(draftSections);
-                onClose();
-              }}
-            />
-          </div>
-        </div>
+        <FilterPanel
+          idPrefix={id ?? 'menu'}
+          groups={filterPanelGroups}
+          resetDisabled={isSectionsAtDefault}
+          onReset={resetSectionsToDefault}
+          applyDisabled={!isApplyEnabled}
+          onApply={() => {
+            onApply?.(draftSections);
+            onClose();
+          }}
+          style={{ width: 229, minWidth: 229 }}
+        />
       ) : (
         <>
           {hasChildren && (

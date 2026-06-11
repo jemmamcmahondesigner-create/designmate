@@ -1,8 +1,9 @@
 import {
   isPaidPermissionLevel,
   mapInvitePermissionLevel,
-  normalizeWorkspacePermission,
-  type WorkspacePermissionLevel,
+  normalizeTeammatePermissionFields,
+  toStoredPermissionLevel,
+  type ContentPermissionLevel,
 } from "@/lib/workspace/permissions";
 
 export type WorkspaceTeammate = {
@@ -11,7 +12,8 @@ export type WorkspaceTeammate = {
   email: string | null;
   roleId: string | null;
   roleName: string | null;
-  permissionLevel: WorkspacePermissionLevel;
+  permissionLevel: ContentPermissionLevel;
+  isAdmin: boolean;
   isPaid: boolean;
   isPending: boolean;
   /** Pending row from workspace_invites (not yet accepted). */
@@ -43,7 +45,11 @@ type ContributorRow = Record<string, unknown>;
 
 function mapContributorToTeammate(item: ContributorRow): Omit<WorkspaceTeammate, "isPending" | "memberId"> {
   const roleJoin = item.contributor_roles as { name?: string } | null;
-  const permissionLevel = normalizeWorkspacePermission(item.permission_level);
+  const { contentPermissionLevel, isAdmin } = normalizeTeammatePermissionFields(
+    item.permission_level,
+    item.is_admin,
+  );
+  const storedLevel = toStoredPermissionLevel(contentPermissionLevel, isAdmin);
   const roleNameFromJoin = roleJoin?.name ?? null;
   const roleName =
     roleNameFromJoin && String(roleNameFromJoin).trim() !== ""
@@ -58,14 +64,15 @@ function mapContributorToTeammate(item: ContributorRow): Omit<WorkspaceTeammate,
     email: item.email == null ? null : String(item.email),
     roleId: item.role_id == null ? null : String(item.role_id),
     roleName,
-    permissionLevel,
-    isPaid: isPaidPermissionLevel(permissionLevel),
+    permissionLevel: contentPermissionLevel,
+    isAdmin,
+    isPaid: isPaidPermissionLevel(storedLevel),
     userId: item.user_id == null ? null : String(item.user_id),
   };
 }
 
-function memberPermissionLevel(memberRole: string): WorkspacePermissionLevel {
-  return memberRole === "admin" ? "admin" : "reviewer";
+function memberTeammatePermissions(memberRole: string) {
+  return normalizeTeammatePermissionFields(memberRole === "admin" ? "admin" : "reviewer");
 }
 
 export function buildWorkspaceTeammates(
@@ -95,6 +102,7 @@ export function buildWorkspaceTeammates(
 
     if (isPending) {
       const inviteEmail = member.invite_email?.trim() || null;
+      const pendingPerms = memberTeammatePermissions(member.role);
       teammates.push({
         id: `pending-${member.id}`,
         memberId: member.id,
@@ -102,7 +110,8 @@ export function buildWorkspaceTeammates(
         email: inviteEmail,
         roleId: null,
         roleName: null,
-        permissionLevel: memberPermissionLevel(member.role),
+        permissionLevel: pendingPerms.contentPermissionLevel,
+        isAdmin: pendingPerms.isAdmin,
         isPaid: false,
         isPending: true,
       });
@@ -128,6 +137,11 @@ export function buildWorkspaceTeammates(
       continue;
     }
 
+    const memberPerms = memberTeammatePermissions(member.role);
+    const memberStored = toStoredPermissionLevel(
+      memberPerms.contentPermissionLevel,
+      memberPerms.isAdmin,
+    );
     teammates.push({
       id: `member-${member.id}`,
       memberId: member.id,
@@ -136,8 +150,9 @@ export function buildWorkspaceTeammates(
       email: member.invite_email,
       roleId: null,
       roleName: null,
-      permissionLevel: memberPermissionLevel(member.role),
-      isPaid: isPaidPermissionLevel(memberPermissionLevel(member.role)),
+      permissionLevel: memberPerms.contentPermissionLevel,
+      isAdmin: memberPerms.isAdmin,
+      isPaid: isPaidPermissionLevel(memberStored),
       isPending: false,
     });
   }
@@ -163,14 +178,17 @@ export function mapPendingWorkspaceInvites(
     const invitedName =
       typeof row.invited_name === "string" ? row.invited_name.trim() : "";
     const jobRole = typeof row.job_role === "string" ? row.job_role.trim() : "";
-    const permissionLevel = mapInvitePermissionLevel(row.role);
+    const { contentPermissionLevel, isAdmin } = normalizeTeammatePermissionFields(
+      mapInvitePermissionLevel(row.role),
+    );
     return {
       id: `invite-${row.id}`,
       name: invitedName,
       email,
       roleId: null,
       roleName: jobRole || null,
-      permissionLevel,
+      permissionLevel: contentPermissionLevel,
+      isAdmin,
       isPaid: false,
       isPending: true,
       isPendingInvite: true,

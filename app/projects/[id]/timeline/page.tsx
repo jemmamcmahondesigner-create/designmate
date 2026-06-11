@@ -81,7 +81,7 @@ export default async function ProjectTimelinePage({
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("projects")
-    .select("id, name, client, description, status")
+    .select("id, name, client, client_id, description, status")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -97,6 +97,11 @@ export default async function ProjectTimelinePage({
       : String(clientRaw).trim() === ""
         ? null
         : String(clientRaw).trim();
+  const clientIdRaw = r.client_id;
+  const clientId =
+    clientIdRaw == null || String(clientIdRaw).trim() === ""
+      ? null
+      : String(clientIdRaw).trim();
   const descRaw = r.description;
   const description =
     descRaw == null
@@ -159,6 +164,7 @@ export default async function ProjectTimelinePage({
         id: String(r.id),
         name: String(r.name ?? ""),
         client,
+        clientId,
         description,
         status: normalizeStatus(r.status as string | undefined)
       }}

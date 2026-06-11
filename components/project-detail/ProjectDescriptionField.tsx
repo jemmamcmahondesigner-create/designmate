@@ -9,12 +9,14 @@ type ProjectDescriptionFieldProps = {
   projectId: string;
   initialValue: string;
   placeholder: string;
+  readOnly?: boolean;
 };
 
 export function ProjectDescriptionField({
   projectId,
   initialValue,
-  placeholder
+  placeholder,
+  readOnly = false,
 }: ProjectDescriptionFieldProps) {
   const { showToast } = useToast();
   const lastSavedRef = useRef<string>(initialValue ?? "");
@@ -33,15 +35,41 @@ export function ProjectDescriptionField({
       lastSavedRef.current = value;
       showToast("Changes saved");
     },
-    [projectId, showToast]
+    [projectId, showToast],
   );
 
   const handleBlur = useCallback(
     async (e: React.FocusEvent<HTMLTextAreaElement>) => {
       await persistDescription(e.currentTarget.value);
     },
-    [persistDescription]
+    [persistDescription],
   );
+
+  if (readOnly) {
+    const text = initialValue?.trim() ?? "";
+    return (
+      <div
+        style={{
+          minHeight: 90,
+          padding: "10px 12px",
+          borderRadius: 6,
+          border: "1px solid var(--border-subtle, #e4ddd3)",
+          background: "var(--surface-card-recessed, #f3efe9)",
+          fontSize: 13,
+          lineHeight: 1.5,
+          color: text
+            ? "var(--text-primary, #2e1c1c)"
+            : "var(--text-tertiary, #998c82)",
+          fontFamily: "'Plus Jakarta Sans', sans-serif",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          userSelect: "text",
+        }}
+      >
+        {text || placeholder}
+      </div>
+    );
+  }
 
   return (
     <div>

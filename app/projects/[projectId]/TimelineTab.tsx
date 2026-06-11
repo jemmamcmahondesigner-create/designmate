@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { TimelineDateDivider, TimelineEventCard } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { fetchContactDisplayNames } from "@/lib/contacts/fetchContactDisplayNames";
+import { enrichTimelineEventsWithActors } from "@/lib/timeline/enrichTimelineActors";
 import {
   calendarDayGroupLabel,
   includeInProjectTimeline,
@@ -48,25 +48,8 @@ export function TimelineTab({ projectId }: TimelineTabProps) {
           actor: null,
         };
       });
-      const actorIds = [
-        ...new Set(
-          mapped.map((e) => e.actor_id).filter((id): id is string => Boolean(id && id.trim())),
-        ),
-      ];
-      const nameMap = await fetchContactDisplayNames(supabase, actorIds);
-      const withNames = mapped.map((event) => {
-        const aid = event.actor_id;
-        const resolved =
-          aid && nameMap.has(aid) ? (nameMap.get(aid) as string) : undefined;
-        return {
-          ...event,
-          actor:
-            resolved != null
-              ? { id: aid as string, name: resolved, avatar_url: null }
-              : null,
-        };
-      });
-      setEvents(withNames);
+      const withActors = await enrichTimelineEventsWithActors(supabase, mapped);
+      setEvents(withActors);
     })();
     return () => {
       cancelled = true;
@@ -140,6 +123,7 @@ export function TimelineTab({ projectId }: TimelineTabProps) {
                             : String((event.payload as Record<string, unknown>).actor_name)
                       }
                       actorAvatarUrl={event.actor?.avatar_url ?? undefined}
+                      actorContributorId={event.actor?.id ?? undefined}
                       payload={(event.payload ?? {}) as Record<string, any>}
                       timestamp={event.created_at}
                       isProjectTimeline

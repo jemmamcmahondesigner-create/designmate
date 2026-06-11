@@ -24,7 +24,9 @@ import {
   useState,
   type KeyboardEvent,
   type LegacyRef,
+  type RefObject,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ArtifactPreview,
@@ -38,6 +40,7 @@ import {
   Input,
   Menu,
   MenuItem,
+  MenuSectionHeading,
   Modal,
   NotificationBadge,
   PageHeader,
@@ -56,13 +59,13 @@ import type {
   StatusPillColor,
 } from '@/components/ui/ds';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import { formatDistanceToNow } from '@/lib/formatDistanceToNow';
+import { formatDistanceToNowShort } from '@/lib/formatDistanceToNow';
 import { useClientRelativeTime } from '@/lib/hooks/useClientRelativeTime';
+import { normalizeWorkspacePermission } from '@/lib/workspace/permissions';
 import {
   canAddTradeoff,
   canEditReviewDetails,
   canMakeDecision,
-  canSendReviewReminder,
   canSubmitFeedback as canSubmitFeedbackByRole,
   canUseViewOnlyReviewMode,
   getDecisionMakerReviewerId,
@@ -74,7 +77,12 @@ import {
   archiveReviewStubAction,
   assignReviewersAction,
   createTeammateFromReviewAction,
+  deleteReviewAction,
+  markChangeRequestsCompletedAction,
+  markCompleteAction,
+  reopenChangeRequestsAction,
   removeReviewerAction,
+  publishReviewAction,
   saveReviewFocusAction,
   submitReplyAction,
   updateReviewLifecycleStatusAction,
@@ -92,6 +100,30 @@ import { EditReviewTypeModal } from './EditReviewTypeModal';
 import { FinalDecisionDrawer } from '@/components/FinalDecisionDrawer';
 import modalStyles from '@/components/ui/ds/Modal.module.css';
 import { generateArtifactDescription } from '@/app/actions/generateArtifactDescription';
+import { logTimelineEventClient } from '@/lib/timeline/logEventClient';
+import { buildChangeRequestLabelById } from '@/lib/reviews/changeRequestLabels';
+import { artifactIdsWithReceivedFeedback } from '@/lib/reviews/artifactFeedback';
+import {
+  artifactChipHref,
+  resolveArtifactOpenTarget,
+} from '@/lib/artifacts/artifactOpenTarget';
+import {
+  changeRequestMatchesSelection,
+  expandArtifactSelectionKeys,
+} from '@/lib/reviews/artifactSelectionMatch';
+import { canDeleteReview } from '@/lib/reviews/reviewDeleteEligibility';
+import {
+  COMPLETABLE_STATUSES,
+  manualReviewStatusMenuOptions,
+  reopenReviewStatusForType,
+  resolveReviewStatusPill,
+} from '@/lib/reviews/reviewStatusDisplay';
+import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
+import { Warning } from 'phosphor-react';
+
+/** Toast after the remind API successfully emails pending reviewers. */
+const REMINDER_SUCCESS_TOAST =
+  'Reminders sent — all pending reviewers have been notified.';
 
 //  Types 
 
@@ -103,6 +135,8 @@ export interface ReviewArtifact {
   title: string | null;
   /** Raw upload filename from artifacts jsonb (for display when title is empty). */
   originalFileName: string | null;
+  /** Canonical `artifacts.id` when known from `artifact_versions`. */
+  canonicalArtifactId?: string | null;
   type: 'Figma' | 'PDF' | 'Image';
   iteration: string;
   description: string;
@@ -135,6 +169,7 @@ interface Reviewer {
   name: string;
   role: string;
   variant: 'lilac' | 'default';
+  isDecisionMaker: boolean;
 }
 export interface ReviewerAssignment {
   id: string;
@@ -171,6 +206,8 @@ interface FeedbackThread {
   type: 'Feedback' | 'Decision' | 'Question';
   text?: string;
   optionTag?: string;
+  /** Resolved concept labels (one per selected option) for individual tags. */
+  optionTags?: string[];
   replies?: Reply[];
   /**
    * - 'pending'            reviewer hasn't submitted yet
@@ -189,6 +226,11 @@ export interface ReviewerFeedbackEntry {
   status: 'submitted' | 'pending' | 'decision-required';
   feedbackText: string | null;
   selectedOption: string | null;
+  /** From `reviewer_feedback.feedback_kind` when present. */
+  feedbackKind: 'approval' | 'change-request' | 'mixed' | 'generic' | null;
+  /** Contributor who submitted this row (may differ from reviewer when submitted on behalf). */
+  submittedById: string | null;
+  submittedByName?: string | null;
   submittedAt: string | null;
   replyText: string | null;
   replyById: string | null;
@@ -206,6 +248,13 @@ export interface ReviewChangeRequestEntry {
   reply_at: string | null;
   created_at: string;
   batch_id: string | null;
+  batch_number: number | null;
+  reviewer_feedback_id: string | null;
+  change_number: number | null;
+  completed_at: string | null;
+  completed_by_id: string | null;
+  /** Joined from `contributors` when loading change_requests. */
+  reviewer_name?: string | null;
 }
 
 /** Row from `card_replies` (append-only thread replies). */
@@ -215,6 +264,8 @@ export interface CardReplyRow {
   card_id: string;
   reply_text: string;
   reply_by_id: string | null;
+  /** Resolved display name of the replier (server-side), independent of the client contributor list. */
+  reply_by_name: string | null;
   created_at: string;
 }
 
@@ -228,6 +279,17 @@ type DecisionData = {
   tradeOffIsAI?: boolean | null;
 };
 
+export interface ReviewDecisionSnapshotEntry {
+  id: string;
+  decision_status: string;
+  decision_comments: string | null;
+  decision_selected_artifact_ids: string[];
+  decision_owner_id: string | null;
+  decision_made_at: string;
+  superseded_at: string | null;
+  entry_role: 'approval' | 'change_request';
+}
+
 export interface ReviewDetailViewProps {
   reviewId: string;
   title: string;
@@ -237,6 +299,8 @@ export interface ReviewDetailViewProps {
   reviewFocus: string;
   projectId: string;
   projectName: string;
+  /** Parent project lifecycle status (active | paused | complete). */
+  projectStatus?: string | null;
   mode: ReviewMode;
   /** Real artifacts parsed from the `reviews.artifacts` jsonb column. */
   artifacts: ReviewArtifact[];
@@ -245,20 +309,30 @@ export interface ReviewDetailViewProps {
   contributors: ContributorOption[];
   assignedReviewers: ReviewerAssignment[];
   feedbackEntries: ReviewerFeedbackEntry[];
+  /** All `reviewer_feedback` rows (history); `feedbackEntries` is latest per reviewer only. */
+  allFeedbackRows?: ReviewerFeedbackEntry[];
   changeRequests: ReviewChangeRequestEntry[];
   cardReplies: CardReplyRow[];
   currentContributorId: string | null;
   currentContributorRole: string | null;
   /** From `contributors.permission_level` for the effective viewer (e.g. editor, admin, reviewer). */
   currentContributorPermissionLevel?: string | null;
+  /** From `workspace_members.permission_level` for the signed-in auth user. */
+  workspacePermissionLevel?: string | null;
+  currentAuthUserId?: string | null;
+  /** `reviews.creator_id` → auth.users(id). */
+  reviewCreatorAuthUserId?: string | null;
   requireDecisionMaker: boolean;
   decisionMakerId?: string | null;
   /** Contributor id → display name via `contact_names`. */
   contactDisplayById?: Record<string, string>;
   decision: DecisionData;
+  /** Historical final decision snapshots (compare direction changes). */
+  decisionSnapshots?: ReviewDecisionSnapshotEntry[];
   reviewOwnerName: string | null;
   lastReminderSentAt?: string | null;
   reviewCreatedAt?: string | null;
+  reviewUpdatedAt?: string | null;
   activeTabIndex?: number;
   /** Tradeoffs from `reviews.tradeoffs` jsonb (e.g. create-review AI). */
   tradeoffs?: Tradeoff[];
@@ -332,14 +406,356 @@ const NAV_SECTIONS: Array<{ id: string; label: string }> = [
   { id: 'reviewers', label: 'Reviewers' },
 ];
 
-function normStatus(raw: string | null | undefined) {
-  return String(raw ?? '').trim().toLowerCase();
+function avatarInlinePaletteStyle(
+  contributorId: string | null | undefined,
+  name: string,
+  ring = false,
+) {
+  const key = (contributorId ?? name).trim() || name;
+  return getAvatarInlineStyle(key, { ring });
 }
 
-function isCompleteLifecycle(raw: string) {
-  const k = normStatus(raw);
+function normStatus(raw: string | null | undefined) {
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-');
+}
+
+function formatReviewerNamesForSentence(names: string[]) {
+  const cleaned = names.map((name) => name.trim()).filter(Boolean);
+  if (cleaned.length === 0) return 'reviewer';
+  if (cleaned.length === 1) return cleaned[0];
+  if (cleaned.length === 2) return `${cleaned[0]} and ${cleaned[1]}`;
+  return `${cleaned.slice(0, -1).join(', ')}, and ${cleaned.at(-1)}`;
+}
+
+function reviewerChipVariantForType(
+  isDecisionMaker: boolean,
+  normalizedReviewType: string,
+): 'lilac' | 'default' {
+  return normalizedReviewType === 'compare' && isDecisionMaker ? 'lilac' : 'default';
+}
+
+function artifactSelectionKey(artifact: ReviewArtifact) {
+  const title = artifact.title?.trim() ?? '';
+  return title !== '' ? title : artifact.id;
+}
+
+function reviewerNameForChangeRequest(
+  cr: ReviewChangeRequestEntry,
+  reviewersById: Map<string, ReviewerAssignment>,
+  contributorsById: Map<string, ContributorOption>,
+): string {
+  const joined = cr.reviewer_name?.trim();
+  if (joined) return joined;
+  const reviewerId = String(cr.reviewer_id ?? '').trim();
+  if (!reviewerId) return 'Reviewer';
   return (
-    k === 'complete' ||
+    reviewersById.get(reviewerId)?.name ??
+    contributorsById.get(reviewerId)?.name ??
+    'Reviewer'
+  );
+}
+
+function labelsForArtifactSelectionKeys(
+  selectedKeys: string[],
+  artifacts: ReviewArtifact[],
+) {
+  return selectedKeys.map((key) => {
+    const match = artifacts.find(
+      (artifact) => artifactSelectionKey(artifact) === key || artifact.id === key,
+    );
+    return match?.label ?? match?.title ?? key;
+  });
+}
+
+/** One tag label per selected concept — never a comma-joined string. */
+function conceptLabelsFromSelection(
+  selectedOption: string | null | undefined,
+  artifacts: ReviewArtifact[],
+): string[] {
+  if (!selectedOption) return [];
+  const keys = selectedOption
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (keys.length === 0) return [];
+  return labelsForArtifactSelectionKeys(keys, artifacts ?? []);
+}
+
+function resolveThreadConceptOptions(
+  thread: FeedbackThread,
+  artifacts: ReviewArtifact[],
+): { label: string }[] {
+  const safeArtifacts = artifacts ?? [];
+  const sourceLabels =
+    thread.optionTags && thread.optionTags.length > 0
+      ? thread.optionTags
+      : conceptLabelsFromSelection(thread.optionTag, safeArtifacts);
+  return sourceLabels
+    .flatMap((label) => {
+      const labelText = String(label ?? '').trim();
+      if (!labelText) return [];
+      const parts = labelText
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+      return parts.length > 1 ? parts : [labelText];
+    })
+    .filter(Boolean)
+    .map((label) => ({ label }));
+}
+
+function formatDecisionCardTimestamp(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'UTC',
+  });
+}
+
+function decisionCardStatusFromReviewDecision(
+  decisionStatus: string | null | undefined,
+): 'approved' | 'changes-needed' {
+  const normalized = normStatus(decisionStatus);
+  return normalized === 'approved' ? 'approved' : 'changes-needed';
+}
+
+function formatCompareFinalDecisionSummary(
+  dmName: string,
+  conceptLabels: string[],
+  hasChangeRequests: boolean,
+): string {
+  const concepts =
+    conceptLabels.length > 0
+      ? conceptLabels.join(', ')
+      : 'the selected direction';
+  if (hasChangeRequests) {
+    return `${dmName} approved ${concepts} as the final direction with changes.`;
+  }
+  return `${dmName} approved ${concepts} as the final direction.`;
+}
+
+function canManageChangeRequestEntry(
+  cr: ReviewChangeRequestEntry,
+  currentContributorId: string | null,
+  isReviewCreator: boolean,
+  canEditCoreDetails: boolean,
+): boolean {
+  const reviewerId = String(cr.reviewer_id ?? '').trim();
+  return (
+    Boolean(currentContributorId && reviewerId === currentContributorId) ||
+    isReviewCreator ||
+    canEditCoreDetails
+  );
+}
+
+export type ApproveRhcReviewerEntry = {
+  reviewerId: string;
+  reviewerName: string;
+  status: ReviewerFeedbackEntry['status'];
+  feedbackKind: 'approval' | 'change-request';
+  isResubmission: boolean;
+};
+
+function isApproveFeedbackResubmission(
+  entry: ReviewerFeedbackEntry,
+  allEntries: ReviewerFeedbackEntry[],
+): boolean {
+  const submittedForReviewer = allEntries.filter(
+    (row) => row.reviewerId === entry.reviewerId && row.status === 'submitted',
+  );
+  if (submittedForReviewer.length <= 1) return false;
+  const sorted = [...submittedForReviewer].sort(
+    (a, b) =>
+      new Date(String(a.submittedAt ?? 0)).getTime() -
+      new Date(String(b.submittedAt ?? 0)).getTime(),
+  );
+  const index = sorted.findIndex(
+    (row) =>
+      (entry.feedbackId && row.feedbackId === entry.feedbackId) ||
+      row.submittedAt === entry.submittedAt,
+  );
+  return index > 0;
+}
+
+function toApproveRhcFeedbackKind(
+  storedKind: ReviewerFeedbackEntry['feedbackKind'],
+  entryStatus: ReviewerFeedbackEntry['status'],
+  hasChangeRequests: boolean,
+): ApproveRhcReviewerEntry['feedbackKind'] {
+  if (storedKind === 'change-request' || storedKind === 'mixed') {
+    return 'change-request';
+  }
+  if (storedKind === 'approval') {
+    return 'approval';
+  }
+  return entryStatus === 'submitted' && hasChangeRequests ? 'change-request' : 'approval';
+}
+
+function buildApproveRhcReviewerEntries(
+  reviewerIds: string[],
+  resolvedEntries: ReviewerFeedbackEntry[],
+  changeRequests: ReviewChangeRequestEntry[],
+  allFeedbackRows: ReviewerFeedbackEntry[],
+): ApproveRhcReviewerEntry[] {
+  const changeRequestReviewerIds = new Set(
+    changeRequests
+      .map((request) => request.reviewer_id)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const entryByReviewerId = new Map(
+    resolvedEntries.map((entry) => [entry.reviewerId, entry] as const),
+  );
+
+  return reviewerIds.map((reviewerId) => {
+    const entry = entryByReviewerId.get(reviewerId) ?? {
+      feedbackId: null,
+      reviewerId,
+      reviewerName: 'Reviewer',
+      reviewerRole: '',
+      status: 'pending' as const,
+      feedbackText: null,
+      selectedOption: null,
+      feedbackKind: null,
+      submittedById: null,
+      submittedAt: null,
+      replyText: null,
+      replyById: null,
+      replyAt: null,
+      requestedAt: null,
+    };
+    const hasChangeRequests = changeRequestReviewerIds.has(reviewerId);
+    const feedbackKind = toApproveRhcFeedbackKind(
+      entry.feedbackKind,
+      entry.status,
+      hasChangeRequests,
+    );
+    return {
+      reviewerId,
+      reviewerName: entry.reviewerName,
+      status: entry.status,
+      feedbackKind,
+      isResubmission: isApproveFeedbackResubmission(entry, allFeedbackRows),
+    };
+  });
+}
+
+function formatDecisionLogDateHeader(iso: string | null | undefined): string {
+  if (!iso) return 'Approval';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'Approval';
+  return d.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function decisionLogLocalDateKey(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-CA');
+}
+
+function groupDecisionLogEntriesByDate(entries: ReviewerFeedbackEntry[]) {
+  const groups: Array<{ dateLabel: string; entries: ReviewerFeedbackEntry[] }> = [];
+  for (const entry of entries) {
+    const dateLabel = formatDecisionLogDateHeader(entry.submittedAt);
+    const last = groups[groups.length - 1];
+    if (last && last.dateLabel === dateLabel) {
+      last.entries.push(entry);
+    } else {
+      groups.push({ dateLabel, entries: [entry] });
+    }
+  }
+  return groups;
+}
+
+function ApproveRhcReviewerPendingCard({
+  reviewerName,
+  reviewerId,
+}: {
+  reviewerName: string;
+  reviewerId: string;
+}) {
+  return (
+    <div
+      className="flex w-full flex-row items-center gap-2 rounded-[8px] border border-solid border-[#e4ddd3] bg-white"
+      style={{ padding: '12px 16px' }}
+    >
+      <Avatar name={reviewerName} contributorId={reviewerId} size="md" />
+      <span
+        className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#2e1c1c]"
+        style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+      >
+        {reviewerName}
+      </span>
+      <span
+        className="shrink-0 text-[12px] font-normal text-[#7a5500]"
+        style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+      >
+        Feedback required
+      </span>
+      <Icon name="status-blocked" size={16} style={{ color: '#7a5500', flexShrink: 0 }} />
+    </div>
+  );
+}
+
+function ApproveRhcReviewerReceivedCard({
+  reviewerName,
+  reviewerId,
+  isResubmission,
+}: {
+  reviewerName: string;
+  reviewerId: string;
+  isResubmission: boolean;
+}) {
+  const label = isResubmission ? 'Feedback re-submitted' : 'Feedback received';
+  return (
+    <div
+      className="flex w-full flex-row items-center gap-2 rounded-[8px] border border-solid border-[#e4ddd3] bg-white"
+      style={{ padding: '12px 16px' }}
+    >
+      <Avatar name={reviewerName} contributorId={reviewerId} size="md" />
+      <span
+        className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#2e1c1c]"
+        style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+      >
+        {reviewerName}
+      </span>
+      <span
+        className="shrink-0 text-[12px] font-normal text-[#256b38]"
+        style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+      >
+        {label}
+      </span>
+      <span
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#3b9b54]"
+        aria-hidden
+      >
+        <Icon name="check" size={14} style={{ color: '#ffffff' }} />
+      </span>
+    </div>
+  );
+}
+
+function isCompleteLifecycle(raw: string, reviewTypeNorm?: string) {
+  const k = normStatus(raw);
+  const rt = normStatus(reviewTypeNorm ?? '');
+  const rtNorm =
+    rt === 'comparison' ? 'compare' : rt === 'approval' ? 'approve' : rt;
+  if (k === 'complete') return true;
+  if (rtNorm === 'compare') return false;
+  return (
     k === 'approved' ||
     k === 'needs-changes' ||
     k === 'changes-needed'
@@ -361,66 +777,15 @@ function completeLifecyclePillColor(
 function resolveHeaderLifecycle(args: {
   raw: string;
   decisionStatus: string | null | undefined;
-}): { label: string; color: StatusPillColor } {
-  const k = normStatus(args.raw);
-  if (k === 'draft') return { label: 'Draft', color: 'mushroom' };
-  if (k === 'in-review') return { label: 'In Review', color: 'butter' };
-  if (k === 'feedback-submitted') {
-    return { label: 'Feedback Submitted', color: 'blue' };
-  }
-  if (k === 'paused') return { label: 'Paused', color: 'mushroom' };
-  if (isCompleteLifecycle(args.raw)) {
-    return {
-      label: 'Complete',
-      color: completeLifecyclePillColor(args.decisionStatus),
-    };
-  }
-  if (k === 'blocked') return { label: 'Blocked', color: 'error' };
-  if (k === 'closed') return { label: 'Closed', color: 'mushroom' };
-  return { label: 'Draft', color: 'mushroom' };
-}
-
-/** Designer-only lifecycle transitions (Draft / Paused / resume / Complete). */
-function manualLifecycleMenuFor(
-  raw: string,
-  reviewTypeNorm: string,
-): Array<{ value: string; label: string }> {
-  const k = normStatus(raw);
-  const rt = normStatus(reviewTypeNorm);
-  const rtNorm =
-    rt === 'comparison'
-      ? 'compare'
-      : rt === 'approval'
-        ? 'approve'
-        : rt === 'alignment'
-          ? 'align'
-          : rt;
-
-  if (k === 'draft') {
-    return [
-      { value: 'in-review', label: 'In Review' },
-      { value: 'paused', label: 'Paused' },
-    ];
-  }
-  if (k === 'in-review') {
-    return [
-      { value: 'draft', label: 'Draft' },
-      { value: 'paused', label: 'Paused' },
-    ];
-  }
-  if (k === 'paused') {
-    return [
-      { value: 'draft', label: 'Draft' },
-      { value: 'in-review', label: 'In Review' },
-    ];
-  }
-  if (k === 'feedback-submitted') {
-    if (rtNorm === 'critique' || rtNorm === 'align') {
-      return [{ value: 'complete', label: 'Complete' }];
-    }
-    return [];
-  }
-  return [];
+  reviewTypeNorm?: string;
+  openChangeRequestCount?: number;
+}): { label: string; color: StatusPillColor; tooltip?: string } {
+  return resolveReviewStatusPill({
+    status: args.raw,
+    reviewType: args.reviewTypeNorm,
+    decisionStatus: args.decisionStatus,
+    openChangeRequestCount: args.openChangeRequestCount,
+  });
 }
 
 function deriveDecisionPill(
@@ -509,6 +874,47 @@ function formatReviewDetailsDate(value: string | null | undefined) {
   return `${month} ${day}, ${year} @ ${time}`;
 }
 
+function reviewDetailsAttributionLine(input: {
+  ownerName: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}) {
+  const owner = input.ownerName?.trim() || 'Review owner';
+  const created = input.createdAt ? new Date(input.createdAt) : null;
+  const updated = input.updatedAt ? new Date(input.updatedAt) : null;
+  const createdTime = created && !Number.isNaN(created.getTime()) ? created.getTime() : null;
+  const updatedTime = updated && !Number.isNaN(updated.getTime()) ? updated.getTime() : null;
+  const hasEdits = createdTime != null && updatedTime != null && updatedTime > createdTime;
+  const label = hasEdits ? 'Edited by' : 'Created by';
+  const dateLabel = formatReviewDetailsDate(hasEdits ? input.updatedAt : input.createdAt);
+  return `${label} ${owner}${dateLabel ? `, ${dateLabel}` : ''}`;
+}
+
+function resolveTradeoffArtifactIds(
+  tradeoff: Tradeoff,
+  artifacts: ReviewArtifact[],
+): string[] {
+  const ids = [...(tradeoff.relatedArtifactIds ?? [])].filter(Boolean);
+  if (ids.length > 0) return ids;
+  const label = (tradeoff.artifactLabel ?? '').trim();
+  if (!label) return [];
+  const match = artifacts.find((artifact) => {
+    const name = (artifact.title ?? artifact.label ?? artifact.originalFileName ?? '').trim();
+    return name === label;
+  });
+  return match ? [match.id] : [];
+}
+
+function serializeTradeoffsForReview(tradeoffs: Tradeoff[]) {
+  return tradeoffs.map((tradeoff) => ({
+    id: tradeoff.id,
+    label: tradeoff.label,
+    severity: tradeoff.severity,
+    relatedArtifactIds: [...(tradeoff.relatedArtifactIds ?? [])],
+    artifactLabel: tradeoff.artifactLabel ?? null,
+  }));
+}
+
 function isDefaultFilters(filters: MenuSectionsState) {
   return filters.tags.all && filters.people.all;
 }
@@ -537,34 +943,128 @@ function afterRemovingIncludedTag(
   return { ...prev, tags: nextTags };
 }
 
-function buildChangeRequestLabelById(
-  requests: ReviewChangeRequestEntry[],
-): Map<string, string> {
-  const byGroup = new Map<string, ReviewChangeRequestEntry[]>();
-  for (const r of requests) {
-    const key = r.batch_id ?? `__solo_${r.id}`;
-    const list = byGroup.get(key) ?? [];
-    list.push(r);
-    byGroup.set(key, list);
-  }
-  const groups = Array.from(byGroup.values()).map((items) =>
-    [...items].sort(
+function resolveReviewerFeedbackIdForChangeRequest(
+  cr: ReviewChangeRequestEntry,
+  allFeedbackRows: ReviewerFeedbackEntry[],
+  reviewCreatedAt: string | null | undefined = null,
+): string | null {
+  if (cr.reviewer_feedback_id) return cr.reviewer_feedback_id;
+  const reviewerId = cr.reviewer_id ?? '';
+  if (!reviewerId) return null;
+  const submissions = allFeedbackRows
+    .filter((row) => row.reviewerId === reviewerId && row.status === 'submitted')
+    .sort(
+      (a, b) =>
+        new Date(String(a.requestedAt ?? a.submittedAt ?? 0)).getTime() -
+        new Date(String(b.requestedAt ?? b.submittedAt ?? 0)).getTime(),
+    );
+  if (submissions.length === 0) return null;
+  const crTime = new Date(cr.created_at).getTime();
+  if (Number.isNaN(crTime)) return null;
+  const entryIndex = submissions.findIndex((row, idx) => {
+    const entryTime = new Date(
+      String(row.submittedAt ?? row.requestedAt ?? 0),
+    ).getTime();
+    const prevTimeRaw =
+      idx > 0
+        ? new Date(
+            String(
+              submissions[idx - 1].submittedAt ?? submissions[idx - 1].requestedAt ?? 0,
+            ),
+          ).getTime()
+        : new Date(String(reviewCreatedAt ?? 0)).getTime();
+    const prevTime = Number.isNaN(prevTimeRaw) ? 0 : prevTimeRaw;
+    return crTime > prevTime && crTime <= entryTime;
+  });
+  if (entryIndex >= 0) return submissions[entryIndex].feedbackId ?? null;
+  return null;
+}
+
+function countsTowardChangeRequestBatch(
+  row: ReviewerFeedbackEntry,
+  allFeedbackRows: ReviewerFeedbackEntry[],
+  changeRequests: ReviewChangeRequestEntry[],
+  reviewCreatedAt: string | null | undefined = null,
+): boolean {
+  if (row.feedbackKind === 'change-request' || row.feedbackKind === 'mixed') return true;
+  if (row.feedbackKind === 'approval') return false;
+  if (!row.feedbackId) return false;
+  return changeRequests.some(
+    (cr) =>
+      resolveReviewerFeedbackIdForChangeRequest(
+        cr,
+        allFeedbackRows,
+        reviewCreatedAt,
+      ) === row.feedbackId,
+  );
+}
+
+function submissionBatchNumberForFeedbackId(
+  allFeedbackRows: ReviewerFeedbackEntry[],
+  changeRequests: ReviewChangeRequestEntry[],
+  reviewerId: string,
+  feedbackId: string | null | undefined,
+  reviewCreatedAt: string | null | undefined = null,
+): number {
+  const subs = allFeedbackRows
+    .filter(
+      (row) =>
+        row.reviewerId === reviewerId &&
+        row.status === 'submitted' &&
+        countsTowardChangeRequestBatch(
+          row,
+          allFeedbackRows,
+          changeRequests,
+          reviewCreatedAt,
+        ),
+    )
+    .sort(
+      (a, b) =>
+        new Date(String(a.requestedAt ?? a.submittedAt ?? 0)).getTime() -
+        new Date(String(b.requestedAt ?? b.submittedAt ?? 0)).getTime(),
+    );
+  if (!feedbackId) return Math.max(1, subs.length);
+  const idx = subs.findIndex((row) => row.feedbackId === feedbackId);
+  return idx >= 0 ? idx + 1 : Math.max(1, subs.length);
+}
+
+function changeRequestsForFeedbackSubmission(
+  entry: ReviewerFeedbackEntry,
+  allFeedbackRows: ReviewerFeedbackEntry[],
+  changeRequests: ReviewChangeRequestEntry[],
+  reviewCreatedAt: string | null | undefined = null,
+): ReviewChangeRequestEntry[] {
+  if (!entry.feedbackId) return [];
+  return changeRequests
+    .filter((cr) => {
+      if (cr.reviewer_id !== entry.reviewerId) return false;
+      return (
+        resolveReviewerFeedbackIdForChangeRequest(
+          cr,
+          allFeedbackRows,
+          reviewCreatedAt,
+        ) === entry.feedbackId
+      );
+    })
+    .sort(
       (a, b) =>
         new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-    ),
-  );
-  groups.sort(
-    (a, b) =>
-      new Date(a[0]?.created_at ?? 0).getTime() -
-      new Date(b[0]?.created_at ?? 0).getTime(),
-  );
-  const labelById = new Map<string, string>();
-  groups.forEach((items, parentIdx) => {
-    items.forEach((item, subIdx) => {
-      labelById.set(item.id, `${parentIdx + 1}.${subIdx + 1}`);
-    });
-  });
-  return labelById;
+    );
+}
+
+function decisionCardOwnerLabel(
+  entry: ReviewerFeedbackEntry,
+  contributorsById: Map<string, ContributorOption>,
+): string {
+  const submittedById = entry.submittedById;
+  if (submittedById && submittedById !== entry.reviewerId) {
+    const submitterName =
+      entry.submittedByName?.trim() ||
+      contributorsById.get(submittedById)?.name ||
+      'Creator';
+    return `${submitterName} on behalf of ${entry.reviewerName}`;
+  }
+  return entry.reviewerName;
 }
 
 function initialsFromName(name: string) {
@@ -587,34 +1087,73 @@ export function ReviewDetailView({
   reviewFocus: reviewFocusProp,
   projectId,
   projectName,
+  projectStatus = null,
   mode,
   artifacts: artifactsProp,
   problems: problemsProp,
   contributors,
   assignedReviewers,
   feedbackEntries,
+  allFeedbackRows: allFeedbackRowsProp = [],
   changeRequests,
   cardReplies: cardRepliesProp = [],
   currentContributorId,
   currentContributorRole,
   currentContributorPermissionLevel = null,
+  workspacePermissionLevel = null,
+  currentAuthUserId = null,
+  reviewCreatorAuthUserId = null,
   requireDecisionMaker,
   decisionMakerId = null,
   contactDisplayById = {},
   decision: decisionData,
+  decisionSnapshots: decisionSnapshotsProp = [],
   reviewOwnerName,
   lastReminderSentAt: lastReminderSentAtProp = null,
   reviewCreatedAt = null,
+  reviewUpdatedAt = null,
   activeTabIndex = 0,
   tradeoffs: tradeoffsProp = [],
 }: ReviewDetailViewProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { showToast } = useToast();
+  const showReviewersNotifiedToast = useCallback(() => {
+    showToast({
+      message: 'Reviewers notified',
+      actionLabel: 'View',
+      onAction: () => router.push(`/reviews/${reviewId}?tab=activity`),
+    });
+  }, [reviewId, router, showToast]);
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const sortedDecisionSnapshots = useMemo(
+    () =>
+      [...decisionSnapshotsProp].sort((a, b) => {
+        const second = (iso: string) => {
+          const ms = new Date(iso).getTime();
+          return Number.isNaN(ms) ? 0 : Math.floor(ms / 1000);
+        };
+        const diff = second(b.decision_made_at) - second(a.decision_made_at);
+        if (diff !== 0) return diff;
+        const roleRank = (role: ReviewDecisionSnapshotEntry['entry_role']) =>
+          role === 'approval' ? 0 : 1;
+        const roleDiff = roleRank(a.entry_role) - roleRank(b.entry_role);
+        if (roleDiff !== 0) return roleDiff;
+        return 0;
+      }),
+    [decisionSnapshotsProp],
+  );
   const canEditCoreDetails = canEditReviewDetails(
     currentContributorPermissionLevel ?? null,
   );
+  const canEditReviewMenu =
+    canEditReviewDetails(currentContributorPermissionLevel ?? null) ||
+    canEditReviewDetails(workspacePermissionLevel ?? null);
+  const canDeleteReviewMenu =
+    normalizeWorkspacePermission(currentContributorPermissionLevel ?? null) ===
+      'admin' ||
+    normalizeWorkspacePermission(workspacePermissionLevel ?? null) === 'admin';
+  const showReviewKebabMenu = canEditReviewMenu || canDeleteReviewMenu;
   const isForcedViewOnly = canUseViewOnlyReviewMode({
     requestedMode: mode,
     canEditCoreDetails,
@@ -663,7 +1202,8 @@ export function ReviewDetailView({
       id: reviewer.id,
       name: reviewer.name,
       role: reviewer.role,
-      variant: reviewer.isDecisionMaker ? 'lilac' : 'default',
+      variant: reviewerChipVariantForType(reviewer.isDecisionMaker, normalizedReviewType),
+      isDecisionMaker: reviewer.isDecisionMaker,
     }))
   );
   const [savingReviewers, setSavingReviewers] = useState(false);
@@ -671,6 +1211,12 @@ export function ReviewDetailView({
   const [lastReminderSentAt, setLastReminderSentAt] = useState<string | null>(
     lastReminderSentAtProp,
   );
+  const [showPublishFromBellModal, setShowPublishFromBellModal] = useState(false);
+  const [publishingReview, setPublishingReview] = useState(false);
+  const [showCompleteModal, setShowCompleteModal] = useState(false);
+  const [markingComplete, setMarkingComplete] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletingReview, setDeletingReview] = useState(false);
 
   useEffect(() => {
     setLastReminderSentAt(lastReminderSentAtProp);
@@ -678,17 +1224,24 @@ export function ReviewDetailView({
 
   const [isReminderRateLimited, setIsReminderRateLimited] = useState(false);
 
+  // Re-evaluate the shared 1-hour cooldown on a 60s tick so the bell
+  // re-enables automatically once the window elapses, without a page reload.
   useEffect(() => {
-    if (!lastReminderSentAt) {
-      setIsReminderRateLimited(false);
-      return;
-    }
-    const sentAt = new Date(lastReminderSentAt).getTime();
-    if (Number.isNaN(sentAt)) {
-      setIsReminderRateLimited(false);
-      return;
-    }
-    setIsReminderRateLimited(Date.now() - sentAt < 24 * 60 * 60 * 1000);
+    const evaluate = () => {
+      if (!lastReminderSentAt) {
+        setIsReminderRateLimited(false);
+        return;
+      }
+      const sentAt = new Date(lastReminderSentAt).getTime();
+      if (Number.isNaN(sentAt)) {
+        setIsReminderRateLimited(false);
+        return;
+      }
+      setIsReminderRateLimited(Date.now() - sentAt < 60 * 60 * 1000);
+    };
+    evaluate();
+    const id = window.setInterval(evaluate, 60_000);
+    return () => window.clearInterval(id);
   }, [lastReminderSentAt]);
 
   const handleSendReminder = useCallback(async (): Promise<boolean> => {
@@ -708,7 +1261,7 @@ export function ReviewDetailView({
         const rateLimitedAt =
           data.last_sent_at ?? data.last_reminder_sent_at ?? lastReminderSentAt;
         if (rateLimitedAt) setLastReminderSentAt(rateLimitedAt);
-        showToast('A reminder was already sent today');
+        showToast('A reminder was already sent recently');
         return false;
       }
       if (!res.ok) {
@@ -722,8 +1275,7 @@ export function ReviewDetailView({
       if (sent === 0) {
         showToast('No pending reviewers to remind');
       } else {
-        const label = sent === 1 ? 'reviewer' : 'reviewers';
-        showToast(`Reminder sent to ${sent} ${label}`);
+        showToast(REMINDER_SUCCESS_TOAST);
       }
       return sent > 0;
     } catch {
@@ -733,12 +1285,123 @@ export function ReviewDetailView({
       setSendingReminder(false);
     }
   }, [reviewId, sendingReminder, showToast, lastReminderSentAt]);
+
   const [showFeedbackDrawer, setShowFeedbackDrawer] = useState(false);
+  const pendingRevalidation = useRef(false);
+  const [feedbackSavedAlertVisible, setFeedbackSavedAlertVisible] = useState(false);
+  const [feedbackDrawerIsNew, setFeedbackDrawerIsNew] = useState(true);
+  const [feedbackDrawerTargetReviewerId, setFeedbackDrawerTargetReviewerId] = useState<string | null>(null);
+  const [feedbackDrawerDraftOverride, setFeedbackDrawerDraftOverride] = useState<{
+    feedbackText: string;
+    selectedOption: string | null;
+  } | null>(null);
+  const [feedbackDrawerExistingFeedbackId, setFeedbackDrawerExistingFeedbackId] =
+    useState<string | null>(null);
+  const [feedbackDrawerInitialChangeRequests, setFeedbackDrawerInitialChangeRequests] =
+    useState<
+      Array<{ batchId: string; artifactIds: string[]; changesNeeded: string }>
+    >([]);
+  type SubmitFeedbackDrawerOpenOptions = {
+    prefill?: boolean;
+    feedbackEntryId?: string;
+    targetReviewerId?: string | null;
+  };
+  const feedbackRowsForLookup =
+    allFeedbackRowsProp.length > 0 ? allFeedbackRowsProp : feedbackEntries;
+  const openSubmitFeedbackDrawer = useCallback(
+    (options?: SubmitFeedbackDrawerOpenOptions) => {
+      const creatorNeedsOnBehalfSelection = Boolean(
+        reviewCreatorAuthUserId &&
+          currentAuthUserId &&
+          reviewCreatorAuthUserId === currentAuthUserId &&
+          (!currentContributorId ||
+            !assignedReviewers.some((reviewer) => reviewer.id === currentContributorId)),
+      );
+      if (options?.prefill && options.feedbackEntryId) {
+        const entry = feedbackRowsForLookup.find(
+          (row) =>
+            row.feedbackId === options.feedbackEntryId ||
+            `feedback-${row.reviewerId}` === options.feedbackEntryId,
+        );
+        if (entry) {
+          setFeedbackDrawerTargetReviewerId(options.targetReviewerId ?? entry.reviewerId);
+          if (creatorNeedsOnBehalfSelection) {
+            setFeedbackDrawerDraftOverride(null);
+    setFeedbackDrawerIsNew(true);
+    setShowFeedbackDrawer(true);
+            return;
+          }
+          const isApproveResubmit = normalizedReviewType === 'approve';
+          setFeedbackDrawerDraftOverride(
+            isApproveResubmit
+              ? { feedbackText: '', selectedOption: null }
+              : {
+                  feedbackText: entry.feedbackText ?? '',
+                  selectedOption: entry.selectedOption,
+                },
+          );
+          setFeedbackDrawerExistingFeedbackId(
+            normalizedReviewType === 'align' ? entry.feedbackId ?? null : null,
+          );
+          if (normalizedReviewType === 'align') {
+            setFeedbackDrawerInitialChangeRequests(
+              changeRequests
+                .filter((cr) => cr.reviewer_id === entry.reviewerId)
+                .map((cr) => ({
+                  batchId: String(cr.batch_id ?? cr.id).trim() || String(cr.id),
+                  artifactIds: Array.isArray(cr.artifact_ids)
+                    ? cr.artifact_ids.map((id) => String(id).trim()).filter(Boolean)
+                    : [],
+                  changesNeeded: String(cr.changes_needed ?? '').trim(),
+                })),
+            );
+          } else {
+            setFeedbackDrawerInitialChangeRequests([]);
+          }
+          setFeedbackDrawerIsNew(false);
+          setShowFeedbackDrawer(true);
+          return;
+        }
+      }
+      setFeedbackDrawerTargetReviewerId(options?.targetReviewerId ?? null);
+      setFeedbackDrawerDraftOverride(null);
+      setFeedbackDrawerExistingFeedbackId(null);
+      setFeedbackDrawerInitialChangeRequests([]);
+      setFeedbackDrawerIsNew(true);
+      setShowFeedbackDrawer(true);
+    },
+    [
+      feedbackRowsForLookup,
+      normalizedReviewType,
+      reviewCreatorAuthUserId,
+      currentAuthUserId,
+      currentContributorId,
+      assignedReviewers,
+      changeRequests,
+    ],
+  );
+  const flushPendingRevalidation = useCallback(() => {
+    if (pendingRevalidation.current) {
+      router.refresh();
+      pendingRevalidation.current = false;
+    }
+  }, [router]);
+  const handleChangeRequestCreatedWhileDrawer = useCallback(() => {
+    if (showFeedbackDrawer) {
+      pendingRevalidation.current = true;
+    } else {
+      router.refresh();
+    }
+  }, [showFeedbackDrawer, router]);
   const [showFinalDecisionDrawer, setShowFinalDecisionDrawer] = useState(false);
-  const [feedbackSubmitToast, setFeedbackSubmitToast] = useState<string | null>(null);
+  const [finalDecisionChangeDirection, setFinalDecisionChangeDirection] = useState(false);
   const [reviewDetailsSaveErrorToast, setReviewDetailsSaveErrorToast] = useState<string | null>(null);
   const [showEditTypeModal, setShowEditTypeModal] = useState(false);
   const lastSavedReviewFocusRef = useRef(reviewFocusProp);
+  const lastSavedArtifactDescriptionsRef = useRef<Record<string, string>>(
+    Object.fromEntries(artifactsProp.map((artifact) => [artifact.id, artifact.description])),
+  );
+  const [artifactAiUnavailableById, setArtifactAiUnavailableById] = useState<Record<string, boolean>>({});
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [headerStatusOverride, setHeaderStatusOverride] = useState<string | null>(null);
   const [headerLifecycleMenuOpen, setHeaderLifecycleMenuOpen] = useState(false);
@@ -746,10 +1409,17 @@ export function ReviewDetailView({
   const [lifecycleToast, setLifecycleToast] = useState<string | null>(null);
   const [editReviewDrawerOpen, setEditReviewDrawerOpen] = useState(false);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [editingTradeoff, setEditingTradeoff] = useState<Tradeoff | null>(null);
+  const [openTradeoffMenuId, setOpenTradeoffMenuId] = useState<string | null>(null);
+  const tradeoffMenuRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const headerStatusRef = useRef<HTMLDivElement | null>(null);
   const pageKebabSectionRef = useRef<HTMLDivElement | null>(null);
   const [changeRequestReplies, setChangeRequestReplies] = useState<Record<string, string>>({});
   const [tabIndex, setTabIndex] = useState(activeTabIndex);
+  const [activityRefreshKey, setActivityRefreshKey] = useState(0);
+  const bumpActivityLog = useCallback(() => {
+    setActivityRefreshKey((key) => key + 1);
+  }, []);
   const [activeFilters, setActiveFilters] = useState<MenuSectionsState>({
     tags: {
       all: true,
@@ -775,6 +1445,8 @@ export function ReviewDetailView({
   const [selectMenuOpen, setSelectMenuOpen] = useState(false);
   const [selectedFromProject, setSelectedFromProject] = useState<string[]>([]);
   const addButtonRef = useRef<HTMLDivElement | null>(null);
+  const selectMenuContainerRef = useRef<HTMLDivElement | null>(null);
+  const reviewerMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const [openKebabId, setOpenKebabId] = useState<string | null>(null);
   const kebabRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -797,6 +1469,22 @@ export function ReviewDetailView({
     contributors
   );
   const [reviewerModalOpen, setReviewerModalOpen] = useState(false);
+  const [reopenReviewModalOpen, setReopenReviewModalOpen] = useState(false);
+  const [reopenReviewSubmitting, setReopenReviewSubmitting] = useState(false);
+  const [removeReviewerModalOpen, setRemoveReviewerModalOpen] = useState(false);
+  const [removeReviewerSubmitting, setRemoveReviewerSubmitting] = useState(false);
+  const [pendingReviewerRemoval, setPendingReviewerRemoval] = useState<{
+    id: string;
+    name: string;
+    autoCloseOnRemoval: boolean;
+  } | null>(null);
+  const [pendingReviewerAddIds, setPendingReviewerAddIds] = useState<string[]>([]);
+  const [pendingReviewerAddSource, setPendingReviewerAddSource] = useState<
+    'overview' | 'rhc' | 'create-teammate' | null
+  >(null);
+  const [pendingReviewerAddLabel, setPendingReviewerAddLabel] = useState('reviewer');
+  const [pendingReviewerAddCount, setPendingReviewerAddCount] = useState(1);
+  const pendingReviewerAddConfirmRef = useRef<(() => Promise<void>) | null>(null);
   const reviewerAnchorRef = useRef<HTMLDivElement | null>(null);
   const [newReviewerName, setNewReviewerName] = useState('');
   const [newReviewerEmail, setNewReviewerEmail] = useState('');
@@ -809,8 +1497,11 @@ export function ReviewDetailView({
 
   // Re-seed local drafts when the server-provided review changes (e.g. on
   // client-side navigation between reviews).
+  const hasChangeRequests = changeRequests.length > 0;
   const showDecisionLog =
-    normalizedReviewType === 'compare' || normalizedReviewType === 'approve';
+    normalizedReviewType === 'compare' ||
+    normalizedReviewType === 'approve' ||
+    (normalizedReviewType === 'align' && hasChangeRequests);
   const tabs = showDecisionLog
     ? [{ label: 'Overview' }, { label: 'Decision Log' }, { label: 'Activity' }]
     : [{ label: 'Overview' }, { label: 'Activity' }];
@@ -851,21 +1542,58 @@ export function ReviewDetailView({
   }, [searchParams, showDecisionLog, router, reviewId]);
 
   const displayRawStatus = headerStatusOverride ?? rawStatus;
-  const lifecycleUi = resolveHeaderLifecycle({
-    raw: displayRawStatus,
-    decisionStatus: decisionData.status,
-  });
-  const manualLifecycleOptions = useMemo(
-    () =>
-      canEditCoreDetails && coreInteractionMode === 'edit'
-        ? manualLifecycleMenuFor(displayRawStatus, normalizedReviewType)
-        : [],
-    [canEditCoreDetails, coreInteractionMode, displayRawStatus, normalizedReviewType],
-  );
+  const normalizedDisplayStatus = normStatus(displayRawStatus);
+  const isReviewPaused = normalizedDisplayStatus === 'paused';
+  const isReviewDraft = normalizedDisplayStatus === 'draft';
+  const resolvedStatusKey =
+    normalizedDisplayStatus === 'changes-needed' ? 'needs-changes' : normalizedDisplayStatus;
+  const isResolved = (COMPLETABLE_STATUSES as readonly string[]).includes(resolvedStatusKey);
+  const isComplete = normalizedDisplayStatus === 'complete';
+  const compareDirectionApprovedLocked =
+    normalizedReviewType === 'compare' && normalizedDisplayStatus === 'approved';
+  const compareReviewFullyLocked =
+    normalizedReviewType === 'compare' && normalizedDisplayStatus === 'complete';
+  const reviewFieldsReadOnly = normalizedDisplayStatus === 'complete';
+
+  const handleBellReminder = useCallback(async (): Promise<boolean> => {
+    if (isReviewDraft) {
+      setShowPublishFromBellModal(true);
+      return false;
+    }
+    return handleSendReminder();
+  }, [handleSendReminder, isReviewDraft]);
+
+  const handlePublishFromBell = useCallback(async () => {
+    setShowPublishFromBellModal(false);
+    setPublishingReview(true);
+    try {
+      const result = await publishReviewAction(reviewId);
+      if (result.error) {
+        showToast(result.error);
+        return;
+      }
+      showToast('Review published');
+      showReviewersNotifiedToast();
+      bumpActivityLog();
+      router.refresh();
+    } finally {
+      setPublishingReview(false);
+    }
+  }, [
+    bumpActivityLog,
+    reviewId,
+    router,
+    showReviewersNotifiedToast,
+    showToast,
+  ]);
 
   const handleLifecyclePick = useCallback(
     async (next: string) => {
       setHeaderLifecycleMenuOpen(false);
+      if (normStatus(next) === 'complete') {
+        setShowCompleteModal(true);
+        return;
+      }
       setHeaderStatusOverride(next);
       const result = await updateReviewLifecycleStatusAction({
         reviewId,
@@ -876,84 +1604,34 @@ export function ReviewDetailView({
         return;
       }
       setLifecycleToast('Review status updated');
+      bumpActivityLog();
       router.refresh();
     },
-    [reviewId, router],
+    [reviewId, router, bumpActivityLog],
   );
 
-  const pageHeaderStatusSlot = useMemo(() => {
-    const canOpenMenu = manualLifecycleOptions.length > 0;
-    return (
-      <div ref={headerStatusRef} style={{ position: 'relative' }}>
-        <StatusPill
-          color={lifecycleUi.color}
-          appearance="filled"
-          label={lifecycleUi.label}
-          size="lg"
-          state={canOpenMenu ? 'interactive' : 'default'}
-          onClick={
-            canOpenMenu
-              ? () => {
-                  setHeaderLifecycleMenuOpen((o) => !o);
-                  setReviewMenu(null);
-                }
-              : undefined
-          }
-        />
-        {canOpenMenu ? (
-          <Menu
-            open={headerLifecycleMenuOpen}
-            onClose={() => setHeaderLifecycleMenuOpen(false)}
-            anchorRef={headerStatusRef}
-            align="left"
-            aria-label="Review status"
-          >
-            {manualLifecycleOptions.map((opt) => {
-              const active = normStatus(displayRawStatus) === normStatus(opt.value);
-              return (
-                <MenuItem
-                  key={opt.value}
-                  label={opt.label}
-                  active={active}
-                  onClick={() => void handleLifecyclePick(opt.value)}
-                />
-              );
-            })}
-          </Menu>
-        ) : null}
-      </div>
-    );
-  }, [
-    lifecycleUi.color,
-    lifecycleUi.label,
-    manualLifecycleOptions,
-    headerLifecycleMenuOpen,
-    displayRawStatus,
-    handleLifecyclePick,
-  ]);
+  const handleMarkCompleteConfirm = useCallback(async () => {
+    setMarkingComplete(true);
+    try {
+      const result = await markCompleteAction(reviewId);
+      if (!result.success) {
+        showToast(result.error ?? 'Could not mark review as complete');
+        return;
+      }
+      setShowCompleteModal(false);
+      setHeaderStatusOverride('complete');
+      showToast('Review marked as complete');
+      bumpActivityLog();
+      router.refresh();
+    } finally {
+      setMarkingComplete(false);
+    }
+  }, [reviewId, router, bumpActivityLog, showToast]);
 
-  const reviewOptionsMenu = useMemo(
-    () => (
-      <Menu
-        open={reviewMenu !== null}
-        onClose={() => setReviewMenu(null)}
-        anchorRef={pageKebabSectionRef}
-        align="right"
-        aria-label="Review options"
-        type="dropdown"
-      >
-        <MenuItem label="Edit Review" disabled />
-        <MenuItem
-          label="Archive Review"
-          onClick={() => {
-            setReviewMenu(null);
-            setArchiveConfirmOpen(true);
-          }}
-        />
-      </Menu>
-    ),
-    [reviewMenu],
-  );
+  const handleReopenReview = useCallback(() => {
+    setReviewMenu(null);
+    void handleLifecyclePick(reopenReviewStatusForType(normalizedReviewType));
+  }, [handleLifecyclePick, normalizedReviewType]);
 
   useEffect(() => {
     function onPointerDown(ev: PointerEvent) {
@@ -991,6 +1669,9 @@ export function ReviewDetailView({
   }, [reviewFocusProp]);
   useEffect(() => {
     setArtifacts(artifactsProp);
+    lastSavedArtifactDescriptionsRef.current = Object.fromEntries(
+      artifactsProp.map((artifact) => [artifact.id, artifact.description]),
+    );
   }, [artifactsProp]);
   useEffect(() => {
     setProblems(problemsProp.filter((p) => p.selected));
@@ -1002,23 +1683,23 @@ export function ReviewDetailView({
         id: reviewer.id,
         name: reviewer.name,
         role: reviewer.role,
-        variant: reviewer.isDecisionMaker ? 'lilac' : 'default',
+        variant: reviewerChipVariantForType(reviewer.isDecisionMaker, normalizedReviewType),
+        isDecisionMaker: reviewer.isDecisionMaker,
       }))
     );
-  }, [assignedReviewers]);
+  }, [assignedReviewers, normalizedReviewType]);
 
   // Close the "Select from project" dropdown on outside click. Gated on the
   // open flag so the listener is only live while the dropdown is open  a
   // dormant global pointerdown listener previously blocked navigation.
   useEffect(() => {
     if (!selectMenuOpen) return;
-    function onPointerDown(e: PointerEvent) {
-      if (!addButtonRef.current?.contains(e.target as Node)) {
+    function onMouseDown(e: MouseEvent) {
+      if (selectMenuContainerRef.current?.contains(e.target as Node)) return;
         setSelectMenuOpen(false);
       }
-    }
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
   }, [selectMenuOpen]);
 
   useEffect(() => {
@@ -1035,14 +1716,35 @@ export function ReviewDetailView({
   }, [openKebabId]);
 
   useEffect(() => {
-    if (!reviewerMenuOpen) return;
+    if (openTradeoffMenuId === null) return;
+    const activeId = openTradeoffMenuId;
     function onPointerDown(e: PointerEvent) {
-      if (!reviewerAnchorRef.current?.contains(e.target as Node)) {
-        setReviewerMenuOpen(false);
+      const anchor = tradeoffMenuRefs.current[activeId];
+      if (!anchor?.contains(e.target as Node)) {
+        setOpenTradeoffMenuId(null);
       }
     }
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [openTradeoffMenuId]);
+
+  useEffect(() => {
+    if (!reviewerMenuOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (reviewerMenuPanelRef.current?.contains(e.target as Node)) return;
+      if (reviewerAnchorRef.current?.contains(e.target as Node)) return;
+      setReviewerMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [reviewerMenuOpen]);
+
+  // Clear the reviewer search whenever the picker closes (Cancel, outside
+  // click, or confirm) so reopening always starts from an empty field.
+  useEffect(() => {
+    if (!reviewerMenuOpen) {
+      setReviewerSearch('');
+    }
   }, [reviewerMenuOpen]);
 
   useEffect(() => {
@@ -1080,6 +1782,25 @@ export function ReviewDetailView({
       (reviewerSearch.trim() === '' ||
         contributor.name.toLowerCase().includes(reviewerSearch.toLowerCase()))
   );
+  const projectContributorIds = useMemo(
+    () => new Set(contributors.map((contributor) => contributor.id)),
+    [contributors],
+  );
+  const projectTeammatesInMenu = useMemo(
+    () => availableContributors.filter((c) => projectContributorIds.has(c.id)),
+    [availableContributors, projectContributorIds],
+  );
+  const otherMembersInMenu = useMemo(
+    () => availableContributors.filter((c) => !projectContributorIds.has(c.id)),
+    [availableContributors, projectContributorIds],
+  );
+  const rhcAssignableContributors = useMemo(
+    () =>
+      allSystemContributors.filter(
+        (contributor) => !assignedReviewers.some((reviewer) => reviewer.id === contributor.id),
+      ),
+    [allSystemContributors, assignedReviewers],
+  );
   const showHelperText =
     normalizedReviewType === 'compare' || normalizedReviewType === 'approve';
   const helperText =
@@ -1093,8 +1814,16 @@ export function ReviewDetailView({
     setNewProblemText('');
     setIncludeInProject(true);
   };
+  useEffect(() => {
+    if (!tradeoffModalOpen || !editingTradeoff) return;
+    setTradeoffSelectedArtifactIds(
+      resolveTradeoffArtifactIds(editingTradeoff, artifacts),
+    );
+  }, [tradeoffModalOpen, editingTradeoff, artifacts]);
+
   const closeTradeoffModal = () => {
     setTradeoffModalOpen(false);
+    setEditingTradeoff(null);
     setNewTradeoffText('');
     setNewTradeoffSeverity('High');
     setTradeoffSelectedArtifactIds([]);
@@ -1195,14 +1924,34 @@ export function ReviewDetailView({
     return () => root.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // NOTE: `offsetTop` is relative to the nearest offset parent, not the scroll
-  // container, so computing it against `scrollRootRef` gave incorrect offsets
-  // and stopped the nav from scrolling. `scrollIntoView` walks up to the
-  // element's own scroll container and lands the heading at the top.
+  const scrollLhcElementIntoView = (
+    target: HTMLElement,
+    options?: { align?: 'start' | 'center' },
+  ) => {
+    const root = scrollRootRef.current;
+    if (!root) return;
+
+    const rootRect = root.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const measuredOffset =
+      Number.parseFloat(window.getComputedStyle(root).paddingTop || '0') || 0;
+    const align = options?.align ?? 'start';
+    const baseTop = root.scrollTop + (targetRect.top - rootRect.top);
+    const nextTop =
+      align === 'center'
+        ? baseTop - root.clientHeight / 2 + targetRect.height / 2
+        : baseTop - measuredOffset;
+
+    root.scrollTo({
+      top: Math.max(0, nextTop),
+      behavior: 'smooth',
+    });
+  };
+
   const scrollToSection = (id: string) => {
     const target = document.getElementById(id);
     if (!target) return;
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    scrollLhcElementIntoView(target, { align: 'start' });
   };
 
   const scrollToTop = () => {
@@ -1223,6 +1972,11 @@ export function ReviewDetailView({
   /** Persisted decision author after a decision exists; otherwise first reviewer for compare/approve. */
   const assignedDecisionOwnerId =
     (decisionMakerId && String(decisionMakerId).trim()) || decisionMakerReviewerId || null;
+  const decisionMakerDisplayName = contactNameFromMap(
+    contactDisplayById,
+    assignedDecisionOwnerId,
+    'Decision maker',
+  );
   const decisionMaker = assignedReviewers.find(
     (reviewer) => reviewer.id === decisionMakerReviewerId
   );
@@ -1239,42 +1993,91 @@ export function ReviewDetailView({
       ),
     [contactDisplayById, decisionData.ownerId, decisionMakerReviewerId],
   );
-  const isDecisionMaker = Boolean(
-    currentContributorId &&
-      assignedDecisionOwnerId &&
-      currentContributorId === assignedDecisionOwnerId
-  );
+  const isDecisionMaker =
+    normalizedReviewType === 'compare'
+      ? Boolean(
+          currentContributorId &&
+            decisionMakerReviewerId &&
+            currentContributorId === decisionMakerReviewerId,
+        )
+      : Boolean(
+          currentContributorId &&
+            assignedDecisionOwnerId &&
+            currentContributorId === assignedDecisionOwnerId,
+        );
   const decisionMade =
     Boolean(decisionData.madeAt) ||
     Boolean(decisionData.text) ||
+    (normalizedReviewType === 'compare' &&
+      (normalizedDisplayStatus === 'approved' || normalizedDisplayStatus === 'complete')) ||
     (decisionData.status !== null &&
       decisionData.status !== 'in-review' &&
       decisionData.status !== 'draft');
-  const decisionStatusUnset =
-    decisionData.status == null || String(decisionData.status ?? '').trim() === '';
+  const compareDirectionApproved =
+    normalizedReviewType === 'compare' && normalizedDisplayStatus === 'approved';
+  const openChangeRequestsCount = useMemo(
+    () => changeRequests.filter((cr) => !cr.completed_at).length,
+    [changeRequests],
+  );
+  const manualLifecycleOptions = useMemo(() => {
+    const opts =
+      canEditCoreDetails && coreInteractionMode === 'edit'
+        ? manualReviewStatusMenuOptions(displayRawStatus)
+        : [];
+    return opts;
+  }, [
+    canEditCoreDetails,
+    coreInteractionMode,
+    displayRawStatus,
+  ]);
+  const compareSingleReviewer =
+    normalizedReviewType === 'compare' && reviewerIds.length === 1;
+  const compareAtFeedbackSubmitted =
+    normalizedReviewType === 'compare' &&
+    normalizedDisplayStatus === 'feedback-submitted' &&
+    !decisionMade &&
+    !compareSingleReviewer;
   const showComparisonButterPromptDm =
     normalizedReviewType === 'compare' &&
-    normStatus(rawStatus) === 'feedback-submitted' &&
-    decisionStatusUnset &&
-    Boolean(decisionMakerId && String(decisionMakerId).trim()) &&
-    Boolean(currentContributorId && currentContributorId === String(decisionMakerId).trim());
+    !decisionMade &&
+    isDecisionMaker &&
+    (compareAtFeedbackSubmitted ||
+      (compareSingleReviewer && normalizedDisplayStatus === 'in-review'));
   const comparisonDecisionPromptRowName = showComparisonButterPromptDm
-    ? contactNameFromMap(contactDisplayById, currentContributorId, 'Reviewer')
+    ? contactNameFromMap(
+        contactDisplayById,
+        currentContributorId,
+        decisionMakerDisplayName,
+      )
     : null;
   const showDecisionPromptReadonly =
-    (normalizedReviewType === 'compare' || normalizedReviewType === 'approve') &&
-    normStatus(rawStatus) === 'feedback-submitted' &&
-    decisionStatusUnset &&
-    Boolean(assignedDecisionOwnerId) &&
-    !showComparisonButterPromptDm &&
-    Boolean(
-      currentContributorId &&
-        assignedDecisionOwnerId &&
-        currentContributorId !== assignedDecisionOwnerId,
-    );
-  const feedbackByReviewerId = new Map(
-    feedbackEntries.map((entry) => [entry.reviewerId, { status: entry.status }])
+    compareAtFeedbackSubmitted && !isDecisionMaker;
+  const openFinalDecisionDrawer = useCallback(
+    (options?: { changeDirection?: boolean }) => {
+      if (normalizedReviewType === 'compare' && !isDecisionMaker) return;
+      setFinalDecisionChangeDirection(Boolean(options?.changeDirection));
+      setShowFinalDecisionDrawer(true);
+    },
+    [normalizedReviewType, isDecisionMaker],
   );
+  const showCompareDirectionApprovedBanner =
+    normalizedReviewType === 'compare' &&
+    (normalizedDisplayStatus === 'approved' ||
+      normalizedDisplayStatus === 'complete') &&
+    decisionMade;
+  const compareHideSubmitFeedback =
+    normalizedReviewType === 'compare' &&
+    (normalizedDisplayStatus === 'approved' ||
+      (compareSingleReviewer && isDecisionMaker));
+  const feedbackByReviewerId = useMemo(() => {
+    const map = new Map<string, { status: 'submitted' | 'pending' }>();
+    for (const reviewerId of reviewerIds) {
+      const entries = feedbackEntries.filter((e) => e.reviewerId === reviewerId);
+      const hasSubmitted = entries.some((e) => e.status === 'submitted');
+      map.set(reviewerId, { status: hasSubmitted ? 'submitted' : 'pending' });
+    }
+    return map;
+  }, [feedbackEntries, reviewerIds]);
   const repliesByCardId = useMemo(() => {
     const m = new Map<string, CardReplyRow[]>();
     for (const r of cardRepliesProp) {
@@ -1326,6 +2129,7 @@ export function ReviewDetailView({
       type: entry.feedbackText ? 'Feedback' : 'Feedback',
       text: entry.feedbackText ?? undefined,
       optionTag: entry.selectedOption ?? undefined,
+      optionTags: conceptLabelsFromSelection(entry.selectedOption, artifacts),
       replies: undefined,
       status: entry.status,
       requestedAt: entry.requestedAt,
@@ -1333,45 +2137,483 @@ export function ReviewDetailView({
   });
   const feedbackThreadById = new Map(feedbackThreads.map((thread) => [thread.id, thread]));
   const pendingFeedbackCount = feedbackThreads.filter(
-    (c) => c.status === 'pending' || c.status === 'decision-required'
+    (c) => c.status === 'pending',
   ).length;
   const currentContributorName = useMemo(() => {
     if (!currentContributorId) return null;
     return contributors.find((c) => c.id === currentContributorId)?.name ?? null;
   }, [contributors, currentContributorId]);
-  const canSendReminder = useMemo(
-    () =>
-      canSendReviewReminder({
-        permissionLevel: currentContributorPermissionLevel,
-        reviewOwnerName,
-        currentContributorId,
-        currentContributorName,
-      }),
-    [
-      currentContributorPermissionLevel,
-      reviewOwnerName,
-      currentContributorId,
-      currentContributorName,
-    ],
-  );
-  const showReminderBell =
-    canSendReminder &&
-    pendingFeedbackCount > 0 &&
-    !allReviewerFeedbackSubmitted;
   const decisionAlertTimestamp = useClientRelativeTime(decisionData.madeAt ?? null);
-  const canSubmitFeedback = canSubmitFeedbackByRole({
+  const isReviewCreator = Boolean(
+    reviewCreatorAuthUserId &&
+      currentAuthUserId &&
+      reviewCreatorAuthUserId === currentAuthUserId,
+  );
+  const reviewIsCompletedOrClosed = normalizedDisplayStatus === 'complete';
+  // Type-agnostic: adding a reviewer to a review that has already received
+  // feedback re-opens it. Covers Approve (approved / needs-changes /
+  // changes-needed) AND Compare (feedback-submitted). Never fires for in-review
+  // or terminal complete.
+  const shouldReopenOnReviewerAdd =
+    normalizedDisplayStatus === 'approved' ||
+    normalizedDisplayStatus === 'needs-changes' ||
+    normalizedDisplayStatus === 'changes-needed' ||
+    normalizedDisplayStatus === 'feedback-submitted';
+  const canManageReminderBell = isReviewCreator || canEditReviewMenu;
+  const showReminderBell =
+    canManageReminderBell &&
+    !reviewIsCompletedOrClosed &&
+    pendingFeedbackCount > 0 &&
+    !isReviewPaused;
+  const showDecisionLogRemindButton = showReminderBell;
+  const reviewerCanSubmitFeedback = canSubmitFeedbackByRole({
     currentContributorId,
     reviewerIds,
     feedbackByReviewerId: new Map(
-      resolvedFeedbackEntries.map((entry) => [entry.reviewerId, { status: entry.status }])
+      resolvedFeedbackEntries.map((entry) => [entry.reviewerId, { status: entry.status }]),
     ),
   });
-  const canCurrentUserMakeDecision = canMakeDecision({
-    currentContributorId,
-    decisionMakerReviewerId: assignedDecisionOwnerId,
-    allReviewerFeedbackSubmitted,
+  const creatorCanSubmitOnBehalf = isReviewCreator && resolvedFeedbackEntries.some(
+    (entry) => entry.status !== 'submitted',
+  );
+  const canSubmitFeedback = reviewerCanSubmitFeedback || creatorCanSubmitOnBehalf;
+  const reviewerNameLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const contributor of contributors) {
+      map.set(contributor.id, contributor.name);
+    }
+    for (const contributor of allSystemContributors) {
+      map.set(contributor.id, contributor.name);
+    }
+    return map;
+  }, [allSystemContributors, contributors]);
+  const pendingReviewerAddNames = useMemo(
+    () =>
+      pendingReviewerAddIds.map((reviewerId) => reviewerNameLookup.get(reviewerId) ?? 'Reviewer'),
+    [pendingReviewerAddIds, reviewerNameLookup],
+  );
+  const resetPendingReviewerAddState = () => {
+    setPendingReviewerAddIds([]);
+    setPendingReviewerAddSource(null);
+    setPendingReviewerAddLabel('reviewer');
+    setPendingReviewerAddCount(1);
+    pendingReviewerAddConfirmRef.current = null;
+  };
+  const pendingReviewerNameLabel =
+    pendingReviewerAddLabel || formatReviewerNamesForSentence(pendingReviewerAddNames);
+  const confirmReopenLabel =
+    pendingReviewerAddCount === 1
+      ? 'Reviewer added. Review re-opened.'
+      : 'Reviewers added. Review re-opened.';
+  const runReviewerAddFlow = async ({
+    reviewerIds,
+    reopenReview,
+    onStartSaving,
+    onFinishSaving,
+    onSuccess,
+  }: {
+    reviewerIds: string[];
+    reopenReview: boolean;
+    onStartSaving: () => void;
+    onFinishSaving: () => void;
+    onSuccess: () => void;
+  }) => {
+    const cleanedReviewerIds = Array.from(
+      new Set(reviewerIds.map((reviewerId) => reviewerId.trim()).filter(Boolean)),
+    );
+    if (cleanedReviewerIds.length === 0) return;
+    setReopenReviewSubmitting(true);
+    onStartSaving();
+    const { error, reviewersNotified } = await assignReviewersAction({
+      reviewId,
+      reviewerIds: cleanedReviewerIds,
+      requireDecisionMaker,
+      reopenReview,
+    });
+    onFinishSaving();
+    setReopenReviewSubmitting(false);
+    if (error) {
+      showToast(error);
+      return;
+    }
+    onSuccess();
+    resetPendingReviewerAddState();
+    setReopenReviewModalOpen(false);
+    if (reviewersNotified) {
+      showReviewersNotifiedToast();
+    } else {
+      showToast(reopenReview ? confirmReopenLabel : 'Changes saved');
+    }
+    bumpActivityLog();
+    router.refresh();
+  };
+  const maybeAddReviewers = ({
+    reviewerIds,
+    source,
+    onStartSaving,
+    onFinishSaving,
+    onSuccess,
+  }: {
+    reviewerIds: string[];
+    source: 'overview' | 'rhc';
+    onStartSaving: () => void;
+    onFinishSaving: () => void;
+    onSuccess: () => void;
+  }) => {
+    const cleanedReviewerIds = Array.from(
+      new Set(reviewerIds.map((reviewerId) => reviewerId.trim()).filter(Boolean)),
+    );
+    if (cleanedReviewerIds.length === 0) return;
+    if (shouldReopenOnReviewerAdd) {
+      setPendingReviewerAddIds(cleanedReviewerIds);
+      setPendingReviewerAddSource(source);
+      setPendingReviewerAddLabel(
+        formatReviewerNamesForSentence(
+          cleanedReviewerIds.map((reviewerId) => reviewerNameLookup.get(reviewerId) ?? 'Reviewer'),
+        ),
+      );
+      setPendingReviewerAddCount(cleanedReviewerIds.length);
+      pendingReviewerAddConfirmRef.current = async () => {
+        await runReviewerAddFlow({
+          reviewerIds: cleanedReviewerIds,
+          reopenReview: true,
+          onStartSaving,
+          onFinishSaving,
+          onSuccess,
+        });
+      };
+      setReopenReviewModalOpen(true);
+      return;
+    }
+    void runReviewerAddFlow({
+      reviewerIds: cleanedReviewerIds,
+      reopenReview: false,
+      onStartSaving,
+      onFinishSaving,
+      onSuccess,
+    });
+  };
+  const handleCreateReviewer = async ({
+    name,
+    email,
+    role,
+    includeInTeam: includeReviewerInTeam,
+    reopenReview,
+  }: {
+    name: string;
+    email: string;
+    role: string;
+    includeInTeam: boolean;
+    reopenReview: boolean;
+  }) => {
+    if (!projectId.trim()) return;
+    setIsCreatingTeammate(true);
+    if (reopenReview) {
+      setReopenReviewSubmitting(true);
+    }
+    if (includeReviewerInTeam && email) {
+      const inviteSupabase = createSupabaseBrowserClient();
+      const activeWorkspaceId = await getActiveWorkspaceId(inviteSupabase);
+      if (activeWorkspaceId) {
+        const inviteResult = await sendWorkspaceInvite({
+          workspace_id: activeWorkspaceId,
+          email,
+          name,
+          role: 'viewer',
+        });
+        if (inviteResult.status === 'error') {
+          setIsCreatingTeammate(false);
+          if (reopenReview) {
+            setReopenReviewSubmitting(false);
+          }
+          showToast(inviteToastMessage(inviteResult, name, email));
+          return;
+        }
+        showToast(inviteToastMessage(inviteResult, name, email));
+      }
+    }
+
+    const { error, reviewersNotified } = await createTeammateFromReviewAction({
+      reviewId,
+      projectId,
+      name,
+      email: email || null,
+      role: role.trim() || 'Stakeholder',
+      requireDecisionMaker,
+      includeInWorkspace: includeReviewerInTeam,
+      reopenReview,
+    });
+    setIsCreatingTeammate(false);
+    if (reopenReview) {
+      setReopenReviewSubmitting(false);
+    }
+    if (error) {
+      showToast(error);
+      return;
+    }
+    if (reviewersNotified) {
+      showReviewersNotifiedToast();
+    } else if (reopenReview) {
+      resetPendingReviewerAddState();
+      setReopenReviewModalOpen(false);
+      showToast('Reviewer added. Review re-opened.');
+    } else if (!includeReviewerInTeam || !email) {
+      showToast('Changes saved');
+    }
+    closeReviewerModal();
+    if (reviewersNotified || reopenReview) {
+      bumpActivityLog();
+    }
+    router.refresh();
+  };
+
+  const feedbackStageCtx = {
+    reviewTypeNorm: normalizedReviewType,
+    rawReviewStatus: displayRawStatus,
+    changeRequestCount: changeRequests.length,
+  };
+  const overviewStage = deriveFeedbackStage(
+    feedbackThreads,
     decisionMade,
+    feedbackStageCtx,
+  );
+  const submittedFeedbackCount = feedbackThreads.filter(
+    (t) => t.status === 'submitted',
+  ).length;
+  const reviewDeleteEligible = canDeleteReview(
+    normalizedDisplayStatus,
+    submittedFeedbackCount,
+  );
+  const reviewOptionsMenu = useMemo(() => {
+    if (!showReviewKebabMenu) return null;
+    const deleteDisabledTooltip =
+      "This review has feedback and can't be deleted. Archive coming soon.";
+    return (
+      <Menu
+        open={reviewMenu !== null}
+        onClose={() => setReviewMenu(null)}
+        anchorRef={pageKebabSectionRef}
+        align="right"
+        aria-label="Review options"
+        type="dropdown"
+      >
+        {canEditReviewMenu && !isComplete ? (
+          <MenuItem
+            label="Edit Review"
+            onClick={() => {
+              setReviewMenu(null);
+              setEditReviewDrawerOpen(true);
+            }}
+          />
+        ) : null}
+        {isResolved && canEditReviewMenu ? (
+          <MenuItem
+            label="Mark as complete"
+            onClick={() => {
+              setReviewMenu(null);
+              setShowCompleteModal(true);
+            }}
+          />
+        ) : null}
+        {isComplete && canEditReviewMenu ? (
+          <MenuItem label="Reopen review" onClick={handleReopenReview} />
+        ) : null}
+        {canDeleteReviewMenu && !isComplete ? (
+          reviewDeleteEligible ? (
+            <MenuItem
+              label="Delete Review"
+              destructive
+              onClick={() => {
+                setReviewMenu(null);
+                setShowDeleteModal(true);
+              }}
+            />
+          ) : (
+            <Tooltip label={deleteDisabledTooltip} position="left" fullWidth>
+              <span
+                style={{ display: 'block' }}
+                className="[&_[role=menuitem]]:opacity-100 [&_[role=menuitem]]:cursor-default [&_[role=menuitem]:hover]:bg-transparent [&_[role=menuitem]:focus]:bg-transparent"
+              >
+                <MenuItem
+                  label="Delete Review"
+                  disabled
+                  labelStyle={{ color: 'var(--text-disabled)' }}
+                />
+              </span>
+            </Tooltip>
+          )
+        ) : null}
+      </Menu>
+    );
+  }, [
+    reviewMenu,
+    showReviewKebabMenu,
+    canEditReviewMenu,
+    canDeleteReviewMenu,
+    isComplete,
+    isResolved,
+    handleReopenReview,
+    reviewDeleteEligible,
+  ]);
+  const handleDeleteReviewConfirm = useCallback(async () => {
+    setDeletingReview(true);
+    try {
+      const result = await deleteReviewAction(reviewId);
+      if (!result.success) {
+        showToast(result.error ?? 'Could not delete review');
+        return;
+      }
+      setShowDeleteModal(false);
+      router.push(result.redirectTo ?? '/reviews');
+    } finally {
+      setDeletingReview(false);
+    }
+  }, [reviewId, router, showToast]);
+  const approveFeedbackHistoryRows =
+    allFeedbackRowsProp.length > 0 ? allFeedbackRowsProp : resolvedFeedbackEntries;
+  const approveFeedbackSubmissionCount = approveFeedbackHistoryRows.filter(
+    (entry) => entry.status === 'submitted',
+  ).length;
+  const approveUniqueReviewerCount = new Set(
+    approveFeedbackHistoryRows
+      .filter((entry) => entry.status === 'submitted')
+      .map((entry) => entry.reviewerId),
+  ).size;
+  const totalReviewerCount = reviewerIds.length;
+  const approveRhcReviewerEntries = useMemo(
+    () =>
+      buildApproveRhcReviewerEntries(
+        reviewerIds,
+        resolvedFeedbackEntries,
+        changeRequests,
+        allFeedbackRowsProp.length > 0 ? allFeedbackRowsProp : resolvedFeedbackEntries,
+      ),
+    [reviewerIds, resolvedFeedbackEntries, changeRequests, allFeedbackRowsProp],
+  );
+
+  const lifecycleUi = resolveHeaderLifecycle({
+    raw: displayRawStatus,
+    decisionStatus: decisionData.status,
+    reviewTypeNorm: normalizedReviewType,
+    openChangeRequestCount: openChangeRequestsCount,
   });
+  const showChangesRequestedBanner =
+    normalizedReviewType === 'approve' &&
+    overviewStage === 3 &&
+    changeRequests.length > 0;
+  const showApprovedBanner =
+    normalizedReviewType === 'approve' &&
+    overviewStage === 4 &&
+    normStatus(displayRawStatus) === 'approved';
+  const showCompareOpenCrWarning =
+    normalizedReviewType === 'compare' &&
+    openChangeRequestsCount > 0 &&
+    (normalizedDisplayStatus === 'approved' ||
+      normalizedDisplayStatus === 'complete');
+
+  const pageHeaderStatusSlot = useMemo(() => {
+    const projectIsComplete =
+      String(projectStatus ?? '').trim().toLowerCase() === 'complete';
+    const canOpenMenu =
+      !projectIsComplete && manualLifecycleOptions.length > 0;
+    const statusPill = (
+      <StatusPill
+        color={lifecycleUi.color}
+        appearance="filled"
+        prominence={
+          showCompareOpenCrWarning ||
+          (lifecycleUi.color === 'brand' && normalizedDisplayStatus === 'complete')
+            ? 'high'
+            : 'default'
+        }
+        leadingIcon={
+          showCompareOpenCrWarning ? (
+            <Warning size={16} weight="fill" aria-hidden />
+          ) : undefined
+        }
+        label={lifecycleUi.label}
+        size="lg"
+        state={canOpenMenu ? 'interactive' : 'default'}
+        onClick={
+          canOpenMenu
+            ? () => {
+                setHeaderLifecycleMenuOpen((o) => !o);
+                setReviewMenu(null);
+              }
+            : undefined
+        }
+      />
+    );
+
+    if (projectIsComplete) {
+      return (
+        <div ref={headerStatusRef} style={{ position: 'relative' }}>
+          <Tooltip
+            label="This project is complete. Reactivate the project to edit reviews."
+            position="bottom"
+          >
+            <span className="inline-flex">{statusPill}</span>
+          </Tooltip>
+        </div>
+      );
+    }
+
+    return (
+      <div ref={headerStatusRef} style={{ position: 'relative' }}>
+        {'tooltip' in lifecycleUi && lifecycleUi.tooltip ? (
+          <Tooltip label={lifecycleUi.tooltip} position="bottom">
+            <span className="inline-flex">{statusPill}</span>
+          </Tooltip>
+        ) : (
+          statusPill
+        )}
+        {canOpenMenu ? (
+          <Menu
+            open={headerLifecycleMenuOpen}
+            onClose={() => setHeaderLifecycleMenuOpen(false)}
+            anchorRef={headerStatusRef}
+            align="left"
+            aria-label="Review status"
+          >
+            {manualLifecycleOptions.map((opt) => {
+              const active = normStatus(displayRawStatus) === normStatus(opt.value);
+              return (
+                <MenuItem
+                  key={opt.value}
+                  label={opt.label}
+                  active={active}
+                  onClick={() => void handleLifecyclePick(opt.value)}
+                />
+              );
+            })}
+          </Menu>
+        ) : null}
+      </div>
+    );
+  }, [
+    projectStatus,
+    lifecycleUi.color,
+    lifecycleUi.label,
+    'tooltip' in lifecycleUi ? lifecycleUi.tooltip : undefined,
+    manualLifecycleOptions,
+    headerLifecycleMenuOpen,
+    displayRawStatus,
+    handleLifecyclePick,
+    showCompareOpenCrWarning,
+    normalizedDisplayStatus,
+  ]);
+  const canCurrentUserMakeDecision =
+    normalizedReviewType !== 'approve' &&
+    canMakeDecision({
+      currentContributorId,
+      decisionMakerReviewerId:
+        normalizedReviewType === 'compare'
+          ? decisionMakerReviewerId
+          : assignedDecisionOwnerId,
+      allReviewerFeedbackSubmitted,
+      decisionMade,
+    }) &&
+    (normalizedReviewType !== 'compare' || isDecisionMaker);
   const currentUserHasSubmitted = feedbackEntries.some(
     (entry) => entry.reviewerId === currentContributorId && entry.status === 'submitted',
   );
@@ -1393,11 +2635,178 @@ export function ReviewDetailView({
     };
   }, [feedbackEntries, currentContributorId]);
   const reviewersById = new Map(assignedReviewers.map((reviewer) => [reviewer.id, reviewer]));
+  const submittedReviewerIds = useMemo(
+    () =>
+      new Set(
+        resolvedFeedbackEntries
+          .filter((entry) => entry.status === 'submitted')
+          .map((entry) => entry.reviewerId),
+      ),
+    [resolvedFeedbackEntries],
+  );
+  const lockedReviewerIds = useMemo(() => {
+    const rows = allFeedbackRowsProp.length > 0 ? allFeedbackRowsProp : resolvedFeedbackEntries;
+    return new Set(
+      rows
+        .filter(
+          (row) =>
+            row.status === 'submitted' ||
+            Boolean(
+              row.submittedAt ||
+                row.feedbackText?.trim() ||
+                row.selectedOption?.trim() ||
+                row.replyText?.trim(),
+            ),
+        )
+        .map((row) => row.reviewerId),
+    );
+  }, [allFeedbackRowsProp, resolvedFeedbackEntries]);
+
+  const evaluateRemovalAutoClose = useCallback(
+    (removeReviewerId: string) => {
+      const remainingReviewerIds = assignedReviewers
+        .map((reviewer) => reviewer.id)
+        .filter((id) => id !== removeReviewerId);
+      if (remainingReviewerIds.length === 0) return false;
+      const allRemainingSubmitted = remainingReviewerIds.every((id) =>
+        submittedReviewerIds.has(id),
+      );
+      if (!allRemainingSubmitted) return false;
+      const remainingHasChangeRequests = changeRequests.some((request) => {
+        const reviewerId = String(request.reviewer_id ?? '').trim();
+        return reviewerId !== '' && remainingReviewerIds.includes(reviewerId);
+      });
+      return !remainingHasChangeRequests;
+    },
+    [assignedReviewers, changeRequests, submittedReviewerIds],
+  );
+
+  const removeReviewerNow = useCallback(
+    async (reviewerId: string) => {
+      setRemoveReviewerSubmitting(true);
+      const { error, autoApproved } = await removeReviewerAction({
+        reviewId,
+        reviewerContributorId: reviewerId,
+      });
+      setRemoveReviewerSubmitting(false);
+      if (error) {
+        showToast(error);
+        return;
+      }
+      showToast(autoApproved ? 'Reviewer removed. Review returned to Approved.' : 'Reviewer removed.');
+      router.refresh();
+    },
+    [reviewId, router, showToast],
+  );
+  const handleMarkChangeRequestsCompleted = useCallback(
+    async (changeRequestIds: string[]) => {
+      const result = await markChangeRequestsCompletedAction({
+        reviewId,
+        changeRequestIds,
+      });
+      if (!result.success) {
+        showToast(result.error ?? 'Could not mark change request as completed.');
+        return;
+      }
+      router.refresh();
+    },
+    [reviewId, router, showToast],
+  );
+  const handleReopenChangeRequests = useCallback(
+    async (changeRequestIds: string[]) => {
+      const result = await reopenChangeRequestsAction({
+        reviewId,
+        changeRequestIds,
+      });
+      if (!result.success) {
+        showToast(result.error ?? 'Could not reopen change request.');
+        return;
+      }
+      router.refresh();
+    },
+    [reviewId, router, showToast],
+  );
   const reviewersForMenu: MenuSectionsReviewer[] = assignedReviewers.map((reviewer) => ({
     id: reviewer.id,
     name: reviewer.name,
     initials: initialsFromName(reviewer.name),
   }));
+  const decisionLogFeedbackRows =
+    allFeedbackRowsProp.length > 0 ? allFeedbackRowsProp : resolvedFeedbackEntries;
+  const approveSubmittedFeedbackForDecisionLog = useMemo(
+    () =>
+      normalizedReviewType === 'approve'
+        ? decisionLogFeedbackRows.filter((entry) => entry.status === 'submitted')
+        : [],
+    [normalizedReviewType, decisionLogFeedbackRows],
+  );
+  const approveDecisionLogGroups = useMemo(
+    () =>
+      groupDecisionLogEntriesByDate(
+        [...approveSubmittedFeedbackForDecisionLog].sort(
+          (a, b) =>
+            new Date(String(b.submittedAt ?? 0)).getTime() -
+            new Date(String(a.submittedAt ?? 0)).getTime(),
+        ),
+      ),
+    [approveSubmittedFeedbackForDecisionLog],
+  );
+  const alignChangeRequestLogGroups = useMemo(() => {
+    if (normalizedReviewType !== 'align' || changeRequests.length === 0) {
+      return [];
+    }
+    const sorted = [...changeRequests].sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+    const byDate = new Map<string, ReviewChangeRequestEntry[]>();
+    for (const cr of sorted) {
+      const dateLabel = formatDecisionLogDateHeader(cr.created_at);
+      const list = byDate.get(dateLabel) ?? [];
+      list.push(cr);
+      byDate.set(dateLabel, list);
+    }
+    return [...byDate.entries()].map(([dateLabel, rows]) => ({ dateLabel, rows }));
+  }, [normalizedReviewType, changeRequests]);
+  // Compare-only: every submitted concept-preference row (full history). The
+  // latest submitted row per reviewer is the active preference; older rows are
+  // rendered as superseded (amended) cards. Approve path above is untouched.
+  const compareReviewerPreferencesForDecisionLog = useMemo(
+    () =>
+      normalizedReviewType === 'compare'
+        ? decisionLogFeedbackRows.filter((entry) => entry.status === 'submitted')
+        : [],
+    [normalizedReviewType, decisionLogFeedbackRows],
+  );
+  // feedbackId of the most recent submitted preference per reviewer — these
+  // render as the active "Preference" card; all others are "PreferenceAmended".
+  const compareActivePreferenceFeedbackIds = useMemo(() => {
+    const latestByReviewer = new Map<string, { id: string | null; ts: number }>();
+    for (const entry of compareReviewerPreferencesForDecisionLog) {
+      const ts = new Date(String(entry.submittedAt ?? 0)).getTime();
+      const existing = latestByReviewer.get(entry.reviewerId);
+      if (!existing || ts >= existing.ts) {
+        latestByReviewer.set(entry.reviewerId, { id: entry.feedbackId, ts });
+      }
+    }
+    const ids = new Set<string>();
+    for (const { id } of latestByReviewer.values()) {
+      if (id) ids.add(id);
+    }
+    return ids;
+  }, [compareReviewerPreferencesForDecisionLog]);
+  const compareDecisionLogGroups = useMemo(
+    () =>
+      groupDecisionLogEntriesByDate(
+        [...compareReviewerPreferencesForDecisionLog].sort(
+          (a, b) =>
+            new Date(String(b.submittedAt ?? 0)).getTime() -
+            new Date(String(a.submittedAt ?? 0)).getTime(),
+        ),
+      ),
+    [compareReviewerPreferencesForDecisionLog],
+  );
+
   const feedbackCards = resolvedFeedbackEntries
     .filter((entry) => {
       if (reviewType.trim().toLowerCase() !== 'approve') return true;
@@ -1455,15 +2864,121 @@ export function ReviewDetailView({
         return false;
       }
     }
-    if (!activeFilters.people.all && activeFilters.people.reviewerIds.length > 0) {
+    if (!activeFilters.people.all) {
+      if (activeFilters.people.reviewerIds.length === 0) return false;
       if (!activeFilters.people.reviewerIds.includes(card.reviewerId ?? '')) return false;
     }
     return true;
   });
-  const totalCardCount = feedbackThreads.length + changeRequests.length;
-  const changeRequestLabelById = buildChangeRequestLabelById(changeRequests);
+  const totalCardCount =
+    normalizedReviewType === 'approve'
+      ? approveFeedbackSubmissionCount
+      : feedbackThreads.length + changeRequests.length;
+  const changeRequestLabelById = buildChangeRequestLabelById(
+    changeRequests,
+    decisionLogFeedbackRows,
+    reviewCreatedAt,
+  );
+  const reviewIsLifecycleComplete = normalizedDisplayStatus === 'complete';
+  const resolveArtifactTagHref = useCallback(
+    (label: string) => {
+      const trimmed = label.trim();
+      const match = artifacts.find(
+        (artifact) =>
+          artifact.label.trim() === trimmed ||
+          (artifact.title?.trim() ?? '') === trimmed ||
+          artifact.id === trimmed,
+      );
+      if (!match) return null;
+      const target = resolveArtifactOpenTarget({
+        linkUrl: match.linkUrl,
+        imageUrl: match.imageUrl,
+        fileType:
+          match.type === 'Figma'
+            ? 'figma'
+            : match.type === 'PDF'
+              ? 'pdf'
+              : 'jpeg',
+      });
+      return artifactChipHref(target);
+    },
+    [artifacts],
+  );
+  const artifactIdsWithFeedback = useMemo(
+    () =>
+      [
+        ...artifactIdsWithReceivedFeedback(
+          artifacts.map((artifact) => ({
+            id: artifact.id,
+            title: artifact.title,
+            label: artifact.label,
+          })),
+          allFeedbackRowsProp.length > 0 ? allFeedbackRowsProp : feedbackEntries,
+          changeRequests,
+        ),
+      ],
+    [allFeedbackRowsProp, artifacts, changeRequests, feedbackEntries],
+  );
+  const finalDecisionSelectionKeys = useMemo(
+    () =>
+      expandArtifactSelectionKeys(
+        (decisionData.selectedArtifactIds ?? []).filter(Boolean),
+        artifacts.map((artifact) => ({
+          id: artifact.id,
+          title: artifact.title,
+          label: artifact.label,
+        })),
+      ),
+    [artifacts, decisionData.selectedArtifactIds],
+  );
+  const finalDecisionChangeRequests = useMemo(() => {
+    if (finalDecisionSelectionKeys.size === 0) return [];
+    return changeRequests
+      .filter((cr) =>
+        changeRequestMatchesSelection(cr.artifact_ids, finalDecisionSelectionKeys),
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      )
+      .map((cr) => ({
+        id: cr.id,
+        artifactIds: cr.artifact_ids,
+        changeNumber:
+          changeRequestLabelById.get(cr.id)?.replace(/^Change\s+/i, '') ?? '1.1',
+        changesNeeded: (cr.changes_needed ?? '').trim(),
+        artifactNames: labelsForArtifactSelectionKeys(cr.artifact_ids, artifacts),
+      }));
+  }, [
+    artifacts,
+    changeRequestLabelById,
+    changeRequests,
+    finalDecisionSelectionKeys,
+  ]);
   const decisionTextTrimmed = (decisionData.text ?? '').trim();
+  const approveDecisionRationaleBrief = decisionTextTrimmed
+    ? decisionTextTrimmed.length > 80
+      ? `${decisionTextTrimmed.slice(0, 77)}…`
+      : decisionTextTrimmed
+    : '';
   const decisionArtifactIds = (decisionData.selectedArtifactIds ?? []).filter(Boolean);
+  const directionApprovedBannerTitle = useMemo(() => {
+    if (!showCompareDirectionApprovedBanner) return 'Direction Approved';
+    const parts = decisionArtifactIds.map((id) => {
+      const artifact = artifacts.find(
+        (a) => a.id === id || artifactSelectionKey(a) === id,
+      );
+      const name = artifact?.label ?? artifact?.title ?? 'Concept';
+      const version = artifact?.iteration ?? 'v1';
+      return `${name} (${version})`;
+    });
+    if (parts.length === 0) return 'Direction Approved';
+    return `Direction Approved: ${parts.join(' and ')}`;
+  }, [
+    artifacts,
+    decisionArtifactIds,
+    showCompareDirectionApprovedBanner,
+  ]);
   const hasSolidDecisionRecord =
     Boolean(decisionData.status) &&
     decisionTextTrimmed.length > 0 &&
@@ -1484,6 +2999,99 @@ export function ReviewDetailView({
         tradeOffIsAI: decisionData.tradeOffIsAI ?? undefined,
       }
     : null;
+
+  async function persistReviewArtifacts(nextArtifacts: ReviewArtifact[]) {
+    const artifactsPayload = nextArtifacts.map((artifact) => ({
+      kind: artifact.linkUrl ? 'link' : 'file',
+      title: artifact.title,
+      url: artifact.linkUrl ?? artifact.imageUrl ?? null,
+      iterationLabel: artifact.iteration,
+      description: artifact.description,
+      originalFileName: artifact.originalFileName,
+      mimeType:
+        artifact.type === 'PDF'
+          ? 'application/pdf'
+          : artifact.type === 'Image'
+            ? 'image/jpeg'
+            : 'application/figma',
+      ai_generated: artifact.aiGenerated ?? false,
+    }));
+    const { error } = await supabase
+      .from('reviews')
+      .update({ artifacts: artifactsPayload })
+      .eq('id', reviewId);
+    return { error };
+  }
+
+  async function persistArtifactDescription(artifactId: string, description: string) {
+    const nextArtifacts = artifacts.map((artifact) =>
+      artifact.id === artifactId ? { ...artifact, description } : artifact,
+    );
+    const { error } = await persistReviewArtifacts(nextArtifacts);
+    if (error) return { success: false as const, error: error.message };
+    lastSavedArtifactDescriptionsRef.current[artifactId] = description;
+    showToast('Description updated');
+    router.refresh();
+    return { success: true as const };
+  }
+
+  async function persistTradeoffsAndLog(nextTradeoffs: Tradeoff[], event?: {
+    type: 'tradeoff_added' | 'tradeoff_edited';
+    tooltipText: string;
+    severity?: Tradeoff['severity'];
+  }) {
+    const { error } = await supabase
+      .from('reviews')
+      .update({ tradeoffs: serializeTradeoffsForReview(nextTradeoffs) })
+      .eq('id', reviewId);
+    if (error) {
+      setReviewDetailsSaveErrorToast(error.message);
+      window.setTimeout(() => setReviewDetailsSaveErrorToast(null), 3000);
+      return false;
+    }
+    if (event) {
+      await logTimelineEventClient({
+        projectId,
+        reviewId,
+        actorId: currentContributorId,
+        eventType: event.type,
+        payload: {
+          review_title: title,
+          tradeoff_text: event.tooltipText,
+          tradeoff_severity: event.severity ?? null,
+          tooltip_text: event.tooltipText,
+        },
+      });
+    }
+    showToast('Changes saved');
+    router.refresh();
+    return true;
+  }
+
+  async function persistRelatedProblemIds(nextProblems: Problem[]) {
+    const { error } = await supabase
+      .from('reviews')
+      .update({ related_problem_ids: nextProblems.map((problem) => problem.id) })
+      .eq('id', reviewId);
+    if (error) {
+      setReviewDetailsSaveErrorToast(error.message);
+      window.setTimeout(() => setReviewDetailsSaveErrorToast(null), 3000);
+      return false;
+    }
+    return true;
+  }
+
+  async function handleArtifactDescriptionBlur(artifactId: string) {
+    const artifact = artifacts.find((item) => item.id === artifactId);
+    if (!artifact) return;
+    const next = artifact.description;
+    if (next === (lastSavedArtifactDescriptionsRef.current[artifactId] ?? '')) return;
+    const saveResult = await persistArtifactDescription(artifactId, next);
+    if (!saveResult.success) {
+      setReviewDetailsSaveErrorToast(saveResult.error);
+      window.setTimeout(() => setReviewDetailsSaveErrorToast(null), 3000);
+    }
+  }
 
   async function runReviewArtifactDescriptionGeneration(artifactId: string) {
     const snapshot = artifacts.find((x) => x.id === artifactId);
@@ -1507,7 +3115,6 @@ export function ReviewDetailView({
           a.id === artifactId
             ? {
                 ...a,
-                description: '',
                 descriptionAiState: 'error',
                 aiGenerated: false,
               }
@@ -1517,18 +3124,31 @@ export function ReviewDetailView({
       return;
     }
 
+    const noChangesSuggested = result.description.trim() === existingContent;
+    setArtifactAiUnavailableById((prev) => ({
+      ...prev,
+      [artifactId]: noChangesSuggested,
+    }));
+
     setArtifacts((prev) =>
       prev.map((a) =>
         a.id === artifactId
           ? {
               ...a,
               description: result.description,
-              descriptionAiState: 'ai_generated',
-              aiGenerated: true,
+              descriptionAiState: 'edited',
+              aiGenerated: false,
             }
           : a,
       ),
     );
+    if (!noChangesSuggested) {
+      const saveResult = await persistArtifactDescription(artifactId, result.description);
+      if (!saveResult.success) {
+        setReviewDetailsSaveErrorToast(saveResult.error);
+        window.setTimeout(() => setReviewDetailsSaveErrorToast(null), 3000);
+      }
+    }
   }
 
   async function handleReviewFocusBlur() {
@@ -1549,6 +3169,16 @@ export function ReviewDetailView({
       return;
     }
     lastSavedReviewFocusRef.current = next;
+    await logTimelineEventClient({
+      projectId,
+      reviewId,
+      actorId: currentContributorId,
+      eventType: 'review_focus_edited',
+      payload: {
+        review_title: title,
+        tooltip_text: 'Review Details',
+      },
+    });
     showToast('Changes saved');
     router.refresh();
   }
@@ -1582,7 +3212,7 @@ export function ReviewDetailView({
   //  Render 
   return (
     <div
-      className="flex h-screen flex-row items-start overflow-hidden"
+      className="flex h-screen flex-row items-stretch overflow-hidden"
       style={{ backgroundColor: COLOURS.pageBg }}
       data-review-id={reviewId}
     >
@@ -1623,19 +3253,37 @@ export function ReviewDetailView({
             router.replace(qs ? `/reviews/${reviewId}?${qs}` : `/reviews/${reviewId}`);
           }}
           primaryActionSlot={<span />}
-          onKebab={() => {
-            setReviewMenu((m) => (m === 'header' ? null : 'header'));
-            setHeaderLifecycleMenuOpen(false);
-          }}
-          kebabMenu={reviewOptionsMenu}
-          kebabMenuExpanded={reviewMenu === 'header'}
+          onKebab={
+            showReviewKebabMenu
+              ? () => {
+                  setReviewMenu((m) => (m === 'header' ? null : 'header'));
+                  setHeaderLifecycleMenuOpen(false);
+                }
+              : undefined
+          }
+          kebabMenu={reviewOptionsMenu ?? undefined}
+          kebabMenuExpanded={showReviewKebabMenu && reviewMenu === 'header'}
           kebabSectionRef={pageKebabSectionRef}
         />
 
         {tabIndex === 2 ? (
           <main className="flex flex-1 overflow-hidden min-h-0" style={{ backgroundColor: COLOURS.pageBg }}>
             <div className="flex min-h-0 min-w-0 flex-1 overflow-y-auto">
-              <ActivityTab reviewId={reviewId} />
+              <ActivityTab
+                reviewId={reviewId}
+                reviewType={normalizedReviewType}
+                refreshKey={activityRefreshKey}
+                artifacts={artifacts}
+                changeRequestLabelById={changeRequestLabelById}
+                onNavigateToArtifact={(artifactId) => {
+                  setTabIndex(0);
+                  window.setTimeout(() => {
+                    const target = document.getElementById(`review-artifact-${artifactId}`);
+                    if (!target) return;
+                    scrollLhcElementIntoView(target, { align: 'center' });
+                  }, 80);
+                }}
+              />
             </div>
             <RightColumn
               open={rhcOpen}
@@ -1649,18 +3297,26 @@ export function ReviewDetailView({
               reviewId={reviewId}
               primaryFeedbackCta={primaryFeedbackCta}
               artifacts={artifacts}
-              onOpenSubmitFeedbackDrawer={() => setShowFeedbackDrawer(true)}
-              onOpenFinalDecisionDrawer={() => setShowFinalDecisionDrawer(true)}
-              onSendReminder={handleSendReminder}
+              onOpenSubmitFeedbackDrawer={openSubmitFeedbackDrawer}
+              onOpenFinalDecisionDrawer={openFinalDecisionDrawer}
+              onSendReminder={handleBellReminder}
               sendingReminder={sendingReminder}
               isReminderRateLimited={isReminderRateLimited}
+              reminderLastSentAt={lastReminderSentAt}
               canCurrentUserMakeDecision={canCurrentUserMakeDecision}
               currentContributorId={currentContributorId}
               canSubmitFeedback={canSubmitFeedback}
+              isDecisionMaker={isDecisionMaker}
               showReminderBell={showReminderBell}
               allReviewerFeedbackSubmitted={allReviewerFeedbackSubmitted}
               reviewOwnerName={reviewOwnerName}
               totalCardCount={totalCardCount}
+              totalReviewerCount={totalReviewerCount}
+              approveFeedbackSubmissionCount={approveFeedbackSubmissionCount}
+            approveUniqueReviewerCount={approveUniqueReviewerCount}
+              changeRequestCount={changeRequests.length}
+              changeRequests={changeRequests}
+              approveRhcReviewerEntries={approveRhcReviewerEntries}
               reviewersForMenu={reviewersForMenu}
               activeFilters={activeFilters}
               setActiveFilters={setActiveFilters}
@@ -1672,6 +3328,7 @@ export function ReviewDetailView({
               onChangeRequestReply={handleChangeRequestReply}
               reviewersById={reviewersById}
               contributorsById={contributorsById}
+              contactDisplayById={contactDisplayById}
               changeRequestLabelById={changeRequestLabelById}
               allCardsCount={allCards.length}
               filteredCardsCount={filteredCards.length}
@@ -1679,11 +3336,20 @@ export function ReviewDetailView({
               repliesByCardId={repliesByCardId}
               reviewType={reviewType}
               currentUserHasNotSubmitted={currentUserHasNotSubmitted}
-              reviewStatus={rawStatus}
-              reviewClosed={normStatus(rawStatus) === 'complete'}
+              reviewStatus={displayRawStatus}
+              reviewClosed={normalizedDisplayStatus === 'complete'}
               comparisonDecisionPromptRowName={comparisonDecisionPromptRowName}
               showComparisonButterPromptDm={showComparisonButterPromptDm}
               showDecisionPromptReadonly={showDecisionPromptReadonly}
+              decisionMakerDisplayName={decisionMakerDisplayName}
+              decisionMakerContributorId={decisionMakerReviewerId}
+              compareReviewFullyLocked={compareReviewFullyLocked}
+              compareHideSubmitFeedback={compareHideSubmitFeedback}
+              assignableContributors={rhcAssignableContributors}
+              requireDecisionMaker={requireDecisionMaker}
+              onAddReviewers={maybeAddReviewers}
+              isReviewPaused={isReviewPaused}
+              isReviewDraft={isReviewDraft}
             />
           </main>
         ) : (
@@ -1699,103 +3365,556 @@ export function ReviewDetailView({
                   const hasRecordedFinalDecision =
                     ds === 'approved' ||
                     ds === 'changes-needed' ||
-                    !!(decisionData.text ?? '').trim();
-                  if (hasRecordedFinalDecision) return null;
-                  const perm = String(currentContributorPermissionLevel ?? '')
-                    .trim()
-                    .toLowerCase();
-                  const ownerTrimmed = String(decisionMakerId ?? '').trim();
-                  const matchesDecisionOwner =
-                    Boolean(
-                      currentContributorId &&
-                        ownerTrimmed &&
-                        currentContributorId === ownerTrimmed,
+                    !!(decisionData.text ?? '').trim() ||
+                    (normalizedReviewType === 'compare' &&
+                      normalizedDisplayStatus === 'approved');
+                const finalConceptLabels =
+                  decisionData.selectedArtifactIds?.map((id) => {
+                    const artifact = artifacts.find((item) => item.id === id);
+                    return artifact?.title ?? artifact?.label ?? id;
+                  }) ?? [];
+                const finalDecisionCrRecords = changeRequests.filter((cr) =>
+                  finalDecisionChangeRequests.some((item) => item.id === cr.id),
+                );
+                const finalDecisionCrIds = finalDecisionCrRecords.map((cr) => cr.id);
+                const finalDecisionCrAllCompleted =
+                  finalDecisionCrRecords.length > 0 &&
+                  finalDecisionCrRecords.every((cr) => Boolean(cr.completed_at));
+                const canManageFinalDecisionCrs = finalDecisionCrRecords.some((cr) =>
+                  canManageChangeRequestEntry(
+                    cr,
+                    currentContributorId,
+                    isReviewCreator,
+                    canEditCoreDetails,
+                  ),
+                );
+                const renderFinalDecisionCards = () => {
+                  const entries =
+                    sortedDecisionSnapshots.length > 0
+                      ? sortedDecisionSnapshots.filter(
+                          (snapshot) => snapshot.entry_role !== 'change_request',
+                        )
+                      : hasRecordedFinalDecision
+                        ? [
+                            {
+                              id: 'current-decision',
+                              decision_status: decisionData.status ?? 'approved',
+                              decision_comments: decisionData.text,
+                              decision_selected_artifact_ids:
+                                decisionData.selectedArtifactIds ?? [],
+                              decision_owner_id: decisionData.ownerId ?? null,
+                              decision_made_at: decisionData.madeAt ?? '',
+                              superseded_at: null,
+                              entry_role: 'approval' as const,
+                            },
+                          ]
+                        : [];
+
+                  if (entries.length === 0) return null;
+
+                  let lastDateKey = '';
+                  const nodes: React.ReactNode[] = [];
+
+                  for (const snapshot of entries) {
+                    const dateKey = decisionLogLocalDateKey(snapshot.decision_made_at);
+                    const showDateHeader = dateKey !== lastDateKey;
+                    if (showDateHeader) {
+                      lastDateKey = dateKey;
+                      nodes.push(
+                        <div
+                          key={`date-${dateKey}-${snapshot.id}`}
+                          className="flex w-full items-center gap-3"
+                        >
+                          <span className="text-[10px] font-semibold uppercase tracking-[1px] text-[#998c82]">
+                            {formatDecisionLogDateHeader(snapshot.decision_made_at)}
+                          </span>
+                          <div className="h-px flex-1 bg-[#e4ddd3]" />
+                        </div>,
+                      );
+                    }
+
+                    const snapshotOwnerName = contactNameFromMap(
+                      contactDisplayById,
+                      snapshot.decision_owner_id,
+                      decisionAttributionName,
                     );
-                  const elevatedPermission =
-                    perm === 'editor' || perm === 'admin';
-                  const showDecisionMakerEmptyState =
-                    matchesDecisionOwner || elevatedPermission;
-                  return (
-                    <div className="flex h-full w-full items-center justify-center">
-                      <div className="flex h-[478px] w-full max-w-[640px] flex-col items-center justify-center gap-3 rounded-[8px] border border-[#e4ddd3] bg-[#faf8f6] p-6 text-center">
-                        {showDecisionMakerEmptyState ? (
-                          <>
-                            <p className="m-0 text-[16px] font-semibold text-[#2e1c1c]">
-                              All feedback is in — ready to record a decision.
-                            </p>
-                            <Button
-                              label="Record Final Decision"
-                              variant="primary"
-                              size="md"
-                              onClick={() => setShowFinalDecisionDrawer(true)}
-                            />
-                          </>
-                        ) : (
-                          <>
-                            <p className="m-0 text-[16px] font-semibold text-[#2e1c1c]">
-                              No decision has been recorded yet.
-                            </p>
-                            <p className="m-0 max-w-[420px] text-[13px] font-normal text-[#6b5e55]">
-                              The decision owner will record the final direction once all feedback has been reviewed.
-                            </p>
-                          </>
+                    const snapshotConceptLabels =
+                      snapshot.decision_selected_artifact_ids?.map((id) => {
+                        const artifact = artifacts.find((item) => item.id === id);
+                        return artifact?.title ?? artifact?.label ?? id;
+                      }) ?? [];
+                    const snapshotSelectionKeys = expandArtifactSelectionKeys(
+                      snapshot.decision_selected_artifact_ids ?? [],
+                      artifacts.map((artifact) => ({
+                        id: artifact.id,
+                        title: artifact.title,
+                        label: artifact.label,
+                      })),
+                    );
+                    const inlineChangeRows = changeRequests
+                      .filter((cr) =>
+                        changeRequestMatchesSelection(
+                          cr.artifact_ids,
+                          snapshotSelectionKeys,
+                        ),
+                      )
+                      .sort(
+                        (a, b) =>
+                          new Date(a.created_at).getTime() -
+                          new Date(b.created_at).getTime(),
+                      );
+                    const isSuperseded = Boolean(snapshot.superseded_at);
+                    const snapshotChangeRequestItems = inlineChangeRows.map((cr) => {
+                      const canManageRow =
+                        !compareReviewFullyLocked &&
+                        !isSuperseded &&
+                        canManageChangeRequestEntry(
+                          cr,
+                          currentContributorId,
+                          isReviewCreator,
+                          canEditCoreDetails,
+                        );
+                      const rowCompleted = Boolean(cr.completed_at);
+                      return {
+                        id: cr.id,
+                        changeNumber:
+                          changeRequestLabelById
+                            .get(cr.id)
+                            ?.replace(/^Change\s+/i, '') ?? '1.1',
+                        changesNeeded: (cr.changes_needed ?? '').trim(),
+                        artifactNames: labelsForArtifactSelectionKeys(
+                          cr.artifact_ids,
+                          artifacts,
+                        ),
+                        completed: rowCompleted,
+                        showRowKebab: canManageRow,
+                        rowKebabLabel: rowCompleted ? 'Reopen' : 'Mark as completed',
+                        onRowKebabClick: () => {
+                          if (rowCompleted) {
+                            void handleReopenChangeRequests([cr.id]);
+                          } else {
+                            void handleMarkChangeRequestsCompleted([cr.id]);
+                          }
+                        },
+                      };
+                    });
+
+                    nodes.push(
+                      <DecisionCard
+                        key={snapshot.id}
+                        layout="directionWithInlineChanges"
+                        status="approved"
+                        owner={snapshotOwnerName}
+                        ownerContributorId={snapshot.decision_owner_id ?? undefined}
+                        timestamp={formatDecisionCardTimestamp(
+                          snapshot.decision_made_at,
                         )}
+                        decisionText={(snapshot.decision_comments ?? '').trim()}
+                        changeRequests={snapshotChangeRequestItems}
+                        reviewLifecycleComplete={reviewIsLifecycleComplete}
+                        resolveArtifactTagHref={resolveArtifactTagHref}
+                        superseded={isSuperseded}
+                        showKebab={
+                          compareDirectionApprovedLocked &&
+                          isDecisionMaker &&
+                          !compareReviewFullyLocked &&
+                          !isSuperseded
+                        }
+                        kebabActionLabel="Change direction"
+                        onKebabClick={() =>
+                          openFinalDecisionDrawer({ changeDirection: true })
+                        }
+                      />,
+                    );
+                  }
+
+                  return nodes;
+                };
+                const finalDecisionBlock =
+                  hasRecordedFinalDecision || sortedDecisionSnapshots.length > 0
+                    ? renderFinalDecisionCards()
+                    : null;
+                const hasApproveReviewerDecisions =
+                  normalizedReviewType === 'approve' &&
+                  approveSubmittedFeedbackForDecisionLog.length > 0;
+                const hasCompareReviewerPreferences =
+                  normalizedReviewType === 'compare' &&
+                  compareReviewerPreferencesForDecisionLog.length > 0;
+                if (
+                  !hasRecordedFinalDecision &&
+                  sortedDecisionSnapshots.length === 0 &&
+                  !hasApproveReviewerDecisions &&
+                  !hasCompareReviewerPreferences &&
+                  !(normalizedReviewType === 'align' && hasChangeRequests)
+                ) {
+                  return (
+                    <div
+                      className="flex h-[478px] w-full items-center justify-center rounded-[8px] border border-[#e4ddd3] bg-[#f3efe9]"
+                    >
+                      <div className="flex flex-col items-center gap-4 text-center">
+                        <p className="m-0 text-[14px] font-medium text-[#998c82]">
+                          A decision has not been made on this review yet.
+                        </p>
+                        {showDecisionLogRemindButton ? (
+                          <Button
+                            label="Remind Reviewers"
+                            variant="secondary"
+                            size="sm"
+                            icon="leading"
+                            iconName="notification"
+                            disabled={sendingReminder || isReminderRateLimited}
+                            onClick={() => {
+                              void handleBellReminder();
+                            }}
+                          />
+                        ) : null}
                       </div>
                     </div>
                   );
-                })()}
-              {(() => {
-                  const ds = normStatus(decisionData.status);
-                  const hasRecordedFinalDecision =
-                    ds === 'approved' ||
-                    ds === 'changes-needed' ||
-                    !!(decisionData.text ?? '').trim();
-                  if (!hasRecordedFinalDecision) return null;
-                  return (
-                <div className="flex w-full flex-col gap-3">
-                  <div className="flex w-full items-center gap-3">
-                    <span className="text-[10px] font-semibold uppercase tracking-[1px] text-[#998c82]">
-                      {decisionData.madeAt
-                        ? new Date(decisionData.madeAt).toLocaleDateString('en-US', {
-                            month: 'long',
-                            day: 'numeric',
-                            year: 'numeric',
-                            timeZone: 'UTC',
-                          })
-                        : 'Decision'}
-                    </span>
-                    <div className="h-px flex-1 bg-[#e4ddd3]" />
+                }
+                return (
+                  <div className="flex w-full flex-col gap-6">
+                    {finalDecisionBlock}
+                    {hasCompareReviewerPreferences
+                      ? compareDecisionLogGroups.map((group) => (
+                          <div
+                            key={`compare-${group.dateLabel}`}
+                            className="flex w-full flex-col gap-3"
+                          >
+                            <div className="flex w-full items-center gap-3">
+                              <span className="text-[10px] font-semibold uppercase tracking-[1px] text-[#998c82]">
+                                {group.dateLabel}
+                              </span>
+                              <div className="h-px flex-1 bg-[#e4ddd3]" />
+                            </div>
+                            {group.entries.map((entry) => {
+                              const preferredKeys = String(entry.selectedOption ?? '')
+                                .split(',')
+                                .map((value) => value.trim())
+                                .filter(Boolean);
+                              const preferredLabels = labelsForArtifactSelectionKeys(
+                                preferredKeys,
+                                artifacts,
+                              );
+                              const reviewerLabel = decisionCardOwnerLabel(
+                                entry,
+                                contributorsById,
+                              );
+                              const isActivePreference = entry.feedbackId
+                                ? compareActivePreferenceFeedbackIds.has(
+                                    entry.feedbackId,
+                                  )
+                                : true;
+                              const isOwnPreference = Boolean(
+                                currentContributorId &&
+                                  entry.reviewerId === currentContributorId,
+                              );
+                              const canUpdatePreference =
+                                isActivePreference &&
+                                isOwnPreference &&
+                                !reviewIsCompletedOrClosed &&
+                                !compareDirectionApproved;
+                              return (
+                                <div
+                                  key={
+                                    entry.feedbackId ??
+                                    `${entry.reviewerId}-${entry.submittedAt ?? ''}`
+                                  }
+                                >
+                                  <DecisionCard
+                                    status={
+                                      isActivePreference
+                                        ? 'Preference'
+                                        : 'PreferenceAmended'
+                                    }
+                                    owner={reviewerLabel}
+                                    ownerContributorId={entry.reviewerId}
+                                    resolveArtifactTagHref={resolveArtifactTagHref}
+                                    timestamp={formatDecisionCardTimestamp(
+                                      entry.submittedAt,
+                                    )}
+                                    decisionText={(entry.feedbackText ?? '').trim()}
+                                    selectedConcepts={preferredLabels}
+                                    showKebab={canUpdatePreference}
+                                    kebabActionLabel="Update preference"
+                                    onKebabClick={() =>
+                                      openSubmitFeedbackDrawer({
+                                        prefill: true,
+                                        targetReviewerId: entry.reviewerId,
+                                        feedbackEntryId:
+                                          entry.feedbackId ??
+                                          `feedback-${entry.reviewerId}`,
+                                      })
+                                    }
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))
+                      : null}
+                    {hasApproveReviewerDecisions
+                      ? approveDecisionLogGroups.map((group) => (
+                          <div
+                            key={group.dateLabel}
+                            className="flex w-full flex-col gap-3"
+                          >
+                            <div className="flex w-full items-center gap-3">
+                              <span className="text-[10px] font-semibold uppercase tracking-[1px] text-[#998c82]">
+                                {group.dateLabel}
+                              </span>
+                              <div className="h-px flex-1 bg-[#e4ddd3]" />
+                            </div>
+                            {group.entries.map((entry) => {
+                              const selectedKeys = String(entry.selectedOption ?? '')
+                                .split(',')
+                                .map((value) => value.trim())
+                                .filter(Boolean);
+                              const approvedLabels = labelsForArtifactSelectionKeys(
+                                selectedKeys,
+                                artifacts,
+                              );
+                              const submissionChangeRequests =
+                                changeRequestsForFeedbackSubmission(
+                                  entry,
+                                  decisionLogFeedbackRows,
+                                  changeRequests,
+                                  reviewCreatedAt,
+                                );
+                              const trimmedFeedbackText = (entry.feedbackText ?? '').trim();
+                              const hasApprovals = approvedLabels.length > 0;
+                              const hasChangeRequests =
+                                submissionChangeRequests.length > 0;
+                              const decisionChangeRequests = hasChangeRequests
+                                ? submissionChangeRequests.map((cr) => ({
+                                    id: cr.id,
+                                    changeNumber:
+                                      changeRequestLabelById
+                                        .get(cr.id)
+                                        ?.replace(/^Change\s+/i, '') ?? '1.1',
+                                    changesNeeded: (cr.changes_needed ?? '').trim(),
+                                    artifactNames: labelsForArtifactSelectionKeys(
+                                      cr.artifact_ids,
+                                      artifacts,
+                                    ),
+                                  }))
+                                : undefined;
+                              const changeRequestIds = submissionChangeRequests.map(
+                                (cr) => cr.id,
+                              );
+                              const changeRequestAllCompleted =
+                                submissionChangeRequests.length > 0 &&
+                                submissionChangeRequests.every((cr) =>
+                                  Boolean(cr.completed_at),
+                                );
+                              const canManageSubmissionChangeRequests =
+                                submissionChangeRequests.some((cr) =>
+                                  canManageChangeRequestEntry(
+                                    cr,
+                                    currentContributorId,
+                                    isReviewCreator,
+                                    canEditCoreDetails,
+                                  ),
+                                );
+                              // Mixed submissions (approved one artifact + requested a
+                              // change on another) render a separate card per action so
+                              // the approval is never swallowed by the change request.
+                              const decisionLogCards: Array<{
+                                key: string;
+                                status: 'approved' | 'changes-needed';
+                                decisionText: string;
+                                artifactTags?: string[];
+                                changeRequests?: Array<{
+                                  changeNumber: string;
+                                  changesNeeded: string;
+                                  artifactNames: string[];
+                                }>;
+                              }> = [];
+                              if (hasApprovals) {
+                                decisionLogCards.push({
+                                  key: 'approved',
+                                  status: 'approved',
+                                  decisionText:
+                                    !hasChangeRequests && trimmedFeedbackText
+                                      ? trimmedFeedbackText
+                                      : `Approved ${approvedLabels.join(', ')}.`,
+                                  artifactTags: approvedLabels,
+                                });
+                              }
+                              if (hasChangeRequests) {
+                                decisionLogCards.push({
+                                  key: 'changes-needed',
+                                  status: 'changes-needed',
+                                  decisionText:
+                                    trimmedFeedbackText || 'Changes requested.',
+                                  changeRequests: decisionChangeRequests,
+                                });
+                              }
+                              if (decisionLogCards.length === 0) {
+                                decisionLogCards.push({
+                                  key: 'approved',
+                                  status: 'approved',
+                                  decisionText:
+                                    trimmedFeedbackText || 'Reviewer approval recorded.',
+                                });
+                              }
+                              const decisionLogBaseKey =
+                                entry.feedbackId ??
+                                `${entry.reviewerId}-${entry.submittedAt ?? ''}`;
+                              return decisionLogCards.map((card) => {
+                                const isChangesNeededCard = card.status === 'changes-needed';
+                                const showUpdateFeedbackKebab =
+                                  !isChangesNeededCard &&
+                                  (entry.reviewerId === currentContributorId ||
+                                    isReviewCreator);
+                                const showChangeRequestKebab =
+                                  isChangesNeededCard && canManageSubmissionChangeRequests;
+                                return (
+                                <div
+                                  key={`${decisionLogBaseKey}-${card.key}`}
+                                  id={
+                                    entry.feedbackId
+                                      ? `decision-feedback-${entry.feedbackId}-${card.key}`
+                                      : undefined
+                                  }
+                                >
+                                  <DecisionCard
+                                    status={card.status}
+                                    owner={decisionCardOwnerLabel(entry, contributorsById)}
+                                    timestamp={formatDecisionCardTimestamp(entry.submittedAt)}
+                                    decisionText={card.decisionText}
+                                    artifactTags={card.artifactTags}
+                                    changeRequests={card.changeRequests}
+                                    reviewLifecycleComplete={reviewIsLifecycleComplete}
+                                    resolveArtifactTagHref={resolveArtifactTagHref}
+                                    completed={
+                                      isChangesNeededCard && changeRequestAllCompleted
+                                    }
+                                    showKebab={
+                                      showUpdateFeedbackKebab || showChangeRequestKebab
+                                    }
+                                    kebabActionLabel={
+                                      isChangesNeededCard
+                                        ? changeRequestAllCompleted
+                                          ? 'Reopen'
+                                          : 'Mark as completed'
+                                        : 'Submit additional feedback'
+                                    }
+                                    onKebabClick={
+                                      isChangesNeededCard
+                                        ? () => {
+                                            if (changeRequestAllCompleted) {
+                                              void handleReopenChangeRequests(
+                                                changeRequestIds,
+                                              );
+                                            } else {
+                                              void handleMarkChangeRequestsCompleted(
+                                                changeRequestIds,
+                                              );
+                                            }
+                                          }
+                                        : () =>
+                                            openSubmitFeedbackDrawer({
+                                              prefill: true,
+                                              targetReviewerId: entry.reviewerId,
+                                              feedbackEntryId:
+                                                entry.feedbackId ??
+                                                `feedback-${entry.reviewerId}`,
+                                            })
+                                    }
+                                  />
+                                </div>
+                                );
+                              });
+                            })}
+                          </div>
+                        ))
+                      : null}
+                    {normalizedReviewType === 'align' && hasChangeRequests
+                      ? alignChangeRequestLogGroups.map((group) => (
+                          <div
+                            key={`align-cr-${group.dateLabel}`}
+                            className="flex w-full flex-col gap-3"
+                          >
+                            <div className="flex w-full items-center gap-3">
+                              <span className="text-[10px] font-semibold uppercase tracking-[1px] text-[#998c82]">
+                                {group.dateLabel}
+                              </span>
+                              <div className="h-px flex-1 bg-[#e4ddd3]" />
+                            </div>
+                            {group.rows.map((cr) => {
+                              const ownerLabel = reviewerNameForChangeRequest(
+                                cr,
+                                reviewersById,
+                                contributorsById,
+                              );
+                              const changeRequestIds = [cr.id];
+                              const changeRequestAllCompleted = Boolean(cr.completed_at);
+                              const canManageCr = canManageChangeRequestEntry(
+                                cr,
+                                currentContributorId,
+                                isReviewCreator,
+                                canEditCoreDetails,
+                              );
+                              return (
+                                <DecisionCard
+                                  key={cr.id}
+                                  status="changes-needed"
+                                  owner={ownerLabel}
+                                  ownerContributorId={cr.reviewer_id ?? undefined}
+                                  timestamp={formatDecisionCardTimestamp(cr.created_at)}
+                                  decisionText={(cr.changes_needed ?? '').trim()}
+                                  reviewLifecycleComplete={reviewIsLifecycleComplete}
+                                  resolveArtifactTagHref={resolveArtifactTagHref}
+                                  changeRequests={[
+                                    {
+                                      id: cr.id,
+                                      changeNumber:
+                                        changeRequestLabelById
+                                          .get(cr.id)
+                                          ?.replace(/^Change\s+/i, '') ?? '1',
+                                      changesNeeded: (cr.changes_needed ?? '').trim(),
+                                      artifactNames: labelsForArtifactSelectionKeys(
+                                        cr.artifact_ids,
+                                        artifacts,
+                                      ),
+                                      completed: Boolean(cr.completed_at),
+                                    },
+                                  ]}
+                                  completed={Boolean(cr.completed_at)}
+                                  showKebab={canManageCr}
+                                  kebabActionLabel={
+                                    changeRequestAllCompleted
+                                      ? 'Reopen'
+                                      : 'Mark as completed'
+                                  }
+                                  onKebabClick={() => {
+                                    if (changeRequestAllCompleted) {
+                                      void handleReopenChangeRequests(changeRequestIds);
+                                    } else {
+                                      void handleMarkChangeRequestsCompleted(
+                                        changeRequestIds,
+                                      );
+                                    }
+                                  }}
+                                />
+                              );
+                            })}
+                          </div>
+                        ))
+                      : null}
+                    <div className="shrink-0 h-8" aria-hidden="true" />
                   </div>
-                  <DecisionCard
-                    statusPillColor={decisionPillUi.color}
-                    statusPillLabel={decisionPillUi.label}
-                    options={
-                      decisionData.selectedArtifactIds?.map((id) => ({
-                        label:
-                          artifacts.find((artifact) => artifact.id === id)?.title ??
-                          artifacts.find((artifact) => artifact.id === id)?.label ??
-                          id,
-                      })) ?? []
-                    }
-                    decisionText={decisionData.text ?? ''}
-                    ownerName={decisionAttributionName}
-                    recordedAtIso={decisionData.madeAt}
-                    showTradeOff={Boolean(decisionData.tradeOffNote)}
-                    tradeOffNote={decisionData.tradeOffNote ?? undefined}
-                    tradeOffIsAI={decisionData.tradeOffIsAI ?? undefined}
-                  />
-                </div>
-                  );
+                );
                 })()}
             </div>
           ) : (
           <div
-            ref={scrollRootRef}
-            className="flex flex-1 flex-row min-w-0 overflow-y-auto pl-8 py-8"
+            className="flex flex-1 flex-row min-w-0 overflow-hidden pl-8"
           >
             {/* Left nav (sticky) */}
             <aside
-              className="sticky top-0 self-start shrink-0 flex flex-col gap-1 pr-6"
+              className="sticky top-0 self-start shrink-0 flex flex-col gap-1 pr-6 pt-8 pb-8"
               style={{ width: 170 }}
             >
               {NAV_SECTIONS.map((s) => {
@@ -1838,10 +3957,26 @@ export function ReviewDetailView({
             </aside>
 
             {/* Main scroll area: first section is Review Details, then Designs. */}
-            <div className="flex-1 flex flex-col gap-8 pb-8 pr-8 min-w-0">
-              {['approved', 'changes-needed', 'needs-changes', 'rejected'].includes(
-                normStatus(decisionData.status),
-              ) ? (
+            <div
+              ref={scrollRootRef}
+              className="flex min-h-0 min-w-0 flex-1 overflow-y-auto"
+            >
+              <div className="flex min-h-full min-w-0 flex-1 flex-col gap-8 pr-8 pt-8 pb-8">
+              {showCompareDirectionApprovedBanner ? (
+                <Alert
+                  sentiment="success"
+                  prominence="high"
+                  title={directionApprovedBannerTitle}
+                  actionLabel="View full decision"
+                  onAction={openDecisionLogTab}
+                  dismissible={false}
+                  className="w-full"
+                />
+              ) : normalizedReviewType !== 'approve' &&
+                !showCompareDirectionApprovedBanner &&
+                ['approved', 'changes-needed', 'needs-changes', 'rejected'].includes(
+                  normStatus(decisionData.status),
+                ) ? (
                 <Alert
                   sentiment={
                     normStatus(decisionData.status) === 'approved'
@@ -1862,6 +3997,24 @@ export function ReviewDetailView({
                   timestamp={decisionAlertTimestamp || undefined}
                   actionLabel="View full decision"
                   onAction={openDecisionLogTab}
+                  dismissible={false}
+                  className="w-full"
+                />
+              ) : null}
+              {showChangesRequestedBanner ? (
+                <Alert
+                  sentiment="warning"
+                  prominence="high"
+                  title="Needs Changes"
+                  dismissible={false}
+                  className="w-full"
+                />
+              ) : null}
+              {showApprovedBanner ? (
+                <Alert
+                  sentiment="success"
+                  prominence="high"
+                  title="Approved"
                   dismissible={false}
                   className="w-full"
                 />
@@ -1936,7 +4089,7 @@ export function ReviewDetailView({
                     )}
                   </div>
                 </div>
-                {coreInteractionMode === 'edit' ? (
+                {coreInteractionMode === 'edit' && !reviewFieldsReadOnly ? (
                   <>
                     <div>
                       <Textarea
@@ -1953,7 +4106,11 @@ export function ReviewDetailView({
                       />
                     </div>
                     <p style={{ margin: 0, fontSize: 12, color: '#6b5e55' }}>
-                      {`Submitted by ${reviewOwnerName?.trim() || 'Review owner'}${formatReviewDetailsDate(reviewCreatedAt) ? `, ${formatReviewDetailsDate(reviewCreatedAt)}` : ''}`}
+                      {reviewDetailsAttributionLine({
+                        ownerName: reviewOwnerName,
+                        createdAt: reviewCreatedAt,
+                        updatedAt: reviewUpdatedAt,
+                      })}
                     </p>
                   </>
                 ) : reviewFocus.trim() ? (
@@ -1964,12 +4121,17 @@ export function ReviewDetailView({
                         fontSize: 13,
                         color: '#2e1c1c',
                         lineHeight: 1.5,
+                        letterSpacing: '0.26px',
                       }}
                     >
                       {reviewFocus}
                     </p>
                     <p style={{ margin: 0, fontSize: 12, color: '#6b5e55' }}>
-                      {`Last updated by ${reviewOwnerName?.trim() || 'Review owner'}${formatReviewDetailsDate(reviewCreatedAt) ? `, ${formatReviewDetailsDate(reviewCreatedAt)}` : ''}`}
+                      {reviewDetailsAttributionLine({
+                        ownerName: reviewOwnerName,
+                        createdAt: reviewCreatedAt,
+                        updatedAt: reviewUpdatedAt,
+                      })}
                     </p>
                   </>
                 ) : (
@@ -1990,7 +4152,11 @@ export function ReviewDetailView({
                       </span>
                     </div>
                     <p style={{ margin: 0, fontSize: 12, color: '#6b5e55' }}>
-                      {`Submitted by ${reviewOwnerName?.trim() || 'Review owner'}${formatReviewDetailsDate(reviewCreatedAt) ? `, ${formatReviewDetailsDate(reviewCreatedAt)}` : ''}`}
+                      {reviewDetailsAttributionLine({
+                        ownerName: reviewOwnerName,
+                        createdAt: reviewCreatedAt,
+                        updatedAt: reviewUpdatedAt,
+                      })}
                     </p>
                   </>
                 )}
@@ -1998,8 +4164,8 @@ export function ReviewDetailView({
 
               <section id="designs" className="flex flex-col gap-4 scroll-mt-6">
                 {artifacts.map((artifact) => (
+                  <div key={artifact.id} id={`review-artifact-${artifact.id}`} className="scroll-mt-6">
                   <ArtifactPreview
-                    key={artifact.id}
                     size="large"
                     fileType={
                       artifact.type === 'Figma'
@@ -2008,7 +4174,8 @@ export function ReviewDetailView({
                           ? 'pdf'
                           : 'jpeg'
                     }
-                    mode={coreInteractionMode === 'edit' ? 'editable' : 'readonly'}
+                    mode="readonly"
+                    enableOpenInteraction
                     showDetails
                     fileName={artifact.label}
                     lastEdited="Edited recently"
@@ -2033,6 +4200,11 @@ export function ReviewDetailView({
                       )
                     }
                     onDescriptionChange={(desc) =>
+                      {
+                        setArtifactAiUnavailableById((prev) => ({
+                          ...prev,
+                          [artifact.id]: false,
+                        }));
                       setArtifacts((prev) =>
                         prev.map((a) => {
                           if (a.id !== artifact.id) return a;
@@ -2048,12 +4220,19 @@ export function ReviewDetailView({
                           }
                           return next;
                         })
-                      )
+                        );
                     }
+                    }
+                    onDescriptionBlur={() => void handleArtifactDescriptionBlur(artifact.id)}
                     descriptionAiState={artifact.descriptionAiState ?? 'idle'}
                     persistedAiGenerated={artifact.aiGenerated === true}
+                    requireUserEditBeforeOptimise
+                    aiEditTrackingKey={artifact.id}
                     canGenerateAiDescription={
                       coreInteractionMode === 'edit' &&
+                      !reviewFieldsReadOnly &&
+                      !artifactAiUnavailableById[artifact.id] &&
+                      artifact.description.trim().length > 0 &&
                       Boolean(
                         artifact.label.trim() &&
                           (artifact.linkUrl?.trim() ||
@@ -2062,11 +4241,12 @@ export function ReviewDetailView({
                       )
                     }
                     onRegenerateDescription={
-                      coreInteractionMode === 'edit'
+                      coreInteractionMode === 'edit' && !reviewFieldsReadOnly
                         ? () => void runReviewArtifactDescriptionGeneration(artifact.id)
                         : undefined
                     }
                   />
+                  </div>
                 ))}
               </section>
 
@@ -2089,7 +4269,7 @@ export function ReviewDetailView({
                     <ProblemRow
                       key={p.id}
                       problem={p}
-                      mode={coreInteractionMode}
+                      mode={reviewFieldsReadOnly ? 'view-only' : coreInteractionMode}
                       open={openKebabId === p.id}
                       onToggleMenu={() =>
                         setOpenKebabId((current) => (current === p.id ? null : p.id))
@@ -2105,7 +4285,15 @@ export function ReviewDetailView({
                         setOpenKebabId(null);
                       }}
                       onDelete={() => {
-                        setProblems((prev) => prev.filter((x) => x.id !== p.id));
+                        const nextProblems = problems.filter((x) => x.id !== p.id);
+                        setProblems(nextProblems);
+                        void (async () => {
+                          const persisted = await persistRelatedProblemIds(nextProblems);
+                          if (persisted) {
+                            showToast('Changes saved');
+                            router.refresh();
+                          }
+                        })();
                         setOpenKebabId(null);
                       }}
                       onCloseMenu={() => setOpenKebabId(null)}
@@ -2131,9 +4319,15 @@ export function ReviewDetailView({
                   </div>
                 )}
 
-                {coreInteractionMode === 'edit' && (
+                {coreInteractionMode === 'edit' &&
+                  !compareDirectionApprovedLocked &&
+                  !compareReviewFullyLocked &&
+                  !reviewFieldsReadOnly && (
                   <div
-                    ref={addButtonRef}
+                    ref={(node) => {
+                      addButtonRef.current = node;
+                      selectMenuContainerRef.current = node;
+                    }}
                     style={{ position: 'relative', width: 400, maxWidth: 400 }}
                   >
                     <Button
@@ -2158,16 +4352,37 @@ export function ReviewDetailView({
                         type: 'button',
                         label: 'Done',
                         additionalLinkLabel: 'Create a new problem',
-                        onClick: () => {
+                        onClick: async () => {
                           const toAdd = allProjectProblems.filter((problem) =>
                             selectedFromProject.includes(problem.id)
                           );
-                          setProblems((prev) => [
-                            ...prev,
+                          const nextProblems = [
+                            ...problems,
                             ...toAdd
-                              .filter((candidate) => !prev.some((row) => row.id === candidate.id))
+                              .filter((candidate) => !problems.some((row) => row.id === candidate.id))
                               .map((candidate) => ({ ...candidate, selected: true })),
-                          ]);
+                          ];
+                          setProblems(nextProblems);
+                          const persisted = await persistRelatedProblemIds(nextProblems);
+                          if (persisted) {
+                            await Promise.all(
+                              toAdd.map((problem) =>
+                                logTimelineEventClient({
+                                  projectId,
+                                  reviewId,
+                                  actorId: currentContributorId,
+                                  eventType: 'problem_added',
+                                  payload: {
+                                    review_title: title,
+                                    problem_text: problem.text,
+                                    tooltip_text: problem.text,
+                                  },
+                                }),
+                              ),
+                            );
+                            showToast('Changes saved');
+                            router.refresh();
+                          }
                           setSelectedFromProject([]);
                           setSelectMenuOpen(false);
                         },
@@ -2272,14 +4487,46 @@ export function ReviewDetailView({
                       <TradeoffCard
                         key={t.id}
                         tradeoff={t}
-                        mode={coreInteractionMode}
+                        mode={reviewFieldsReadOnly ? 'view-only' : coreInteractionMode}
                         artifacts={artifacts}
+                        open={openTradeoffMenuId === t.id}
+                        menuRef={(node) => {
+                          tradeoffMenuRefs.current[t.id] = node;
+                        }}
+                        onToggleMenu={() =>
+                          setOpenTradeoffMenuId((current) => (current === t.id ? null : t.id))
+                        }
+                        onEdit={() => {
+                          setEditingTradeoff(t);
+                          setNewTradeoffText(t.label);
+                          setNewTradeoffSeverity(t.severity);
+                          setTradeoffSelectedArtifactIds(
+                            resolveTradeoffArtifactIds(t, artifacts),
+                          );
+                          setTradeoffArtifactPickerValue('');
+                          setTradeoffModalOpen(true);
+                          setOpenTradeoffMenuId(null);
+                        }}
+                        onDelete={async () => {
+                          const nextTradeoffs = tradeoffs.filter((tradeoff) => tradeoff.id !== t.id);
+                          setTradeoffs(nextTradeoffs);
+                          const { error } = await supabase
+                            .from('reviews')
+                            .update({ tradeoffs: serializeTradeoffsForReview(nextTradeoffs) })
+                            .eq('id', reviewId);
+                          if (!error) {
+                            showToast('Changes saved');
+                            router.refresh();
+                          }
+                          setOpenTradeoffMenuId(null);
+                        }}
+                        onCloseMenu={() => setOpenTradeoffMenuId(null)}
                       />
                     ))}
                   </div>
                 )}
 
-                {canAddTradeoffs && (
+                {canAddTradeoffs && !compareReviewFullyLocked && !reviewFieldsReadOnly && (
                   <Button
                     label="Add a tradeoff"
                     variant="ghost"
@@ -2287,7 +4534,10 @@ export function ReviewDetailView({
                     icon="leading"
                     iconName="plus"
                     style={{ alignSelf: 'flex-start' }}
-                    onClick={() => setTradeoffModalOpen(true)}
+                    onClick={() => {
+                      setEditingTradeoff(null);
+                      setTradeoffModalOpen(true);
+                    }}
                   />
                 )}
               </section>
@@ -2330,30 +4580,59 @@ export function ReviewDetailView({
                           key={r.id}
                           reviewer={r}
                           mode={coreInteractionMode}
+                          reviewType={normalizedReviewType}
+                          removable={!lockedReviewerIds.has(r.id)}
                           onRemove={async () => {
-                            const { error } = await removeReviewerAction({
-                              reviewId,
-                              reviewerContributorId: r.id,
-                            });
-                            if (error) return;
-                            showToast('Changes saved');
-                            router.refresh();
+                            const reviewerSubmitted = submittedReviewerIds.has(r.id);
+                            const statusForRemoval = normStatus(displayRawStatus);
+                            const requiresConfirm =
+                              !reviewerSubmitted &&
+                              (statusForRemoval === 'in-review' ||
+                                statusForRemoval === 'needs-changes' ||
+                                statusForRemoval === 'changes-needed');
+                            if (requiresConfirm) {
+                              setPendingReviewerRemoval({
+                                id: r.id,
+                                name: r.name,
+                                autoCloseOnRemoval: evaluateRemovalAutoClose(r.id),
+                              });
+                              setRemoveReviewerModalOpen(true);
+                              return;
+                            }
+                            await removeReviewerNow(r.id);
                           }}
                         />
                       ))}
                   </div>
                 )}
 
-                {coreInteractionMode === 'edit' && (
+                {coreInteractionMode === 'edit' &&
+                  !compareDirectionApprovedLocked &&
+                  !compareReviewFullyLocked &&
+                  canEditReviewMenu &&
+                  !isReviewPaused && (
                   <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: 10,
-                      position: 'relative',
-                    }}
+                    className="relative w-full"
                     ref={reviewerAnchorRef}
                   >
+                    {reviewIsCompletedOrClosed ? (
+                      <Tooltip
+                        label="Reopen this review to add reviewers"
+                        position="top"
+                      >
+                        <span className="inline-flex w-full">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            icon="leading"
+                            iconName="plus"
+                            label="Add reviewers"
+                            disabled
+                          />
+                        </span>
+                      </Tooltip>
+                    ) : (
                     <Button
                       type="button"
                       variant="ghost"
@@ -2361,11 +4640,11 @@ export function ReviewDetailView({
                       icon="leading"
                       iconName="plus"
                       label="Add reviewers"
-                      style={{ alignSelf: 'flex-start', flexShrink: 0 }}
                       aria-expanded={reviewerMenuOpen}
                       aria-haspopup="menu"
                       onClick={() => setReviewerMenuOpen((prev) => !prev)}
                     />
+                    )}
 
                     {reviewerMenuOpen && (
                       <div
@@ -2380,6 +4659,7 @@ export function ReviewDetailView({
                         }}
                       >
                         <div
+                          ref={reviewerMenuPanelRef}
                           style={{
                             position: 'absolute',
                             bottom: '100%',
@@ -2403,57 +4683,118 @@ export function ReviewDetailView({
                                 No teammates found.
                               </div>
                             )}
-                            {availableContributors.map((contributor) => {
-                              const alreadyReviewer = reviewers.some(
-                                (reviewer) => reviewer.id === contributor.id
-                              );
-                              return (
-                                <label
-                                  key={contributor.id}
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 8,
-                                    padding: '8px 12px',
-                                    cursor: alreadyReviewer ? 'not-allowed' : 'pointer',
-                                    width: '100%',
-                                    boxSizing: 'border-box',
-                                    opacity: alreadyReviewer ? 0.6 : 1,
-                                  }}
-                                >
-                                  <Checkbox
-                                    id={`reviewer-${contributor.id}`}
-                                    label=""
-                                    checked={selectedReviewerIds.includes(contributor.id)}
-                                    disabled={alreadyReviewer}
-                                    onChange={(checked) => {
-                                      if (alreadyReviewer) return;
-                                      setSelectedReviewerIds((prev) =>
-                                        checked
-                                          ? [...prev, contributor.id]
-                                          : prev.filter((id) => id !== contributor.id)
-                                      );
-                                    }}
-                                  />
-                                  <Avatar name={contributor.name} size="md" />
-                                  <span
-                                    style={{
-                                      fontSize: 14,
-                                      fontWeight: 500,
-                                      color: '#2e1c1c',
-                                      flex: 1,
-                                    }}
-                                  >
-                                    {contributor.name}
-                                  </span>
-                                  {alreadyReviewer ? (
-                                    <span style={{ fontSize: 12, color: '#998c82' }}>
-                                      Already a reviewer
-                                    </span>
-                                  ) : null}
-                                </label>
-                              );
-                            })}
+                            {projectTeammatesInMenu.length > 0 ? (
+                              <>
+                                <MenuSectionHeading>Project teammates</MenuSectionHeading>
+                                {projectTeammatesInMenu.map((contributor) => {
+                                  const alreadyReviewer = reviewers.some(
+                                    (reviewer) => reviewer.id === contributor.id,
+                                  );
+                                  return (
+                                    <label
+                                      key={contributor.id}
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 8,
+                                        padding: '8px 12px',
+                                        cursor: alreadyReviewer ? 'not-allowed' : 'pointer',
+                                        width: '100%',
+                                        boxSizing: 'border-box',
+                                        opacity: alreadyReviewer ? 0.6 : 1,
+                                      }}
+                                    >
+                                      <Checkbox
+                                        id={`reviewer-${contributor.id}`}
+                                        label=""
+                                        checked={selectedReviewerIds.includes(contributor.id)}
+                                        disabled={alreadyReviewer}
+                                        onChange={(checked) => {
+                                          if (alreadyReviewer) return;
+                                          setSelectedReviewerIds((prev) =>
+                                            checked
+                                              ? [...prev, contributor.id]
+                                              : prev.filter((id) => id !== contributor.id),
+                                          );
+                                        }}
+                                      />
+                                      <Avatar name={contributor.name} contributorId={contributor.id} size="md" />
+                                      <span
+                                        style={{
+                                          fontSize: 14,
+                                          fontWeight: 500,
+                                          color: '#2e1c1c',
+                                          flex: 1,
+                                        }}
+                                      >
+                                        {contributor.name}
+                                      </span>
+                                      {alreadyReviewer ? (
+                                        <span style={{ fontSize: 12, color: '#998c82' }}>
+                                          Already a reviewer
+                                        </span>
+                                      ) : null}
+                                    </label>
+                                  );
+                                })}
+                              </>
+                            ) : null}
+                            {otherMembersInMenu.length > 0 ? (
+                              <>
+                                <MenuSectionHeading>All members</MenuSectionHeading>
+                                {otherMembersInMenu.map((contributor) => {
+                                  const alreadyReviewer = reviewers.some(
+                                    (reviewer) => reviewer.id === contributor.id,
+                                  );
+                                  return (
+                                    <label
+                                      key={contributor.id}
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 8,
+                                        padding: '8px 12px',
+                                        cursor: alreadyReviewer ? 'not-allowed' : 'pointer',
+                                        width: '100%',
+                                        boxSizing: 'border-box',
+                                        opacity: alreadyReviewer ? 0.6 : 1,
+                                      }}
+                                    >
+                                      <Checkbox
+                                        id={`reviewer-${contributor.id}`}
+                                        label=""
+                                        checked={selectedReviewerIds.includes(contributor.id)}
+                                        disabled={alreadyReviewer}
+                                        onChange={(checked) => {
+                                          if (alreadyReviewer) return;
+                                          setSelectedReviewerIds((prev) =>
+                                            checked
+                                              ? [...prev, contributor.id]
+                                              : prev.filter((id) => id !== contributor.id),
+                                          );
+                                        }}
+                                      />
+                                      <Avatar name={contributor.name} contributorId={contributor.id} size="md" />
+                                      <span
+                                        style={{
+                                          fontSize: 14,
+                                          fontWeight: 500,
+                                          color: '#2e1c1c',
+                                          flex: 1,
+                                        }}
+                                      >
+                                        {contributor.name}
+                                      </span>
+                                      {alreadyReviewer ? (
+                                        <span style={{ fontSize: 12, color: '#998c82' }}>
+                                          Already a reviewer
+                                        </span>
+                                      ) : null}
+                                    </label>
+                                  );
+                                })}
+                              </>
+                            ) : null}
                           </div>
 
                           <div style={{ height: 1, backgroundColor: '#e4ddd3' }} />
@@ -2471,25 +4812,23 @@ export function ReviewDetailView({
                               size="sm"
                               label={savingReviewers ? 'Saving' : 'Done'}
                               disabled={savingReviewers}
-                              onClick={async () => {
+                              onClick={() => {
                                 if (savingReviewers) return;
                                 const toAddFromAll = allSystemContributors.filter((contributor) =>
                                   selectedReviewerIds.includes(contributor.id)
                                 );
                                 if (toAddFromAll.length === 0) return;
-                                setSavingReviewers(true);
-                                const { error } = await assignReviewersAction({
-                                  reviewId,
+                                maybeAddReviewers({
                                   reviewerIds: toAddFromAll.map((contributor) => contributor.id),
-                                  requireDecisionMaker,
+                                  source: 'overview',
+                                  onStartSaving: () => setSavingReviewers(true),
+                                  onFinishSaving: () => setSavingReviewers(false),
+                                  onSuccess: () => {
+                                    setSelectedReviewerIds([]);
+                                    setReviewerMenuOpen(false);
+                                    setReviewerSearch('');
+                                  },
                                 });
-                                setSavingReviewers(false);
-                                if (error) return;
-                                showToast('Changes saved');
-                                setSelectedReviewerIds([]);
-                                setReviewerMenuOpen(false);
-                                setReviewerSearch('');
-                                router.refresh();
                               }}
                             />
                             <button
@@ -2547,6 +4886,8 @@ export function ReviewDetailView({
                   </div>
                 )}
               </section>
+              <div className="shrink-0 h-8" aria-hidden="true" />
+              </div>
             </div>
           </div>
           )}
@@ -2564,18 +4905,26 @@ export function ReviewDetailView({
             reviewId={reviewId}
             primaryFeedbackCta={primaryFeedbackCta}
             artifacts={artifacts}
-            onOpenSubmitFeedbackDrawer={() => setShowFeedbackDrawer(true)}
-            onOpenFinalDecisionDrawer={() => setShowFinalDecisionDrawer(true)}
-            onSendReminder={handleSendReminder}
+            onOpenSubmitFeedbackDrawer={openSubmitFeedbackDrawer}
+            onOpenFinalDecisionDrawer={openFinalDecisionDrawer}
+            onSendReminder={handleBellReminder}
             sendingReminder={sendingReminder}
             isReminderRateLimited={isReminderRateLimited}
+            reminderLastSentAt={lastReminderSentAt}
             canCurrentUserMakeDecision={canCurrentUserMakeDecision}
             currentContributorId={currentContributorId}
             canSubmitFeedback={canSubmitFeedback}
+            isDecisionMaker={isDecisionMaker}
             showReminderBell={showReminderBell}
             allReviewerFeedbackSubmitted={allReviewerFeedbackSubmitted}
             reviewOwnerName={reviewOwnerName}
             totalCardCount={totalCardCount}
+            totalReviewerCount={totalReviewerCount}
+            approveFeedbackSubmissionCount={approveFeedbackSubmissionCount}
+            approveUniqueReviewerCount={approveUniqueReviewerCount}
+            changeRequestCount={changeRequests.length}
+            changeRequests={changeRequests}
+            approveRhcReviewerEntries={approveRhcReviewerEntries}
             reviewersForMenu={reviewersForMenu}
             activeFilters={activeFilters}
             setActiveFilters={setActiveFilters}
@@ -2587,6 +4936,7 @@ export function ReviewDetailView({
             onChangeRequestReply={handleChangeRequestReply}
             reviewersById={reviewersById}
             contributorsById={contributorsById}
+            contactDisplayById={contactDisplayById}
             changeRequestLabelById={changeRequestLabelById}
             allCardsCount={allCards.length}
             filteredCardsCount={filteredCards.length}
@@ -2594,11 +4944,20 @@ export function ReviewDetailView({
             repliesByCardId={repliesByCardId}
             reviewType={reviewType}
             currentUserHasNotSubmitted={currentUserHasNotSubmitted}
-            reviewStatus={rawStatus}
-            reviewClosed={normStatus(rawStatus) === 'complete'}
+            reviewStatus={displayRawStatus}
+            reviewClosed={normalizedDisplayStatus === 'complete'}
             comparisonDecisionPromptRowName={comparisonDecisionPromptRowName}
             showComparisonButterPromptDm={showComparisonButterPromptDm}
             showDecisionPromptReadonly={showDecisionPromptReadonly}
+            decisionMakerDisplayName={decisionMakerDisplayName}
+            decisionMakerContributorId={decisionMakerReviewerId}
+            compareReviewFullyLocked={compareReviewFullyLocked}
+            compareHideSubmitFeedback={compareHideSubmitFeedback}
+            assignableContributors={rhcAssignableContributors}
+            requireDecisionMaker={requireDecisionMaker}
+            onAddReviewers={maybeAddReviewers}
+            isReviewPaused={isReviewPaused}
+            isReviewDraft={isReviewDraft}
           />
           </main>
         )}
@@ -2616,27 +4975,72 @@ export function ReviewDetailView({
               iteration: artifact.iteration,
             })),
           }}
-          reviewClosed={normStatus(rawStatus) === 'complete'}
-          existingFeedbackDraft={currentUserFeedbackDraft}
+          reviewClosed={
+            normStatus(rawStatus) === 'complete' || compareDirectionApproved
+          }
+          resubmitMode={!feedbackDrawerIsNew}
+          existingFeedbackId={feedbackDrawerExistingFeedbackId}
+          clearChangeRequests={
+            !feedbackDrawerIsNew && normalizedReviewType === 'approve'
+          }
+          initialChangeRequests={feedbackDrawerInitialChangeRequests}
+          existingFeedbackDraft={
+            feedbackDrawerIsNew
+              ? null
+              : (feedbackDrawerDraftOverride ?? currentUserFeedbackDraft)
+          }
+          deferRevalidate
+          onChangeRequestCreated={handleChangeRequestCreatedWhileDrawer}
           currentContributorId={currentContributorId}
-          onClose={() => setShowFeedbackDrawer(false)}
+          isReviewCreator={isReviewCreator}
+          defaultOnBehalfOf={feedbackDrawerTargetReviewerId}
+          assignedReviewers={assignedReviewers.map((reviewer) => ({
+            id: reviewer.id,
+            name: reviewer.name,
+            hasSubmitted: resolvedFeedbackEntries.some(
+              (entry) => entry.reviewerId === reviewer.id && entry.status === 'submitted',
+            ),
+          }))}
+          onClose={() => {
+            setShowFeedbackDrawer(false);
+            setFeedbackDrawerDraftOverride(null);
+            setFeedbackDrawerExistingFeedbackId(null);
+            setFeedbackDrawerInitialChangeRequests([]);
+            setFeedbackDrawerTargetReviewerId(null);
+            flushPendingRevalidation();
+          }}
           onSubmitSuccess={() => {
             setShowFeedbackDrawer(false);
-            const msg = currentUserFeedbackDraft
-              ? 'Feedback updated successfully'
-              : 'Feedback submitted successfully';
-            setFeedbackSubmitToast(msg);
+            setFeedbackDrawerDraftOverride(null);
+            setFeedbackDrawerExistingFeedbackId(null);
+            setFeedbackDrawerInitialChangeRequests([]);
+            setFeedbackDrawerTargetReviewerId(null);
+            pendingRevalidation.current = false;
+            setFeedbackSavedAlertVisible(true);
             window.setTimeout(() => {
-              setFeedbackSubmitToast((prev) => (prev === msg ? null : prev));
+              setFeedbackSavedAlertVisible(false);
             }, 3000);
             router.refresh();
+            bumpActivityLog();
           }}
         />
       )}
-      {showFinalDecisionDrawer ? (
+      {showFinalDecisionDrawer &&
+      normalizedReviewType !== 'approve' &&
+      (normalizedReviewType !== 'compare' || isDecisionMaker) ? (
         <FinalDecisionDrawer
           open={showFinalDecisionDrawer}
-          onClose={() => setShowFinalDecisionDrawer(false)}
+          onClose={() => {
+            setShowFinalDecisionDrawer(false);
+            setFinalDecisionChangeDirection(false);
+          }}
+          changeDirection={finalDecisionChangeDirection}
+          initialComments={decisionData.text ?? ''}
+          initialSelectedIds={decisionData.selectedArtifactIds ?? []}
+          initialChangeRequests={finalDecisionChangeRequests.map((row) => ({
+            artifactIds: row.artifactIds,
+            changesNeeded: row.changesNeeded,
+          }))}
           reviewId={reviewId}
           reviewType={
             normalizedReviewType === 'approve' ||
@@ -2655,18 +5059,37 @@ export function ReviewDetailView({
           currentContributorId={currentContributorId}
           onDecisionSubmitted={() => {
             router.refresh();
+            bumpActivityLog();
           }}
         />
       ) : null}
-      {feedbackSubmitToast || reviewDetailsSaveErrorToast ? (
+      {feedbackSavedAlertVisible ? (
         <div
           style={{
             position: 'fixed',
             right: 24,
             bottom: 24,
-            background: reviewDetailsSaveErrorToast ? '#fceaea' : '#ebf6ee',
-            border: reviewDetailsSaveErrorToast ? '1px solid #e07070' : '1px solid #7dc98f',
-            color: reviewDetailsSaveErrorToast ? '#8a1f1f' : '#256b38',
+            zIndex: 1200,
+            maxWidth: 360,
+          }}
+        >
+          <Alert
+            sentiment="success"
+            prominence="low"
+            title="Feedback saved"
+            dismissible={false}
+          />
+        </div>
+      ) : null}
+      {reviewDetailsSaveErrorToast ? (
+        <div
+          style={{
+            position: 'fixed',
+            right: 24,
+            bottom: feedbackSavedAlertVisible ? 88 : 24,
+            background: '#fceaea',
+            border: '1px solid #e07070',
+            color: '#8a1f1f',
             borderRadius: 8,
             padding: '10px 12px',
             fontSize: 13,
@@ -2675,7 +5098,7 @@ export function ReviewDetailView({
           role="status"
           aria-live="polite"
         >
-          {feedbackSubmitToast ?? reviewDetailsSaveErrorToast}
+          {reviewDetailsSaveErrorToast}
         </div>
       ) : null}
 
@@ -2693,6 +5116,16 @@ export function ReviewDetailView({
           currentType={reviewType}
           onClose={() => setShowEditTypeModal(false)}
           onUpdated={() => {
+            void logTimelineEventClient({
+              projectId,
+              reviewId,
+              actorId: currentContributorId,
+              eventType: 'review_focus_edited',
+              payload: {
+                review_title: title,
+                tooltip_text: 'Review Details',
+              },
+            });
             showToast('Changes saved');
           }}
         />
@@ -2702,9 +5135,20 @@ export function ReviewDetailView({
         open={editReviewDrawerOpen}
         onClose={() => setEditReviewDrawerOpen(false)}
         reviewId={reviewId}
+        projectId={projectId}
         initialTitle={title}
+        initialStatus={displayRawStatus}
         initialReviewFocus={reviewFocus}
-        onSaved={() => router.refresh()}
+        initialReviewType={reviewType}
+        initialArtifacts={artifacts}
+        reviewStage={overviewStage}
+        submittedFeedbackCount={submittedFeedbackCount}
+        reviewerContributorIds={assignedReviewers.map((reviewer) => reviewer.id)}
+        artifactIdsWithFeedback={artifactIdsWithFeedback}
+        onSaved={() => {
+          showToast('Changes saved');
+          router.refresh();
+        }}
       />
 
       <Modal
@@ -2743,6 +5187,203 @@ export function ReviewDetailView({
           It will be hidden from the project but not deleted.
         </p>
       </Modal>
+
+      <Modal
+        open={removeReviewerModalOpen}
+        type="default"
+        size="sm"
+        title="Remove this reviewer?"
+        showSubtitle={false}
+        onClose={() => {
+          if (removeReviewerSubmitting) return;
+          setRemoveReviewerModalOpen(false);
+          setPendingReviewerRemoval(null);
+        }}
+        footer={
+          <>
+            <div className={modalStyles.spacer} />
+            <Button
+              variant="secondary"
+              size="sm"
+              label="Cancel"
+              disabled={removeReviewerSubmitting}
+              onClick={() => {
+                if (removeReviewerSubmitting) return;
+                setRemoveReviewerModalOpen(false);
+                setPendingReviewerRemoval(null);
+              }}
+            />
+            <Button
+              variant="destructive"
+              size="sm"
+              label={removeReviewerSubmitting ? 'Removing…' : 'Remove reviewer'}
+              disabled={removeReviewerSubmitting || !pendingReviewerRemoval}
+              onClick={() => {
+                if (!pendingReviewerRemoval || removeReviewerSubmitting) return;
+                void (async () => {
+                  await removeReviewerNow(pendingReviewerRemoval.id);
+                  setRemoveReviewerModalOpen(false);
+                  setPendingReviewerRemoval(null);
+                })();
+              }}
+            />
+          </>
+        }
+      >
+        <p className={modalStyles.description}>
+          {pendingReviewerRemoval?.autoCloseOnRemoval
+            ? `Removing ${pendingReviewerRemoval.name} will close this review. All remaining reviewers have already approved, so the review will return to Approved.`
+            : `Removing ${pendingReviewerRemoval?.name ?? 'this reviewer'} means their feedback won't be included in this review.`}
+        </p>
+      </Modal>
+
+      <Modal
+        open={reopenReviewModalOpen}
+        type="default"
+        size="sm"
+        title="Re-open this review?"
+        showSubtitle={false}
+        onClose={() => {
+          if (reopenReviewSubmitting) return;
+          setReopenReviewModalOpen(false);
+          resetPendingReviewerAddState();
+        }}
+        footer={
+          <>
+            <div className={modalStyles.spacer} />
+            <Button
+              variant="secondary"
+              size="sm"
+              label="Cancel"
+              disabled={reopenReviewSubmitting}
+              onClick={() => {
+                if (reopenReviewSubmitting) return;
+                setReopenReviewModalOpen(false);
+                resetPendingReviewerAddState();
+              }}
+            />
+            <Button
+              variant="accent"
+              size="sm"
+              label={reopenReviewSubmitting ? 'Re-opening' : 'Re-open review'}
+              disabled={reopenReviewSubmitting || !pendingReviewerAddSource}
+              onClick={() => {
+                if (!pendingReviewerAddSource || !pendingReviewerAddConfirmRef.current) return;
+                void pendingReviewerAddConfirmRef.current();
+              }}
+            />
+          </>
+        }
+      >
+        <p className={modalStyles.description}>
+          {`You're adding ${pendingReviewerNameLabel} to a review that has already received feedback. This will re-open the review so ${pendingReviewerNameLabel} can submit their feedback.`}
+        </p>
+      </Modal>
+
+      <Modal
+        open={showPublishFromBellModal}
+        type="default"
+        size="sm"
+        title="Publish this review?"
+        showSubtitle={false}
+        backdropClosable={!publishingReview}
+        onClose={() => {
+          if (publishingReview) return;
+          setShowPublishFromBellModal(false);
+        }}
+        footer={
+          <>
+            <div className={modalStyles.spacer} />
+            <Button
+              variant="secondary"
+              size="sm"
+              label="Cancel"
+              disabled={publishingReview}
+              onClick={() => setShowPublishFromBellModal(false)}
+            />
+            <Button
+              variant="accent"
+              size="sm"
+              label={publishingReview ? 'Publishing…' : 'Publish & Notify'}
+              disabled={publishingReview}
+              onClick={() => {
+                void handlePublishFromBell();
+              }}
+            />
+          </>
+        }
+      >
+        <p className={modalStyles.description}>
+          This review is still a draft. Publishing it will notify all reviewers and move
+          it to In Review.
+        </p>
+      </Modal>
+
+      {showCompleteModal && typeof document !== 'undefined'
+        ? createPortal(
+            <Modal
+              open={showCompleteModal}
+              type="default"
+              size="sm"
+              title="Mark as complete?"
+              description="This will close the review. You can reopen it later from the review page."
+              confirmLabel="Mark as complete"
+              backdropClosable={!markingComplete}
+              onClose={() => {
+                if (markingComplete) return;
+                setShowCompleteModal(false);
+              }}
+              onConfirm={() => {
+                void handleMarkCompleteConfirm();
+              }}
+            />,
+            document.body,
+          )
+        : null}
+
+      {showDeleteModal && typeof document !== 'undefined'
+        ? createPortal(
+            <Modal
+              open={showDeleteModal}
+              type="default"
+              size="sm"
+              title="Delete this review?"
+              showSubtitle={false}
+              backdropClosable={!deletingReview}
+              onClose={() => {
+                if (deletingReview) return;
+                setShowDeleteModal(false);
+              }}
+              footer={
+                <>
+                  <div className={modalStyles.spacer} />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    label="Cancel"
+                    disabled={deletingReview}
+                    onClick={() => setShowDeleteModal(false)}
+                  />
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    label={deletingReview ? 'Deleting…' : 'Delete review'}
+                    disabled={deletingReview}
+                    onClick={() => {
+                      void handleDeleteReviewConfirm();
+                    }}
+                  />
+                </>
+              }
+            >
+              <p className={modalStyles.description}>
+                This can&apos;t be undone. The review and all its artifacts will be permanently
+                deleted.
+              </p>
+            </Modal>,
+            document.body,
+          )
+        : null}
 
       {/*  Create-problem modal  */}
       <Modal
@@ -2783,11 +5424,10 @@ export function ReviewDetailView({
                   const text = (editingProblem ? editText : newProblemText).trim();
                   if (!text) return;
                   if (editingProblem) {
-                    setProblems((prev) =>
-                      prev.map((problem) =>
+                    const nextProblems = problems.map((problem) =>
                         problem.id === editingProblem.id ? { ...problem, text } : problem
-                      )
                     );
+                    setProblems(nextProblems);
                     if (includeInProject) {
                       setAllProjectProblems((prev) =>
                         prev.some((problem) => problem.id === editingProblem.id)
@@ -2796,26 +5436,54 @@ export function ReviewDetailView({
                             )
                           : [...prev, { ...editingProblem, text }]
                       );
+                      await supabase
+                        .from('problems')
+                        .update({ description: text })
+                        .eq('id', editingProblem.id);
                     }
+                    await persistRelatedProblemIds(nextProblems);
+                    await logTimelineEventClient({
+                      projectId,
+                      reviewId,
+                      actorId: currentContributorId,
+                      eventType: 'problem_edited',
+                      payload: {
+                        review_title: title,
+                        problem_text: text,
+                        tooltip_text: text,
+                      },
+                    });
                   } else {
                     const next: Problem = {
                       id: crypto.randomUUID(),
                       text,
                       selected: true,
                     };
-                    setProblems((prev) => [...prev, next]);
+                    const nextProblems = [...problems, next];
+                    setProblems(nextProblems);
                     if (includeInProject) {
                       setAllProjectProblems((prev) => [...prev, next]);
-                      if (projectId) {
-                        const supabase = createSupabaseBrowserClient();
                         await supabase.from('problems').insert({
                           id: next.id,
                           project_id: projectId,
                           description: next.text,
                         });
                       }
-                    }
+                    await persistRelatedProblemIds(nextProblems);
+                    await logTimelineEventClient({
+                      projectId,
+                      reviewId,
+                      actorId: currentContributorId,
+                      eventType: 'problem_added',
+                      payload: {
+                        review_title: title,
+                        problem_text: text,
+                        tooltip_text: text,
+                      },
+                    });
                   }
+                  showToast('Changes saved');
+                  router.refresh();
                   closeProblemModal();
                 }}
               />
@@ -2853,7 +5521,7 @@ export function ReviewDetailView({
         open={tradeoffModalOpen}
         type="form"
         size="md"
-        title="Create a tradeoff"
+        title={editingTradeoff ? 'Edit the tradeoff' : 'Create a tradeoff'}
         onClose={closeTradeoffModal}
         footer={
           <>
@@ -2866,28 +5534,42 @@ export function ReviewDetailView({
             />
             {newTradeoffText.trim() ? (
               <Button
-                variant="accent"
+                variant={editingTradeoff ? 'primary' : 'accent'}
                 size="sm"
-                label="Create"
-                onClick={() => {
+                label={editingTradeoff ? 'Save' : 'Create'}
+                onClick={async () => {
                   const text = newTradeoffText.trim();
                   if (!text) return;
-                  setTradeoffs((prev) => [
-                    ...prev,
-                    {
-                      id: crypto.randomUUID(),
+                  const nextTradeoff: Tradeoff = {
+                    id: editingTradeoff?.id ?? crypto.randomUUID(),
                       label: text,
                       severity: newTradeoffSeverity,
                       relatedArtifactIds: [...tradeoffSelectedArtifactIds],
-                    },
-                  ]);
+                  };
+                  const nextTradeoffs = editingTradeoff
+                    ? tradeoffs.map((tradeoff) =>
+                        tradeoff.id === editingTradeoff.id ? nextTradeoff : tradeoff,
+                      )
+                    : [...tradeoffs, nextTradeoff];
+                  setTradeoffs(nextTradeoffs);
+                  await persistTradeoffsAndLog(nextTradeoffs, {
+                    type: editingTradeoff ? 'tradeoff_edited' : 'tradeoff_added',
+                    tooltipText: text,
+                    severity: newTradeoffSeverity,
+                  });
                   closeTradeoffModal();
                 }}
               />
             ) : (
               <Tooltip label="Add a description to continue">
                 <span style={{ display: 'inline-flex' }}>
-                  <Button variant="accent" size="sm" label="Create" disabled aria-disabled />
+                  <Button
+                    variant={editingTradeoff ? 'primary' : 'accent'}
+                    size="sm"
+                    label={editingTradeoff ? 'Save' : 'Create'}
+                    disabled
+                    aria-disabled
+                  />
                 </span>
               </Tooltip>
             )}
@@ -2906,6 +5588,7 @@ export function ReviewDetailView({
         <Select
           label="Select Risk Level"
           size="sm"
+          portaled
           options={[
             { value: 'High', label: 'High' },
             { value: 'Medium', label: 'Medium' },
@@ -2925,8 +5608,31 @@ export function ReviewDetailView({
               marginTop: 8,
             }}
           >
+            <Select
+              label="Related Artifacts"
+              size="sm"
+              portaled
+              searchable={false}
+              creatable={false}
+              placeholder="Select artifacts"
+              options={artifacts
+                .filter((a) => !tradeoffSelectedArtifactIds.includes(a.id))
+                .map((a) => ({
+                  value: a.id,
+                  label:
+                    (a.title ?? a.label ?? a.originalFileName ?? '').trim() ||
+                    'Artifact',
+                }))}
+              value={tradeoffArtifactPickerValue}
+              onChange={(v) => {
+                setTradeoffSelectedArtifactIds((prev) =>
+                  prev.includes(v) ? prev : [...prev, v],
+                );
+                setTradeoffArtifactPickerValue('');
+              }}
+            />
             {tradeoffSelectedArtifactIds.length > 0 ? (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div className="mt-2 flex flex-col gap-2">
                 {tradeoffSelectedArtifactIds.map((artifactId) => {
                   const art = artifacts.find((a) => a.id === artifactId);
                   const title =
@@ -2935,29 +5641,9 @@ export function ReviewDetailView({
                   return (
                     <div
                       key={artifactId}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        height: 40,
-                        padding: '4px 12px',
-                        borderRadius: 4,
-                        backgroundColor: '#f3efe9',
-                        border: '1px solid #e4ddd3',
-                        boxSizing: 'border-box',
-                      }}
+                      className="flex h-8 w-full items-center justify-between rounded-[4px] border border-[#e4ddd3] bg-[#f3efe9] px-2"
                     >
-                      <span
-                        style={{
-                          fontSize: 13,
-                          fontWeight: 500,
-                          color: '#2e1c1c',
-                          maxWidth: 220,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#2e1c1c]">
                         {title}
                       </span>
                       <button
@@ -2968,15 +5654,7 @@ export function ReviewDetailView({
                             prev.filter((id) => id !== artifactId),
                           )
                         }
-                        style={{
-                          border: 'none',
-                          background: 'transparent',
-                          cursor: 'pointer',
-                          padding: 0,
-                          fontSize: 16,
-                          lineHeight: 1,
-                          color: '#6b5e55',
-                        }}
+                        className="shrink-0 border-0 bg-transparent p-0 text-[14px] leading-none text-[#998c82] cursor-pointer"
                       >
                         ×
                       </button>
@@ -2984,33 +5662,6 @@ export function ReviewDetailView({
                   );
                 })}
               </div>
-            ) : null}
-            {artifacts.some(
-              (a) => !tradeoffSelectedArtifactIds.includes(a.id),
-            ) ? (
-              <Select
-                label="Related Artifacts"
-                size="sm"
-                portaled
-                searchable={false}
-                creatable={false}
-                placeholder="Select artifacts"
-                options={artifacts
-                  .filter((a) => !tradeoffSelectedArtifactIds.includes(a.id))
-                  .map((a) => ({
-                    value: a.id,
-                    label:
-                      (a.title ?? a.label ?? a.originalFileName ?? '').trim() ||
-                      'Artifact',
-                  }))}
-                value={tradeoffArtifactPickerValue}
-                onChange={(v) => {
-                  setTradeoffSelectedArtifactIds((prev) =>
-                    prev.includes(v) ? prev : [...prev, v],
-                  );
-                  setTradeoffArtifactPickerValue('');
-                }}
-              />
             ) : null}
           </div>
         ) : null}
@@ -3059,44 +5710,30 @@ export function ReviewDetailView({
                 const name = newReviewerName.trim();
                 const email = newReviewerEmail.trim();
                 if (!name || reviewerEmailExistsError || isCreatingTeammate) return;
-                if (!projectId.trim()) return;
-                setIsCreatingTeammate(true);
-
-                if (includeInTeam && email) {
-                  const supabase = createSupabaseBrowserClient();
-                  const activeWorkspaceId = await getActiveWorkspaceId(supabase);
-                  if (activeWorkspaceId) {
-                    const inviteResult = await sendWorkspaceInvite({
-                      workspace_id: activeWorkspaceId,
-                      email,
+                if (shouldReopenOnReviewerAdd) {
+                  setPendingReviewerAddIds([]);
+                  setPendingReviewerAddSource('create-teammate');
+                  setPendingReviewerAddLabel(name);
+                  setPendingReviewerAddCount(1);
+                  pendingReviewerAddConfirmRef.current = async () => {
+                    await handleCreateReviewer({
                       name,
-                      role: 'viewer',
+                      email,
+                      role: newReviewerRole,
+                      includeInTeam,
+                      reopenReview: true,
                     });
-                    if (inviteResult.status === 'error') {
-                      setIsCreatingTeammate(false);
-                      showToast(inviteToastMessage(inviteResult, name, email));
-                      return;
-                    }
-                    showToast(inviteToastMessage(inviteResult, name, email));
-                  }
+                  };
+                  setReopenReviewModalOpen(true);
+                  return;
                 }
-
-                const { error } = await createTeammateFromReviewAction({
-                  reviewId,
-                  projectId,
+                await handleCreateReviewer({
                   name,
-                  email: email || null,
-                  role: newReviewerRole.trim() || 'Stakeholder',
-                  requireDecisionMaker,
-                  includeInWorkspace: includeInTeam,
+                  email,
+                  role: newReviewerRole,
+                  includeInTeam,
+                  reopenReview: false,
                 });
-                setIsCreatingTeammate(false);
-                if (error) return;
-                if (!includeInTeam || !email) {
-                  showToast('Changes saved');
-                }
-                closeReviewerModal();
-                router.refresh();
               }}
             />
           </div>
@@ -3255,19 +5892,27 @@ function ProblemRow({
         cursor: 'default',
       }}
     >
-      <span
-        className="flex-1 min-w-0 truncate"
-        style={{
-          fontSize: 13,
-          fontWeight: 500,
-          color: showBrand ? '#6b1e2e' : '#6b5e55',
-          letterSpacing: '0.13px',
-          lineHeight: 1.5,
-          transition: 'color 120ms ease',
-        }}
+      <Tooltip
+        label={problem.text}
+        position="top"
+        maxWidth={320}
+        fullWidth
+        className="flex-1 min-w-0"
       >
-        {problem.text}
-      </span>
+        <span
+          className="block w-full truncate text-left"
+          style={{
+            fontSize: 13,
+            fontWeight: 500,
+            color: showBrand ? '#6b1e2e' : '#6b5e55',
+            letterSpacing: '0.13px',
+            lineHeight: 1.5,
+            transition: 'color 120ms ease',
+          }}
+        >
+          {problem.text}
+        </span>
+      </Tooltip>
 
       {showBrand && isEdit && (
         <div ref={kebabRef} style={{ position: 'relative' }}>
@@ -3338,12 +5983,31 @@ function TradeoffCard({
   tradeoff,
   mode,
   artifacts,
+  open,
+  onToggleMenu,
+  onCloseMenu,
+  onEdit,
+  onDelete,
+  menuRef,
 }: {
   tradeoff: Tradeoff;
   mode: ReviewMode;
   artifacts: ReviewArtifact[];
+  open: boolean;
+  onToggleMenu?: () => void;
+  onCloseMenu?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  menuRef?: (node: HTMLDivElement | null) => void;
 }) {
   const sentiment = tradeoffDrawerSentimentStyle(tradeoff.severity);
+  const kebabRef = useRef<HTMLDivElement | null>(null);
+  const hasActions = mode === 'edit' && Boolean(onToggleMenu && onEdit && onDelete && menuRef);
+
+  useEffect(() => {
+    menuRef?.(kebabRef.current);
+    return () => menuRef?.(null);
+  }, [menuRef]);
 
   const relatedArtifactLine =
     tradeoff.relatedArtifactIds && tradeoff.relatedArtifactIds.length > 0
@@ -3360,46 +6024,33 @@ function TradeoffCard({
 
   return (
     <div
-      className="flex items-center w-full"
+      className="relative flex w-full items-center gap-3"
       style={{
         borderRadius: 6,
         backgroundColor: sentiment.bg,
         border: `1px solid ${sentiment.border}`,
         paddingLeft: 12,
-        paddingRight: 8,
+        paddingRight: hasActions ? 52 : 12,
         paddingTop: 4,
         paddingBottom: 4,
-        gap: 12,
         minWidth: 0,
+        minHeight: 40,
       }}
     >
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span
-          className="min-w-0 truncate"
-          style={{ fontSize: 13, color: '#2e1c1c', fontWeight: 400 }}
-        >
-          {tradeoff.label}
-        </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5 text-left">
+        <Tooltip label={tradeoff.label} position="top" maxWidth={320} fullWidth>
+          <p className="m-0 truncate text-left text-[13px] leading-[18px] text-[#2e1c1c]">
+            {tradeoff.label}
+          </p>
+        </Tooltip>
         {relatedArtifactLine ? (
-          <span
-            className="min-w-0 truncate"
-            style={{
-              fontSize: 12,
-              fontWeight: 400,
-              lineHeight: 1.5,
-              letterSpacing: 0.24,
-              color: '#998c82',
-            }}
-          >
+          <p className="m-0 truncate text-left text-[12px] font-normal leading-normal tracking-[0.24px] text-[#998c82]">
             {relatedArtifactLine}
-          </span>
+          </p>
         ) : null}
       </div>
 
-      <div
-        className="flex shrink-0 items-center gap-1.5"
-        style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}
-      >
+      <div className="flex shrink-0 items-center gap-1.5">
         <span
           style={{
             display: 'inline-flex',
@@ -3424,24 +6075,47 @@ function TradeoffCard({
         ) : null}
       </div>
 
-      {mode === 'edit' && (
-        <button
-          type="button"
-          aria-label={`More options for ${tradeoff.label}`}
-          className="inline-flex items-center justify-center shrink-0"
+      {hasActions ? (
+        <div
+          ref={kebabRef}
           style={{
-            width: 32,
-            height: 32,
-            borderRadius: 6,
-            color: '#6b5e55',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
+            position: 'absolute',
+            right: 8,
+            top: '50%',
+            transform: 'translateY(-50%)',
           }}
         >
-          <Icon name="kebab" size={14} />
-        </button>
-      )}
+          <button
+            type="button"
+            aria-label={`More options for ${tradeoff.label}`}
+            onClick={onToggleMenu}
+            className="inline-flex items-center justify-center shrink-0"
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 6,
+              color: '#6b5e55',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            <Icon name="kebab" size={14} />
+          </button>
+          {open ? (
+            <Menu
+              open
+              onClose={() => onCloseMenu?.()}
+              anchorRef={kebabRef as RefObject<HTMLElement>}
+              align="right"
+              type="context-menu"
+            >
+              <MenuItem label="Edit" icon="edit" onClick={() => onEdit?.()} />
+              <MenuItem label="Delete" icon="trash" destructive onClick={() => onDelete?.()} />
+            </Menu>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3451,39 +6125,59 @@ function TradeoffCard({
 function ReviewerChip({
   reviewer,
   mode,
+  reviewType,
+  removable = true,
   onRemove,
 }: {
   reviewer: Reviewer;
   mode: ReviewMode;
+  reviewType: string;
+  removable?: boolean;
   onRemove: () => void | Promise<void>;
 }) {
   const [hovered, setHovered] = useState(false);
   const isLilac = reviewer.variant === 'lilac';
   const isEdit = mode === 'edit';
-  const isHovered = isEdit && hovered;
+  const isHovered = hovered;
+  const removeDisabled = isEdit && !removable;
+  const normalizedReviewType = reviewType.trim().toLowerCase();
+  const isCompareReview =
+    normalizedReviewType === 'compare' || normalizedReviewType === 'comparison';
+  const isDecisionMakerTag = isCompareReview && reviewer.isDecisionMaker;
 
-  // Hover tones from the Contributors pattern on Project Detail. Decision
-  // makers (lilac) get a stronger lilac; default chips darken into the warm
-  // neutral ramp.
-  const bg = isHovered
+  const showBrandHover = isEdit && isHovered;
+  const bg = showBrandHover
     ? isLilac
       ? '#f0e2f1'
-      : '#ede8e0'
+      : '#f5eaec'
     : isLilac
       ? '#f5e8f6'
       : '#f3efe9';
-  const borderCol = isHovered
+  const borderCol = showBrandHover
     ? isLilac
       ? '#c490c8'
-      : '#c9c0b4'
+      : '#e8d0d4'
     : isLilac
       ? '#d9a8dc'
       : '#e4ddd3';
 
-  return (
+  const tooltipLabel = (() => {
+    if (isDecisionMakerTag) {
+      if (removeDisabled) {
+        return "Can't remove — feedback already submitted. This reviewer is the Decision Maker.";
+      }
+      return 'Decision Maker — removes direction authority if removed.';
+    }
+    if (removeDisabled) {
+      return "Can't remove — feedback already submitted.";
+    }
+    return null;
+  })();
+
+  const chip = (
     <span
-      className="inline-flex items-center"
-      onMouseEnter={() => isEdit && setHovered(true)}
+      className="group inline-flex items-center"
+      onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
         height: 32,
@@ -3498,7 +6192,13 @@ function ReviewerChip({
         transition: 'background-color 120ms ease, border-color 120ms ease',
       }}
     >
-      <Avatar name={reviewer.name} size="md" />
+      <Avatar
+        name={reviewer.name}
+        contributorId={reviewer.id}
+        size="md"
+        prominence="high"
+        style={avatarInlinePaletteStyle(reviewer.id, reviewer.name, true)}
+      />
       <span
         style={{
           fontSize: 13,
@@ -3509,17 +6209,19 @@ function ReviewerChip({
       >
         {reviewer.name}
       </span>
-      <span
-        style={{
-          fontSize: 13,
-          fontWeight: 400,
-          color: '#998c82',
-          lineHeight: 1.65,
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {reviewer.role}
-      </span>
+      {reviewer.role.trim() ? (
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 400,
+            color: '#998c82',
+            lineHeight: 1.65,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {reviewer.role}
+        </span>
+      ) : null}
 
       {isEdit && (
         <>
@@ -3540,6 +6242,8 @@ function ReviewerChip({
               <Icon name="info" size={16} />
             </button>
           )}
+          {!removeDisabled ? (
+          <span className="inline-flex opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
           <button
             type="button"
             onClick={() => void onRemove()}
@@ -3556,9 +6260,18 @@ function ReviewerChip({
           >
             <Icon name="close" size={16} />
           </button>
+          </span>
+          ) : null}
         </>
       )}
     </span>
+  );
+  return tooltipLabel ? (
+    <Tooltip label={tooltipLabel}>
+      {chip}
+    </Tooltip>
+  ) : (
+    chip
   );
 }
 
@@ -3574,10 +6287,119 @@ function ReviewerChip({
 
 type FeedbackStage = 1 | 2 | 3 | 4;
 
+function CompareDecisionPromptCard({
+  variant,
+  displayName,
+  contributorId,
+  onAddDecision,
+}: {
+  variant: 'required' | 'pending';
+  displayName: string;
+  contributorId?: string | null;
+  onAddDecision?: () => void;
+}) {
+  const statusTooltipLabel =
+    variant === 'required'
+      ? 'All reviewers have submitted their preferred option. Review the feedback below and use Add Decision to record the final direction.'
+      : 'All reviewers have submitted their feedback. The decision maker is reviewing the options and will record the final direction shortly.';
+
+  return (
+    <div
+      className="-mx-6 w-[calc(100%+3rem)] shrink-0"
+      style={{
+        background: 'var(--feedback/warning/bg, #fef8dc)',
+        borderTop: '1px solid var(--feedback/warning/border, #e5b025)',
+        borderBottom: '1px solid var(--feedback/warning/border, #e5b025)',
+        boxShadow: '0 2px 8px 0 rgba(107, 30, 46, 0.06)',
+      }}
+    >
+      <div
+        className="flex w-full flex-col"
+        style={{
+          padding: '0 40px 16px',
+          gap: variant === 'required' ? 10 : 0,
+        }}
+      >
+      <div className="flex items-center gap-2">
+        <Avatar
+          name={displayName}
+          contributorId={contributorId ?? undefined}
+          size="md"
+          style={avatarInlinePaletteStyle(contributorId, displayName, true)}
+        />
+        <span
+          className="min-w-0 flex-1 truncate"
+          style={{
+            fontFamily: "'Plus Jakarta Sans', sans-serif",
+            fontSize: 13,
+            fontWeight: 400,
+            letterSpacing: '0.2px',
+            lineHeight: 1.5,
+            color: 'var(--text/primary, #2e1c1c)',
+          }}
+        >
+          {displayName}
+        </span>
+        <Tooltip label={statusTooltipLabel} position="top">
+          <span className="inline-flex shrink-0 items-center gap-1">
+            <span
+              style={{
+                fontFamily: "'Plus Jakarta Sans', sans-serif",
+                fontSize: 12,
+                fontWeight: 400,
+                lineHeight: 1.5,
+                color: '#7a5500',
+              }}
+            >
+              {variant === 'required' ? 'Decision Required' : 'Decision Pending'}
+            </span>
+            <Icon
+              name="status-blocked"
+              size={16}
+              style={{ color: '#e5b025', flexShrink: 0 }}
+            />
+          </span>
+        </Tooltip>
+      </div>
+      {variant === 'required' && onAddDecision ? (
+        <Button
+          variant="primary"
+          size="md"
+          label="Add Decision"
+          icon="leading"
+          iconName="nav-decisions"
+          className="w-full"
+          onClick={onAddDecision}
+        />
+      ) : null}
+      </div>
+    </div>
+  );
+}
+
 function deriveFeedbackStage(
   feedback: FeedbackThread[],
   decisionMade: boolean,
+  ctx?: {
+    reviewTypeNorm?: string;
+    rawReviewStatus?: string;
+    changeRequestCount?: number;
+  },
 ): FeedbackStage {
+  const rt = (ctx?.reviewTypeNorm ?? '').trim().toLowerCase();
+  const isApprove = rt === 'approve' || rt === 'approval';
+  if (isApprove) {
+    const statusNorm = normStatus(ctx?.rawReviewStatus ?? '');
+    if (statusNorm === 'approved') return 4;
+    if (feedback.length === 0) return 1;
+    const allSubmitted = feedback.every((t) => t.status === 'submitted');
+    if (!allSubmitted) return 2;
+    const hasChanges =
+      (ctx?.changeRequestCount ?? 0) > 0 ||
+      statusNorm === 'needs-changes' ||
+      statusNorm === 'changes-needed';
+    return hasChanges ? 3 : 3;
+  }
   if (decisionMade) return 4;
   if (feedback.length === 0) return 1;
   const allSubmitted = feedback.every((t) => t.status === 'submitted');
@@ -3594,17 +6416,7 @@ function ChangeRequestReplyComposer({
   onChange: (next: string) => void;
   onSend: () => void;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 64)}px`;
-    el.style.overflowY = el.scrollHeight > 64 ? 'auto' : 'hidden';
-  }, [value]);
-
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (!value.trim()) return;
@@ -3614,30 +6426,15 @@ function ChangeRequestReplyComposer({
 
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-      <textarea
-        ref={textareaRef}
-        rows={1}
-        maxLength={140}
+      <Input
+        label="Reply"
         placeholder="Reply..."
+        size="sm"
         value={value}
+        showHelper={false}
+        className="min-w-0 flex-1 [&_label]:sr-only"
         onChange={(e) => onChange(e.target.value.slice(0, 140))}
         onKeyDown={handleKeyDown}
-        className="placeholder:text-[#998c82]"
-        style={{
-          flex: 1,
-          resize: 'none',
-          overflow: 'hidden',
-          minHeight: 32,
-          maxHeight: 64,
-          border: '1px solid #e4ddd3',
-          borderRadius: 6,
-          padding: '6px 8px',
-          fontSize: 13,
-          color: '#2e1c1c',
-          background: '#ffffff',
-          fontFamily: 'inherit',
-        }}
-        aria-label="Write a reply"
       />
       <button
         type="button"
@@ -3671,7 +6468,7 @@ function RelativeTimeText({
   iso: string;
   className?: string;
 }) {
-  const label = useClientRelativeTime(iso);
+  const label = useClientRelativeTime(iso, { short: true });
   if (!label) return null;
   return <span className={className}>{label}</span>;
 }
@@ -3683,9 +6480,12 @@ function FeedbackThreadCommentCard({
   currentContributorId,
   canCurrentUserMakeDecision,
   contributorsById,
+  contactDisplayById,
+  artifacts,
   reviewOwnerName,
   onFeedbackReply,
   onMakeDecision,
+  disableReplies = false,
 }: {
   thread: FeedbackThread;
   threadReplies: CardReplyRow[];
@@ -3693,11 +6493,16 @@ function FeedbackThreadCommentCard({
   currentContributorId: string | null;
   canCurrentUserMakeDecision: boolean;
   contributorsById: Map<string, ContributorOption>;
+  contactDisplayById: Record<string, string>;
+  artifacts: ReviewArtifact[];
   reviewOwnerName: string | null;
   onFeedbackReply: (feedbackId: string, text: string) => Promise<void>;
   onMakeDecision: () => void;
+  disableReplies?: boolean;
 }) {
-  const timestamp = useClientRelativeTime(thread.submittedAtIso ?? null);
+  const timestamp = useClientRelativeTime(thread.submittedAtIso ?? null, {
+    short: true,
+  });
   const [replyTimestamps, setReplyTimestamps] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -3706,7 +6511,7 @@ function FeedbackThreadCommentCard({
       for (const reply of threadReplies) {
         const date = new Date(reply.created_at);
         if (!Number.isNaN(date.getTime())) {
-          next[reply.id] = formatDistanceToNow(date, { addSuffix: true });
+          next[reply.id] = formatDistanceToNowShort(date);
         }
       }
       setReplyTimestamps(next);
@@ -3718,14 +6523,19 @@ function FeedbackThreadCommentCard({
 
   const type = getCommentType(thread, threadReplies.length > 0);
   const replies = threadReplies.map((reply) => {
-    const authorName = reply.reply_by_id
-      ? contributorsById.get(reply.reply_by_id)?.name ?? 'Reviewer'
-      : 'Reviewer';
+    const authorName =
+      reply.reply_by_name ??
+      (reply.reply_by_id
+        ? contactDisplayById?.[reply.reply_by_id] ??
+          contributorsById?.get(reply.reply_by_id)?.name ??
+          'Reviewer'
+        : 'Reviewer');
     return {
       text: reply.reply_text,
       authorName,
       authorInitials: initialsFromName(authorName),
       timestamp: replyTimestamps[reply.id] ?? '',
+      authorContributorId: reply.reply_by_id ?? undefined,
     };
   });
 
@@ -3739,13 +6549,14 @@ function FeedbackThreadCommentCard({
         thread.reviewerId === currentContributorId
       }
       authorName={thread.author}
+      authorContributorId={thread.reviewerId}
       authorAvatarSrc={thread.authorAvatarSrc}
       timestamp={timestamp || undefined}
       body={thread.text}
-      options={thread.optionTag ? [{ label: thread.optionTag }] : []}
+      options={resolveThreadConceptOptions(thread, artifacts)}
       replies={replies}
       onReply={
-        thread.status === 'submitted'
+        !disableReplies && thread.status === 'submitted'
           ? (text) => void onFeedbackReply(thread.id, text)
           : undefined
       }
@@ -3782,13 +6593,21 @@ function RightColumn({
   onSendReminder,
   sendingReminder,
   isReminderRateLimited,
+  reminderLastSentAt,
   canCurrentUserMakeDecision,
   currentContributorId,
   canSubmitFeedback,
+  isDecisionMaker,
   showReminderBell,
   allReviewerFeedbackSubmitted,
   reviewOwnerName,
   totalCardCount,
+  totalReviewerCount,
+  approveFeedbackSubmissionCount,
+  approveUniqueReviewerCount,
+  changeRequestCount,
+  changeRequests,
+  approveRhcReviewerEntries,
   reviewersForMenu,
   activeFilters,
   setActiveFilters,
@@ -3800,6 +6619,7 @@ function RightColumn({
   onChangeRequestReply,
   reviewersById,
   contributorsById,
+  contactDisplayById,
   changeRequestLabelById,
   allCardsCount,
   filteredCardsCount,
@@ -3812,6 +6632,15 @@ function RightColumn({
   comparisonDecisionPromptRowName,
   showComparisonButterPromptDm,
   showDecisionPromptReadonly,
+  decisionMakerDisplayName,
+  decisionMakerContributorId,
+  compareReviewFullyLocked,
+  compareHideSubmitFeedback,
+  assignableContributors,
+  requireDecisionMaker,
+  onAddReviewers,
+  isReviewPaused = false,
+  isReviewDraft = false,
 }: {
   open: boolean;
   hydrated: boolean;
@@ -3846,18 +6675,29 @@ function RightColumn({
   reviewId: string;
   primaryFeedbackCta: ReturnType<typeof getPrimaryFeedbackCta>;
   artifacts: ReviewArtifact[];
-  onOpenSubmitFeedbackDrawer: () => void;
+  onOpenSubmitFeedbackDrawer: (options?: {
+    prefill?: boolean;
+    feedbackEntryId?: string;
+  }) => void;
   onOpenFinalDecisionDrawer: () => void;
   onSendReminder: () => Promise<boolean>;
   sendingReminder: boolean;
   isReminderRateLimited: boolean;
+  reminderLastSentAt: string | null;
   canCurrentUserMakeDecision: boolean;
   currentContributorId: string | null;
   canSubmitFeedback: boolean;
+  isDecisionMaker: boolean;
   showReminderBell: boolean;
   allReviewerFeedbackSubmitted: boolean;
   reviewOwnerName: string | null;
   totalCardCount: number;
+  totalReviewerCount: number;
+  approveFeedbackSubmissionCount: number;
+  approveUniqueReviewerCount: number;
+  changeRequestCount: number;
+  changeRequests: ReviewChangeRequestEntry[];
+  approveRhcReviewerEntries: ApproveRhcReviewerEntry[];
   reviewersForMenu: MenuSectionsReviewer[];
   activeFilters: MenuSectionsState;
   setActiveFilters: (value: MenuSectionsState) => void;
@@ -3871,6 +6711,7 @@ function RightColumn({
   onChangeRequestReply: (changeRequestId: string) => Promise<void>;
   reviewersById: Map<string, ReviewerAssignment>;
   contributorsById: Map<string, ContributorOption>;
+  contactDisplayById: Record<string, string>;
   changeRequestLabelById: Map<string, string>;
   allCardsCount: number;
   filteredCardsCount: number;
@@ -3883,18 +6724,88 @@ function RightColumn({
   comparisonDecisionPromptRowName: string | null;
   showComparisonButterPromptDm: boolean;
   showDecisionPromptReadonly: boolean;
+  decisionMakerDisplayName: string;
+  decisionMakerContributorId: string | null;
+  compareReviewFullyLocked: boolean;
+  compareHideSubmitFeedback: boolean;
+  assignableContributors: ContributorOption[];
+  requireDecisionMaker: boolean;
+  onAddReviewers: (input: {
+    reviewerIds: string[];
+    source: 'overview' | 'rhc';
+    onStartSaving: () => void;
+    onFinishSaving: () => void;
+    onSuccess: () => void;
+  }) => void;
+  isReviewPaused?: boolean;
+  isReviewDraft?: boolean;
 }) {
   const width = open ? 'clamp(360px, 34vw, 440px)' : RHC_CLOSED_WIDTH;
   const decisionMade = decision !== null;
-  const stage = deriveFeedbackStage(feedback, decisionMade);
+  const rawRt = reviewType.trim().toLowerCase();
+  const normalizedReviewType =
+    rawRt === 'comparison'
+      ? 'compare'
+      : rawRt === 'approval'
+        ? 'approve'
+        : rawRt === 'alignment'
+          ? 'align'
+          : rawRt;
+  const stage = deriveFeedbackStage(feedback, decisionMade, {
+    reviewTypeNorm: normalizedReviewType,
+    rawReviewStatus: reviewStatus,
+    changeRequestCount,
+  });
+  const showApproveFeedbackReceived =
+    normalizedReviewType === 'approve' && stage >= 3;
+  const showApproveStage2ReviewerCards =
+    normalizedReviewType === 'approve' && stage === 2;
+  const showAlignFeedbackReceived =
+    normalizedReviewType === 'align' && stage >= 2;
+  const rhcCardsForRender = showAlignFeedbackReceived
+    ? filteredCards.filter((card) => card.cardType !== 'change_request')
+    : filteredCards;
+  const approveFeedbackBadgeTooltip =
+    normalizedReviewType === 'approve' && approveFeedbackSubmissionCount > 0
+      ? `${approveFeedbackSubmissionCount} feedback submission${
+          approveFeedbackSubmissionCount === 1 ? '' : 's'
+        } from ${approveUniqueReviewerCount} reviewer${
+          approveUniqueReviewerCount === 1 ? '' : 's'
+        }`
+      : null;
+  const [rhcReviewerPopoverOpen, setRhcReviewerPopoverOpen] = useState(false);
+  const [rhcSelectedReviewerIds, setRhcSelectedReviewerIds] = useState<string[]>([]);
+  const [rhcSavingReviewers, setRhcSavingReviewers] = useState(false);
+  const rhcScrollRef = useRef<HTMLDivElement | null>(null);
+  const rhcAddReviewersAnchorRef = useRef<HTMLDivElement | null>(null);
+  const rhcAddReviewersPopoverRef = useRef<HTMLDivElement | null>(null);
   const reminderDisabled =
     pendingCount === 0 ||
     allReviewerFeedbackSubmitted ||
     sendingReminder ||
     reviewClosed ||
     isReminderRateLimited;
+  const reminderRelativeTime = useClientRelativeTime(reminderLastSentAt ?? null);
+  const reminderTooltipLabel = isReminderRateLimited
+    ? `Reminder sent ${reminderRelativeTime || 'just now'}`
+    : 'Remind reviewers to submit feedback';
+  const reminderTooltipSupporting =
+    !isReminderRateLimited && reminderLastSentAt && reminderRelativeTime
+      ? `Last reminder sent ${reminderRelativeTime}`
+      : undefined;
   const [reminderJustSent, setReminderJustSent] = useState(false);
   const filterAnchorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!rhcReviewerPopoverOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (rhcAddReviewersPopoverRef.current?.contains(e.target as Node)) return;
+      if (rhcAddReviewersAnchorRef.current?.contains(e.target as Node)) return;
+      setRhcReviewerPopoverOpen(false);
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [rhcReviewerPopoverOpen]);
 
   useEffect(() => {
     if (!reminderJustSent) return;
@@ -3917,31 +6828,86 @@ function RightColumn({
     opacity: reviewClosed ? 0.45 : 1,
   };
   const handleMakeDecision = () => {
+    if (normalizedReviewType === 'compare' && !isDecisionMaker) return;
     onOpenFinalDecisionDrawer();
   };
-  const rawRt = reviewType.trim().toLowerCase();
-  const normalizedReviewType =
-    rawRt === 'comparison'
-      ? 'compare'
-      : rawRt === 'approval'
-        ? 'approve'
-        : rawRt === 'alignment'
-          ? 'align'
-          : rawRt;
-  const hideAddFeedbackForCompareOrApprove =
-    normalizedReviewType === 'compare' || normalizedReviewType === 'approve';
   const hasFiltersRow = hasActiveFilters;
   const hasSubmitFeedbackCta = canSubmitFeedback;
-  const hasDecisionCta = primaryFeedbackCta?.type === 'make-decision';
-  const hasTagsAndCtaGroup = hasFiltersRow || hasSubmitFeedbackCta || hasDecisionCta;
+  const hasDecisionCta =
+    normalizedReviewType !== 'approve' && primaryFeedbackCta?.type === 'make-decision';
   const submitFeedbackLabel =
-    primaryFeedbackCta?.type === 'submit-feedback'
+    normalizedReviewType === 'approve'
+      ? 'Submit Feedback'
+      : primaryFeedbackCta?.type === 'submit-feedback'
       ? primaryFeedbackCta.label
       : 'Submit Feedback';
+  const currentUserHasSubmittedApproveFeedback = feedback.some(
+    (thread) =>
+      thread.reviewerId === currentContributorId && thread.status === 'submitted',
+  );
+  const approvedKeysForCurrentUser = useMemo(() => {
+    const thread = feedback.find(
+      (item) => item.reviewerId === currentContributorId && item.status === 'submitted',
+    );
+    return String(thread?.optionTag ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }, [feedback, currentContributorId]);
+  const allArtifactsApprovedByCurrentUser =
+    artifacts.length > 0 &&
+    artifacts.every((artifact) =>
+      approvedKeysForCurrentUser.includes(artifactSelectionKey(artifact)),
+    );
+  const compareCurrentUserSubmitted =
+    normalizedReviewType === 'compare' &&
+    Boolean(currentContributorId) &&
+    feedback.some(
+      (thread) =>
+        thread.reviewerId === currentContributorId && thread.status === 'submitted',
+    );
+  const alignCurrentUserSubmitted =
+    normalizedReviewType === 'align' &&
+    Boolean(currentContributorId) &&
+    feedback.some(
+      (thread) =>
+        thread.reviewerId === currentContributorId && thread.status === 'submitted',
+    );
+  const hideRhcAddFeedbackBtn =
+    (normalizedReviewType === 'approve' && (stage === 1 || stage === 2 || stage >= 3)) ||
+    (normalizedReviewType === 'compare' && compareCurrentUserSubmitted) ||
+    (normalizedReviewType === 'align' && alignCurrentUserSubmitted);
+  const showAddFeedbackBtn = canSubmitFeedback && !hideRhcAddFeedbackBtn;
+  const showAlignEditFeedbackBtn =
+    normalizedReviewType === 'align' && alignCurrentUserSubmitted;
+  const hideApprovePrimarySubmitCta =
+    normalizedReviewType === 'approve' &&
+    (showApproveFeedbackReceived ||
+      (currentUserHasSubmittedApproveFeedback && allArtifactsApprovedByCurrentUser));
+  // Compare at feedback-submitted: the butter Decision Required / Decision
+  // Pending card is the sole RHC CTA. Remove the Submit Feedback button and the
+  // standalone Make Decision button from the DOM entirely.
+  const compareDecisionStage =
+    normalizedReviewType === 'compare' &&
+    normStatus(reviewStatus ?? '') === 'feedback-submitted';
+  const effectiveHasSubmitFeedbackCta =
+    hasSubmitFeedbackCta &&
+    !hideApprovePrimarySubmitCta &&
+    !compareDecisionStage &&
+    !compareHideSubmitFeedback &&
+    !isReviewPaused &&
+    !isReviewDraft;
+  const effectiveHasDecisionCta =
+    hasDecisionCta &&
+    !compareDecisionStage &&
+    (normalizedReviewType !== 'compare' || isDecisionMaker) &&
+    !isReviewPaused;
+  const effectiveHasTagsAndCtaGroup =
+    hasFiltersRow || effectiveHasSubmitFeedbackCta || effectiveHasDecisionCta;
 
   return (
     <aside
-      className="hidden lg:flex shrink-0 flex-col h-full overflow-hidden"
+      className="hidden lg:flex shrink-0 min-h-0 flex-col h-full overflow-hidden"
       style={{
         width,
         minWidth: open ? 360 : RHC_CLOSED_WIDTH,
@@ -3955,7 +6921,7 @@ function RightColumn({
       data-feedback-stage={stage}
     >
       {open ? (
-        <div className="flex h-full flex-col">
+        <div className="flex h-full min-h-0 flex-col">
           <div
             className="shrink-0 px-6 pt-8"
             style={{
@@ -3966,7 +6932,7 @@ function RightColumn({
               paddingBottom: 24,
             }}
           >
-            <div className="flex w-full flex-col gap-3">
+            <div className="flex w-full flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 min-w-0">
                   <h2
@@ -3979,8 +6945,11 @@ function RightColumn({
                   >
                     Feedback
                   </h2>
-                  {totalCardCount > 0 &&
-                    (hasActiveFilters ? (
+                  {stage !== 1 &&
+                    (normalizedReviewType === 'approve'
+                      ? approveFeedbackSubmissionCount > 0
+                      : totalCardCount > 0) &&
+                    (hasActiveFilters && normalizedReviewType !== 'approve' ? (
                       <span
                         className={`${notificationBadgeStyles.badge} ${notificationBadgeStyles['badge-brand']}`}
                         role="status"
@@ -3989,6 +6958,19 @@ function RightColumn({
                       >
                         {`${filteredCardsCount} of ${allCardsCount}`}
                       </span>
+                    ) : normalizedReviewType === 'approve' ? (
+                      <Tooltip
+                        label={approveFeedbackBadgeTooltip ?? ''}
+                        position="bottom"
+                      >
+                        <span className="inline-flex">
+                          <NotificationBadge
+                            variant="number"
+                            sentiment="brand"
+                            count={approveFeedbackSubmissionCount}
+                          />
+                        </span>
+                      </Tooltip>
                     ) : (
                       <NotificationBadge
                         variant="number"
@@ -4000,17 +6982,8 @@ function RightColumn({
                 <div className="flex items-center gap-2">
                   {showReminderBell && (
                     <Tooltip
-                      label={
-                        reminderJustSent
-                          ? 'Reminder sent'
-                          : isReminderRateLimited
-                            ? 'Reminder already sent today'
-                            : reviewClosed
-                              ? 'This review has been closed'
-                              : reminderDisabled && !sendingReminder
-                                ? 'All reviewers have submitted feedback'
-                                : 'Send reminder to pending reviewers'
-                      }
+                      label={reminderTooltipLabel}
+                      supportingText={reminderTooltipSupporting}
                       position="bottom"
                     >
                       <span style={{ display: 'inline-flex' }}>
@@ -4038,6 +7011,76 @@ function RightColumn({
                       </span>
                     </Tooltip>
                   )}
+                  {showAddFeedbackBtn ? (
+                    <Tooltip
+                      label={
+                        reviewClosed
+                          ? 'This review has been closed'
+                          : 'Add additional feedback'
+                      }
+                      position="bottom"
+                    >
+                      <span style={{ display: 'inline-flex' }}>
+                        <Button
+                          type="button"
+                          label="Add feedback"
+                          aria-label="Add feedback"
+                          variant="secondary"
+                          size="sm"
+                          icon="leading"
+                          iconOnly
+                          iconName="plus"
+                          style={headerIconDimmedStyle}
+                          disabled={reviewClosed}
+                          onClick={
+                            reviewClosed ? undefined : () => onOpenSubmitFeedbackDrawer()
+                          }
+                        />
+                      </span>
+                    </Tooltip>
+                  ) : null}
+                  {showAlignEditFeedbackBtn ? (
+                    <Tooltip
+                      label={
+                        reviewClosed
+                          ? 'This review has been closed'
+                          : 'Edit your feedback'
+                      }
+                      position="bottom"
+                    >
+                      <span style={{ display: 'inline-flex' }}>
+                        <Button
+                          type="button"
+                          label="Edit feedback"
+                          aria-label="Edit feedback"
+                          variant="secondary"
+                          size="sm"
+                          icon="leading"
+                          iconOnly
+                          iconName="edit"
+                          style={headerIconDimmedStyle}
+                          disabled={reviewClosed}
+                          onClick={
+                            reviewClosed
+                              ? undefined
+                              : () => {
+                                  const entry = feedback.find(
+                                    (thread) =>
+                                      thread.reviewerId === currentContributorId &&
+                                      thread.status === 'submitted',
+                                  );
+                                  if (!entry) return;
+                                  onOpenSubmitFeedbackDrawer({
+                                    prefill: true,
+                                    feedbackEntryId: entry.id,
+                                  });
+                                }
+                          }
+                        />
+                      </span>
+                    </Tooltip>
+                  ) : null}
+                  {stage !== 1 ? (
                   <div
                     ref={filterAnchorRef}
                     style={{ position: 'relative', display: 'inline-flex' }}
@@ -4086,47 +7129,6 @@ function RightColumn({
                       </div>
                     ) : null}
                   </div>
-                  {canSubmitFeedback && !hideAddFeedbackForCompareOrApprove ? (
-                    currentUserHasNotSubmitted ? (
-                      <Tooltip
-                        label={reviewClosed ? 'This review has been closed' : 'Add feedback'}
-                        position="bottom"
-                      >
-                        <span style={{ display: 'inline-flex' }}>
-                          <Button
-                            type="button"
-                            label="Add feedback"
-                            aria-label="Add feedback"
-                            variant="secondary"
-                            size="sm"
-                            icon="leading"
-                            iconOnly
-                            iconName="plus"
-                            style={headerIconDimmedStyle}
-                            disabled={reviewClosed}
-                            onClick={reviewClosed ? undefined : onOpenSubmitFeedbackDrawer}
-                          />
-                        </span>
-                      </Tooltip>
-                    ) : (
-                      <Tooltip
-                        label={reviewClosed ? 'This review has been closed' : 'Edit feedback'}
-                        position="bottom"
-                      >
-                        <span style={{ display: 'inline-flex' }}>
-                          <Button
-                            type="button"
-                            label="Edit feedback"
-                            aria-label="Edit feedback"
-                            variant="secondary"
-                            size="sm"
-                            style={headerIconDimmedStyle}
-                            disabled={reviewClosed}
-                            onClick={reviewClosed ? undefined : onOpenSubmitFeedbackDrawer}
-                          />
-                        </span>
-                      </Tooltip>
-                    )
                   ) : null}
                   <Button
                     type="button"
@@ -4142,9 +7144,44 @@ function RightColumn({
                   />
                 </div>
               </div>
+                </div>
+              </div>
 
-              {hasTagsAndCtaGroup ? (
-                <div className="flex flex-col gap-6">
+          <div
+            ref={rhcScrollRef}
+            className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6"
+          >
+            {((showComparisonButterPromptDm && !isReviewPaused) || showDecisionPromptReadonly) ? (
+              <div
+                className="sticky z-10 shrink-0"
+                style={{
+                  top: 0,
+                  background: COLOURS.surfaceCard,
+                }}
+              >
+                {showComparisonButterPromptDm && !isReviewPaused ? (
+                  <CompareDecisionPromptCard
+                    variant="required"
+                    displayName={
+                      comparisonDecisionPromptRowName ?? decisionMakerDisplayName
+                    }
+                    contributorId={decisionMakerContributorId ?? currentContributorId}
+                    onAddDecision={
+                      isDecisionMaker ? onOpenFinalDecisionDrawer : undefined
+                    }
+                  />
+                ) : null}
+                {showDecisionPromptReadonly ? (
+                  <CompareDecisionPromptCard
+                    variant="pending"
+                    displayName={decisionMakerDisplayName}
+                    contributorId={decisionMakerContributorId}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+            {effectiveHasTagsAndCtaGroup ? (
+              <div className="flex w-full min-w-0 shrink-0 flex-col gap-4">
                   {hasFiltersRow && (
                   <div
                     style={{
@@ -4275,18 +7312,19 @@ function RightColumn({
                   </div>
                   )}
 
-                  {hasSubmitFeedbackCta && (() => {
+                {effectiveHasSubmitFeedbackCta && (() => {
                     const submitted = !currentUserHasNotSubmitted;
                     const isComparison = normalizedReviewType === 'compare';
 
                     if (reviewClosed) {
                       return (
-                        <Tooltip label="The decision has been recorded for this review.">
-                          <span className="inline-flex w-full">
+                        <Tooltip label="The decision has been recorded for this review." fullWidth>
+                          <span className="inline-flex w-full min-w-0">
                             <Button
                               variant="primary"
                               size="md"
                               label={submitFeedbackLabel}
+                              fullWidth
                               className="w-full"
                               disabled
                               aria-disabled
@@ -4296,14 +7334,22 @@ function RightColumn({
                       );
                     }
 
-                    if (isComparison && submitted) {
+                    if (submitted) {
+                      // Reviewer has already submitted: disabled CTA with
+                      // context-specific guidance. Compare reviewers update via
+                      // the Decision Log kebab; all other types see the original
+                      // unchanged copy.
+                      const submittedTooltip = isComparison
+                        ? "You've already submitted feedback. To update your preference, use the kebab menu on your entry in the Decision Log."
+                        : "You've already submitted feedback for this review.";
                       return (
-                        <Tooltip label="You've already submitted feedback for this review">
-                          <span className="inline-flex w-full">
+                        <Tooltip label={submittedTooltip} fullWidth>
+                          <span className="inline-flex w-full min-w-0">
                             <Button
                               variant="primary"
                               size="md"
                               label="Submit Feedback"
+                              fullWidth
                               className="w-full"
                               disabled
                               aria-disabled
@@ -4313,37 +7359,28 @@ function RightColumn({
                       );
                     }
 
-                    if (!isComparison && submitted) {
-                      return (
-                        <Button
-                          variant="secondary"
-                          size="md"
-                          label="Add another feedback"
-                          aria-label="Add another feedback"
-                          icon="leading"
-                          iconOnly
-                          iconName="plus"
-                          className="w-full"
-                          onClick={onOpenSubmitFeedbackDrawer}
-                        />
-                      );
-                    }
-
+                    // Compare Decision Maker submits their own concept preference
+                    // like any other reviewer (enabled at Stage 1 / Stage 2). Once
+                    // they submit, this CTA is hidden and "Make Decision" shows.
                     return (
-                      <Button
-                        variant="primary"
-                        size="md"
-                        label={submitFeedbackLabel}
-                        className="w-full"
-                        onClick={onOpenSubmitFeedbackDrawer}
-                      />
+                      <Tooltip label={submitFeedbackLabel} fullWidth className="w-full min-w-0">
+                        <Button
+                          variant="primary"
+                          size="md"
+                          label={submitFeedbackLabel}
+                          fullWidth
+                          className="w-full"
+                          onClick={() => onOpenSubmitFeedbackDrawer()}
+                        />
+                      </Tooltip>
                     );
                   })()}
-                  {hasDecisionCta && (
+                  {effectiveHasDecisionCta && (
                     <Button
                       variant="primary"
                       size="md"
-                      label={primaryFeedbackCta.label}
+                      label={primaryFeedbackCta?.label ?? 'Make Decision'}
+                      fullWidth
                       className="w-full"
                       disabled={!canCurrentUserMakeDecision}
                       onClick={handleMakeDecision}
@@ -4351,90 +7388,608 @@ function RightColumn({
                   )}
                 </div>
               ) : null}
-            </div>
-          </div>
-
-          <div className="flex shrink-0 flex-col px-6">
-            {showComparisonButterPromptDm && comparisonDecisionPromptRowName ? (
-              <div
-                className="flex flex-col rounded-[8px] border bg-[var(--feedback/warning/bg,#fef8dc)]"
+            <div className="flex min-h-0 flex-col gap-2">
+              {showApproveStage2ReviewerCards ? (
+                <div className="flex w-full flex-col gap-2">
+                  {approveRhcReviewerEntries.map((entry) => {
+                    if (
+                      !activeFilters.people.all &&
+                      (activeFilters.people.reviewerIds.length === 0 ||
+                        !activeFilters.people.reviewerIds.includes(entry.reviewerId))
+                    ) {
+                      return null;
+                    }
+                    if (entry.status !== 'submitted') {
+                      if (!activeFilters.tags.all && !activeFilters.tags.notifications) {
+                        return null;
+                      }
+                      return (
+                        <ApproveRhcReviewerPendingCard
+                          key={entry.reviewerId}
+                          reviewerName={entry.reviewerName}
+                          reviewerId={entry.reviewerId}
+                        />
+                      );
+                    }
+                    if (entry.feedbackKind === 'approval') {
+                      if (!activeFilters.tags.all && !activeFilters.tags.feedback) {
+                        return null;
+                      }
+                      return (
+                        <ApproveRhcReviewerReceivedCard
+                          key={entry.reviewerId}
+                          reviewerName={entry.reviewerName}
+                          reviewerId={entry.reviewerId}
+                          isResubmission={entry.isResubmission}
+                        />
+                      );
+                    }
+                    return null;
+                  })}
+                  {filteredCards
+                    .filter((card) => card.cardType === 'change_request')
+                    .map((card) => {
+                      const entry = approveRhcReviewerEntries.find(
+                        (row) => row.reviewerId === card.reviewerId,
+                      );
+                      if (
+                        !entry ||
+                        entry.status !== 'submitted' ||
+                        entry.feedbackKind !== 'change-request'
+                      ) {
+                        return null;
+                      }
+                      if (!activeFilters.tags.all && !activeFilters.tags.changeRequests) {
+                        return null;
+                      }
+                      const request = card.changeRequest;
+                      const reviewer = request.reviewer_id
+                        ? reviewersById.get(request.reviewer_id)
+                        : null;
+                      const reviewerName = reviewer?.name ?? 'Reviewer';
+                      const changeRequestLabel =
+                        changeRequestLabelById.get(request.id) ?? 'Change 1.1';
+                      const changeArtifactLabels = labelsForArtifactSelectionKeys(
+                        request.artifact_ids,
+                        artifacts,
+                      );
+                      const crReplies = repliesByCardId.get(request.id) ?? [];
+                      return (
+                        <div
+                          key={request.id}
                 style={{
-                  borderColor: 'var(--feedback/warning/border,#e5b025)',
-                  padding: '12px 16px',
+                            background: '#ffffff',
+                            border: '1px solid #e4ddd3',
+                            borderRadius: 8,
+                            display: 'flex',
+                            flexDirection: 'column',
                   gap: 10,
-                }}
-              >
-                <div className="flex items-center gap-2">
-                  <Avatar name={comparisonDecisionPromptRowName} size="md" />
-                  <span
-                    className="min-w-0 flex-1 text-[12px] font-medium leading-snug text-[#2e1c1c]"
-                    style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
-                  >
-                    {comparisonDecisionPromptRowName}
+                            padding: 16,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'flex',
+                              gap: 8,
+                              alignItems: 'center',
+                              width: '100%',
+                            }}
+                          >
+                            <Avatar
+                              name={reviewerName}
+                              contributorId={request.reviewer_id ?? undefined}
+                              size="md"
+                              style={avatarInlinePaletteStyle(
+                                request.reviewer_id,
+                                reviewerName,
+                              )}
+                            />
+                            <span style={{ fontSize: 13, fontWeight: 500, color: '#2e1c1c' }}>
+                              {reviewerName}
                   </span>
-                  <span
-                    className="shrink-0 text-[11px] font-medium leading-tight text-[var(--feedback/warning/text,#7a5500)]"
-                    style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
-                  >
-                    Decision Required
-                  </span>
-                  <Icon
-                    name="status-blocked"
-                    size={16}
-                    style={{ color: 'var(--feedback/warning/text,#7a5500)', flexShrink: 0 }}
+                            <span style={{ fontSize: 12, color: '#998c82' }}> </span>
+                            <span style={{ flex: 1, fontSize: 12, color: '#998c82' }}>
+                              {request.created_at ? (
+                                <RelativeTimeText iso={request.created_at} />
+                              ) : null}
+                            </span>
+                            <Tag
+                              label={changeRequestLabel}
+                              variant="butter"
+                              size="sm"
                   />
                 </div>
-                <Button
-                  variant="primary"
-                  size="md"
-                  label="Add Decision"
-                  className="w-full"
-                  onClick={onOpenFinalDecisionDrawer}
-                />
+                          {request.changes_needed ? (
+                            <p style={{ margin: 0, fontSize: 14, color: '#2e1c1c' }}>
+                              {request.changes_needed}
+                            </p>
+                          ) : null}
+                          {changeArtifactLabels.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                              {changeArtifactLabels.map((label) => (
+                                <Tag
+                                  key={`${request.id}-${label}`}
+                                  label={label}
+                                  variant="brand"
+                                  size="sm"
+                                />
+                              ))}
               </div>
             ) : null}
-            {showDecisionPromptReadonly ? (
-              <div className="rounded-[8px] border border-[#e5b025] bg-[#fef8dc] px-4 py-3">
-                <p className="m-0 text-[13px] font-medium text-[#6b5e55]">
-                  Awaiting final decision.
-                </p>
+                          {crReplies.map((reply) => (
+                            <div
+                              key={reply.id}
+                              className="flex gap-[10px] items-start rounded-[4px] bg-[#f3efe9] p-3"
+                            >
+                              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                                <p className="break-words text-[14px] text-[#2e1c1c]">
+                                  {reply.reply_text}
+                                </p>
+                                <div className="flex items-center gap-2 text-[12px] text-[#998c82]">
+                                  <span>
+                                    {reply.reply_by_name ??
+                                      (reply.reply_by_id
+                                        ? contactDisplayById?.[reply.reply_by_id] ??
+                                          contributorsById?.get(reply.reply_by_id)?.name ??
+                                          'Reviewer'
+                                        : 'Reviewer')}
+                                  </span>
+                                  <span> </span>
+                                  <RelativeTimeText iso={reply.created_at} />
               </div>
-            ) : null}
-            {(showComparisonButterPromptDm || showDecisionPromptReadonly) &&
-            reviewStatus === 'feedback-submitted' ? (
-              <div className="py-4">
-                <div className="h-px w-full bg-[#e4ddd3]" />
               </div>
-            ) : null}
           </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8">
+                          ))}
+                          {!isReviewPaused ? (
+                            <ChangeRequestReplyComposer
+                              value={changeRequestReplies[request.id] ?? ''}
+                              onChange={(next) =>
+                                setChangeRequestReplies((prev) => ({
+                                  ...prev,
+                                  [request.id]: next,
+                                }))
+                              }
+                              onSend={() => {
+                                void onChangeRequestReply(request.id);
+                              }}
+                            />
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : null}
+              {showAlignFeedbackReceived ? (
+                <div className="flex w-full flex-col gap-2">
+                  {approveRhcReviewerEntries
+                    .filter((entry) => entry.status === 'submitted')
+                    .map((entry) => {
+                      if (
+                        !activeFilters.people.all &&
+                        (activeFilters.people.reviewerIds.length === 0 ||
+                          !activeFilters.people.reviewerIds.includes(entry.reviewerId))
+                      ) {
+                        return null;
+                      }
+                      const submissionChanges = changeRequests.filter(
+                        (request) => request.reviewer_id === entry.reviewerId,
+                      );
+                      if (submissionChanges.length === 0) return null;
+                      if (!activeFilters.tags.all && !activeFilters.tags.changeRequests) {
+                        return null;
+                      }
+                      return (
+                        <div
+                          key={`${entry.reviewerId}-align-changes`}
+                          className="flex flex-col gap-2"
+                        >
+                          {submissionChanges.map((request) => {
+                            const reviewer = request.reviewer_id
+                              ? reviewersById.get(request.reviewer_id)
+                              : null;
+                            const reviewerName = reviewer?.name ?? entry.reviewerName;
+                            const changeRequestLabel =
+                              changeRequestLabelById.get(request.id) ?? 'Change 1';
+                            const changeArtifactLabels = labelsForArtifactSelectionKeys(
+                              request.artifact_ids,
+                              artifacts,
+                            );
+                            const crReplies = repliesByCardId.get(request.id) ?? [];
+                            return (
+                              <div
+                                key={request.id}
+                                style={{
+                                  background: '#ffffff',
+                                  border: '1px solid #e4ddd3',
+                                  borderRadius: 8,
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: 10,
+                                  padding: 16,
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    gap: 8,
+                                    alignItems: 'center',
+                                    width: '100%',
+                                  }}
+                                >
+                                  <Avatar
+                                    name={reviewerName}
+                                    contributorId={request.reviewer_id ?? undefined}
+                                    size="md"
+                                    style={avatarInlinePaletteStyle(
+                                      request.reviewer_id,
+                                      reviewerName,
+                                    )}
+                                  />
+                                  <span style={{ fontSize: 13, fontWeight: 500, color: '#2e1c1c' }}>
+                                    {reviewerName}
+                                  </span>
+                                  <span style={{ fontSize: 12, color: '#998c82' }}> </span>
+                                  <span style={{ flex: 1, fontSize: 12, color: '#998c82' }}>
+                                    {request.created_at ? (
+                                      <RelativeTimeText iso={request.created_at} />
+                                    ) : null}
+                                  </span>
+                                  <Tag
+                                    label={changeRequestLabel}
+                                    variant="butter"
+                                    size="sm"
+                                  />
+                                </div>
+                                {request.changes_needed ? (
+                                  <p style={{ margin: 0, fontSize: 14, color: '#2e1c1c' }}>
+                                    {request.changes_needed}
+                                  </p>
+                                ) : null}
+                                {changeArtifactLabels.length > 0 ? (
+                                  <div className="flex flex-wrap gap-2">
+                                    {changeArtifactLabels.map((label) => (
+                                      <Tag
+                                        key={`${request.id}-${label}`}
+                                        label={label}
+                                        variant="brand"
+                                        size="sm"
+                                      />
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {crReplies.map((reply) => (
+                                  <div
+                                    key={reply.id}
+                                    className="flex gap-[10px] items-start rounded-[4px] bg-[#f3efe9] p-3"
+                                  >
+                                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                                      <p className="break-words text-[14px] text-[#2e1c1c]">
+                                        {reply.reply_text}
+                                      </p>
+                                      <div className="flex items-center gap-2 text-[12px] text-[#998c82]">
+                                        <span>
+                                          {reply.reply_by_name ??
+                                            (reply.reply_by_id
+                                              ? contactDisplayById?.[reply.reply_by_id] ??
+                                                contributorsById?.get(reply.reply_by_id)?.name ??
+                                                'Reviewer'
+                                              : 'Reviewer')}
+                                        </span>
+                                        <span> </span>
+                                        <RelativeTimeText iso={reply.created_at} />
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                                {!compareReviewFullyLocked &&
+                                !reviewClosed &&
+                                !isReviewPaused ? (
+                                  <ChangeRequestReplyComposer
+                                    value={changeRequestReplies[request.id] ?? ''}
+                                    onChange={(next) =>
+                                      setChangeRequestReplies((prev) => ({
+                                        ...prev,
+                                        [request.id]: next,
+                                      }))
+                                    }
+                                    onSend={() => {
+                                      void onChangeRequestReply(request.id);
+                                    }}
+                                  />
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : null}
+              {showApproveFeedbackReceived ? (
+                <div className="flex w-full flex-col gap-2">
+                  {approveRhcReviewerEntries.map((entry) => {
+                    if (
+                      !activeFilters.people.all &&
+                      (activeFilters.people.reviewerIds.length === 0 ||
+                        !activeFilters.people.reviewerIds.includes(entry.reviewerId))
+                    ) {
+                      return null;
+                    }
+                    if (entry.status !== 'submitted') {
+                      if (!activeFilters.tags.all && !activeFilters.tags.notifications) {
+                        return null;
+                      }
+                      return (
+                        <ApproveRhcReviewerPendingCard
+                          key={entry.reviewerId}
+                          reviewerName={entry.reviewerName}
+                          reviewerId={entry.reviewerId}
+                        />
+                      );
+                    }
+                    if (entry.feedbackKind === 'approval') {
+                      if (!activeFilters.tags.all && !activeFilters.tags.feedback) {
+                        return null;
+                      }
+                      return (
+                        <ApproveRhcReviewerReceivedCard
+                          key={entry.reviewerId}
+                          reviewerName={entry.reviewerName}
+                          reviewerId={entry.reviewerId}
+                          isResubmission={entry.isResubmission}
+                        />
+                      );
+                    }
+                    if (!activeFilters.tags.all && !activeFilters.tags.changeRequests) {
+                      return null;
+                    }
+                    return (
+                      <div key={`${entry.reviewerId}-changes`} className="flex flex-col gap-2">
+                        {changeRequests
+                          .filter((request) => request.reviewer_id === entry.reviewerId)
+                          .map((request) => {
+                            const reviewer = request.reviewer_id
+                              ? reviewersById.get(request.reviewer_id)
+                              : null;
+                            const reviewerName = reviewer?.name ?? entry.reviewerName;
+                            const changeRequestLabel =
+                              changeRequestLabelById.get(request.id) ?? 'Change 1.1';
+                            const changeArtifactLabels = labelsForArtifactSelectionKeys(
+                              request.artifact_ids,
+                              artifacts,
+                            );
+                            const crReplies = repliesByCardId.get(request.id) ?? [];
+                            return (
+                              <div
+                                key={request.id}
+              style={{
+                                  background: '#ffffff',
+                                  border: '1px solid #e4ddd3',
+                                  borderRadius: 8,
+                display: 'flex',
+                flexDirection: 'column',
+                                  gap: 10,
+                                  padding: 16,
+                                }}
+                              >
             <div
               style={{
                 display: 'flex',
-                flexDirection: 'column',
-                gap: 4,
-              }}
-            >
-              {stage === 1 && (
-                <div style={{ fontSize: 13, color: '#6b5e55' }}>
-                  No reviewers assigned yet.
+                                    gap: 8,
+                                    alignItems: 'center',
+                                    width: '100%',
+                                  }}
+                                >
+                                  <Avatar
+                                    name={reviewerName}
+                                    contributorId={request.reviewer_id ?? undefined}
+                                    size="md"
+                                    style={avatarInlinePaletteStyle(
+                                      request.reviewer_id,
+                                      reviewerName,
+                                    )}
+                                  />
+                                  <span style={{ fontSize: 13, fontWeight: 500, color: '#2e1c1c' }}>
+                                    {reviewerName}
+                                  </span>
+                                  <span style={{ fontSize: 12, color: '#998c82' }}> </span>
+                                  <span style={{ flex: 1, fontSize: 12, color: '#998c82' }}>
+                                    {request.created_at ? (
+                                      <RelativeTimeText iso={request.created_at} />
+                                    ) : null}
+                                  </span>
+                                  <Tag
+                                    label={changeRequestLabel}
+                                    variant="butter"
+                                    size="sm"
+                                  />
+                                </div>
+                                {request.changes_needed ? (
+                                  <p style={{ margin: 0, fontSize: 14, color: '#2e1c1c' }}>
+                                    {request.changes_needed}
+                                  </p>
+                                ) : null}
+                                {changeArtifactLabels.length > 0 ? (
+                                  <div className="flex flex-wrap gap-2">
+                                    {changeArtifactLabels.map((label) => (
+                                      <Tag
+                                        key={`${request.id}-${label}`}
+                                        label={label}
+                                        variant="brand"
+                                        size="sm"
+                                      />
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {crReplies.map((reply) => (
+                                  <div
+                                    key={reply.id}
+                                    className="flex gap-[10px] items-start rounded-[4px] bg-[#f3efe9] p-3"
+                                  >
+                                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                                      <p className="break-words text-[14px] text-[#2e1c1c]">
+                                        {reply.reply_text}
+                                      </p>
+                                      <div className="flex items-center gap-2 text-[12px] text-[#998c82]">
+                                        <span>
+                                          {reply.reply_by_name ??
+                                            (reply.reply_by_id
+                                              ? contactDisplayById?.[reply.reply_by_id] ??
+                                                contributorsById?.get(reply.reply_by_id)?.name ??
+                                                'Reviewer'
+                                              : 'Reviewer')}
+                                        </span>
+                                        <span> </span>
+                                        <RelativeTimeText iso={reply.created_at} />
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                                {!isReviewPaused ? (
+                                  <ChangeRequestReplyComposer
+                                    value={changeRequestReplies[request.id] ?? ''}
+                                    onChange={(next) =>
+                                      setChangeRequestReplies((prev) => ({
+                                        ...prev,
+                                        [request.id]: next,
+                                      }))
+                                    }
+                                    onSend={() => {
+                                      void onChangeRequestReply(request.id);
+                                    }}
+                                  />
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {!showApproveFeedbackReceived && stage === 1 && !isReviewPaused && (
+                <div
+                  className="flex w-full flex-col items-center rounded-[8px] border border-[#e4ddd3] bg-[#f3efe9] p-6"
+                  style={{ gap: 16 }}
+                >
+                  <p
+                    className="m-0 text-center text-[14px] font-medium text-[#998c82]"
+                    style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                  >
+                    Reviewers have not been assigned to this review yet.
+                  </p>
+                  <div
+                    ref={rhcAddReviewersAnchorRef}
+                    className="relative flex w-full flex-col items-center"
+                  >
+                    {reviewClosed ? (
+                      <Tooltip
+                        label="Reopen this review to add reviewers"
+                        position="top"
+                      >
+                        <span className="inline-flex">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon="leading"
+                            iconName="plus"
+                            label="Add Reviewers"
+                            disabled
+                          />
+                        </span>
+                      </Tooltip>
+                    ) : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon="leading"
+                      iconName="plus"
+                      label="Add Reviewers"
+                      aria-expanded={rhcReviewerPopoverOpen}
+                      aria-haspopup="dialog"
+                      onClick={() => {
+                        setRhcReviewerPopoverOpen((open) => !open);
+                        setRhcSelectedReviewerIds([]);
+                      }}
+                    />
+                    )}
+                    {rhcReviewerPopoverOpen ? (
+                      <div
+                        ref={rhcAddReviewersPopoverRef}
+                        className="absolute left-0 right-0 top-full z-50 mt-2 flex flex-col overflow-hidden rounded-[8px] border border-[#e4ddd3] bg-white shadow-[0px_8px_16px_rgba(41,33,28,0.15)]"
+                        role="dialog"
+                        aria-label="Add reviewers"
+                      >
+                        <div className="max-h-[240px] overflow-y-auto py-1">
+                          {assignableContributors.length === 0 ? (
+                            <p className="m-0 px-3 py-2 text-[13px] text-[#998c82]">
+                              No teammates available to add.
+                            </p>
+                          ) : (
+                            assignableContributors.map((contributor) => (
+                              <label
+                                key={contributor.id}
+                                className="flex cursor-pointer items-center gap-2 px-3 py-2"
+                              >
+                                <Checkbox
+                                  id={`rhc-reviewer-${contributor.id}`}
+                                  label=""
+                                  checked={rhcSelectedReviewerIds.includes(contributor.id)}
+                                  onChange={(checked) => {
+                                    setRhcSelectedReviewerIds((prev) =>
+                                      checked
+                                        ? [...prev, contributor.id]
+                                        : prev.filter((id) => id !== contributor.id),
+                                    );
+                                  }}
+                                />
+                                <Avatar name={contributor.name} contributorId={contributor.id} size="md" />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-[13px] font-medium text-[#2e1c1c]">
+                                    {contributor.name}
+                                  </span>
+                                  {contributor.role ? (
+                                    <span className="block truncate text-[12px] text-[#998c82]">
+                                      {contributor.role}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </label>
+                            ))
+                          )}
+                        </div>
+                        <div className="border-t border-[#e4ddd3] px-3 py-2">
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            label={rhcSavingReviewers ? 'Saving' : 'Done'}
+                            disabled={rhcSavingReviewers || rhcSelectedReviewerIds.length === 0}
+                            className="w-full"
+                            onClick={() => {
+                              if (rhcSavingReviewers || rhcSelectedReviewerIds.length === 0) {
+                                return;
+                              }
+                              onAddReviewers({
+                                reviewerIds: rhcSelectedReviewerIds,
+                                source: 'rhc',
+                                onStartSaving: () => setRhcSavingReviewers(true),
+                                onFinishSaving: () => setRhcSavingReviewers(false),
+                                onSuccess: () => {
+                                  setRhcSelectedReviewerIds([]);
+                                  setRhcReviewerPopoverOpen(false);
+                                },
+                              });
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               )}
-            </div>
-
-            <div
-              style={{
-                marginTop:
-                  stage === 1 || (stage === 2 && feedback.length > 0 && pendingCount === feedback.length)
-                    ? 24
-                    : 0,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 4,
-              }}
-            >
-              {filteredCards.map((card) => {
+              {!showApproveFeedbackReceived &&
+              !showApproveStage2ReviewerCards &&
+              rhcCardsForRender.map((card) => {
                 if (card.cardType === 'feedback' || card.cardType === 'notification') {
                   const thread = card.thread;
                   const threadReplies = repliesByCardId.get(thread.id) ?? [];
@@ -4449,9 +8004,14 @@ function RightColumn({
                       currentContributorId={currentContributorId}
                       canCurrentUserMakeDecision={canCurrentUserMakeDecision}
                       contributorsById={contributorsById}
+                      contactDisplayById={contactDisplayById}
+                      artifacts={artifacts}
                       reviewOwnerName={reviewOwnerName}
                       onFeedbackReply={onFeedbackReply}
                       onMakeDecision={handleMakeDecision}
+                      disableReplies={
+                        compareReviewFullyLocked || reviewClosed || isReviewPaused
+                      }
                     />
                   );
                 }
@@ -4459,9 +8019,12 @@ function RightColumn({
                 const request = card.changeRequest;
                 const reviewer = request.reviewer_id ? reviewersById.get(request.reviewer_id) : null;
                 const reviewerName = reviewer?.name ?? 'Reviewer';
-                const reviewerInitials = initialsFromName(reviewerName);
                 const changeRequestLabel =
-                  changeRequestLabelById.get(request.id) ?? '0.0';
+                  changeRequestLabelById.get(request.id) ?? 'Change 1.1';
+                const changeArtifactLabels = labelsForArtifactSelectionKeys(
+                  request.artifact_ids,
+                  artifacts,
+                );
                 const crReplies = repliesByCardId.get(request.id) ?? [];
                 return (
                   <div
@@ -4477,24 +8040,15 @@ function RightColumn({
                     }}
                   >
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
-                      <div
-                        style={{
-                          width: 24,
-                          height: 24,
-                          borderRadius: 999,
-                          background: '#f5eaec',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 10,
-                          fontWeight: 600,
-                          color: '#6b1e2e',
-                          textTransform: 'uppercase',
-                          flexShrink: 0,
-                        }}
-                      >
-                        {reviewerInitials}
-                      </div>
+                      <Avatar
+                        name={reviewerName}
+                        contributorId={request.reviewer_id ?? undefined}
+                        size="md"
+                        style={avatarInlinePaletteStyle(
+                          request.reviewer_id,
+                          reviewerName,
+                        )}
+                      />
                       <span style={{ fontSize: 13, fontWeight: 500, color: '#2e1c1c' }}>
                         {reviewerName}
                       </span>
@@ -4504,18 +8058,7 @@ function RightColumn({
                           <RelativeTimeText iso={request.created_at} />
                         ) : null}
                       </span>
-                      <div
-                        style={{
-                          background: '#fef8dc',
-                          border: '1.5px solid #e5b025',
-                          borderRadius: 4,
-                          padding: '2px 10px',
-                          fontSize: 12,
-                          color: '#7a5500',
-                        }}
-                      >
-                        {`Change ${changeRequestLabel}`}
-                      </div>
+                      <Tag label={changeRequestLabel} variant="butter" size="sm" />
                     </div>
 
                     {request.changes_needed ? (
@@ -4532,33 +8075,16 @@ function RightColumn({
                       </p>
                     ) : null}
 
-                    {request.artifact_ids.length > 0 ? (
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        {request.artifact_ids.map((artifactId) => {
-                          const idNorm = String(artifactId).trim();
-                          const artifact = artifacts.find(
-                            (item) =>
-                              item.title != null &&
-                              String(item.title).trim() === idNorm
-                          );
-                          const tagText = artifact?.title?.trim() ?? '';
-                          if (!tagText) return null;
-                          return (
-                            <div
-                              key={artifactId}
-                              style={{
-                                background: '#f5eaec',
-                                border: '1px solid #e8d0d4',
-                                borderRadius: 4,
-                                padding: '2px 8px',
-                                fontSize: 12,
-                                color: '#6b1e2e',
-                              }}
-                            >
-                              {tagText}
-                            </div>
-                          );
-                        })}
+                    {changeArtifactLabels.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {changeArtifactLabels.map((label) => (
+                          <Tag
+                            key={`${request.id}-${label}`}
+                            label={label}
+                            variant="brand"
+                            size="sm"
+                          />
+                        ))}
                       </div>
                     ) : null}
 
@@ -4567,16 +8093,16 @@ function RightColumn({
                         key={reply.id}
                         className="flex gap-[10px] items-start rounded-[4px] bg-[#f3efe9] p-3"
                       >
-                        <span className="shrink-0 text-[#998c82]">
-                          <Icon name="drill-down" size={16} />
-                        </span>
                         <div className="flex min-w-0 flex-1 flex-col gap-1">
                           <p className="break-words text-[14px] text-[#2e1c1c]">{reply.reply_text}</p>
                           <div className="flex items-center gap-2 text-[12px] text-[#998c82]">
                             <span>
-                              {reply.reply_by_id
-                                ? contributorsById.get(reply.reply_by_id)?.name ?? 'Reviewer'
-                                : 'Reviewer'}
+                              {reply.reply_by_name ??
+                                (reply.reply_by_id
+                                  ? contactDisplayById?.[reply.reply_by_id] ??
+                                    contributorsById?.get(reply.reply_by_id)?.name ??
+                                    'Reviewer'
+                                  : 'Reviewer')}
                             </span>
                             <span> </span>
                             <RelativeTimeText iso={reply.created_at} />
@@ -4585,6 +8111,7 @@ function RightColumn({
                       </div>
                     ))}
 
+                    {!compareReviewFullyLocked && !reviewClosed && !isReviewPaused ? (
                     <ChangeRequestReplyComposer
                       value={changeRequestReplies[request.id] ?? ''}
                       onChange={(next) =>
@@ -4597,17 +8124,11 @@ function RightColumn({
                         void onChangeRequestReply(request.id);
                       }}
                     />
+                    ) : null}
                   </div>
                 );
               })}
-            {(normalizedReviewType === 'approve' || normalizedReviewType === 'compare') &&
-              stage === 3 &&
-              !reviewClosed && (
-              <div style={{ fontSize: 13, color: '#6b5e55' }}>
-                All feedback is in. A decision is now required.
-              </div>
-              )}
-
+            <div className="shrink-0 h-6" aria-hidden="true" />
             </div>
           </div>
         </div>

@@ -14,6 +14,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { DiscardChangesModal } from "@/components/DiscardChangesModal";
+import modalStyles from "@/components/ui/ds/Modal.module.css";
 import { useToast } from "@/components/Toast";
 import {
   Alert,
@@ -28,6 +29,7 @@ import {
   Modal,
   Menu,
   MenuItem,
+  MenuSectionHeading,
   Select,
   SelectField,
   Tag,
@@ -39,6 +41,11 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
 import { sendWorkspaceInvite } from "@/lib/workspace/invite-client";
 import { inviteToastMessage } from "@/lib/workspace/invite-toast";
+import {
+  isPaidPermissionLevel,
+  toStoredPermissionLevel,
+  type ContentPermissionLevel,
+} from "@/lib/workspace/permissions";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
 import type {
   ArtifactDraftForSubmit,
@@ -95,11 +102,22 @@ export type CreateReviewDrawerProps = {
 };
 
 const REVIEW_TYPE_OPTIONS: { value: ReviewType; label: string }[] = [
+  { value: "align", label: "Align" },
   { value: "compare", label: "Compare" },
   { value: "critique", label: "Critique" },
-  { value: "align", label: "Align" },
   { value: "approve", label: "Approve" }
 ];
+
+const REVIEW_TYPE_HELPER_TEXT: Record<ReviewType, string> = {
+  align:
+    "Share early direction for high-level input. Reviewers indicate if the work is heading in the right direction.",
+  compare:
+    "Present multiple options for stakeholders to choose between. The first reviewer selected is the final decision maker.",
+  critique:
+    "Request detailed feedback on specific aspects of the work. Reviewers summarise their comments from Figma or other tools.",
+  approve:
+    "Reviewers sign off on individual artifacts or request changes before work progresses.",
+};
 
 /** v1…vN for in-card version selector (Create Review step 1). */
 const VERSION_LABEL_OPTIONS = Array.from(
@@ -114,6 +132,11 @@ const TEAMMATE_ROLE_SELECT_OPTIONS = [
   { value: "Product Manager", label: "Product Manager" },
   { value: "Engineer", label: "Engineer" },
   { value: "Stakeholder", label: "Stakeholder" }
+] as const;
+
+const TEAMMATE_PERMISSION_SELECT_OPTIONS = [
+  { value: "reviewer", label: "Reviewer" },
+  { value: "editor", label: "Editor" },
 ] as const;
 
 const ACCEPTED_MIME_TYPES = [
@@ -299,7 +322,6 @@ function Step3ClampText({
   const inner = (
     <span
       ref={ref}
-      title={overflow ? text : undefined}
       style={{
         ...clamp3TextStyle,
         ...textStyle,
@@ -385,7 +407,12 @@ function StakeholderChip({
         backgroundColor: SURFACE
       }}
     >
-      <Avatar src={user.avatarUrl ?? undefined} name={user.name} size="md" />
+      <Avatar
+        src={user.avatarUrl ?? undefined}
+        name={user.name}
+        contributorId={user.id}
+        size="md"
+      />
       <span
         className="min-w-0 truncate"
         style={{
@@ -446,6 +473,7 @@ export function CreateReviewDrawer({
   const reviewerBlockRef = useRef<HTMLDivElement>(null);
   const problemsSelectRef = useRef<HTMLDivElement>(null);
 
+  const [showDraftWarningModal, setShowDraftWarningModal] = useState(false);
   const [addLinkModalOpen, setAddLinkModalOpen] = useState(false);
   const addLinkModalBodyRef = useRef<HTMLDivElement>(null);
   const [addLinkBodyScrolled, setAddLinkBodyScrolled] = useState(false);
@@ -520,6 +548,8 @@ export function CreateReviewDrawer({
   const [newTeammateName, setNewTeammateName] = useState("");
   const [newTeammateEmail, setNewTeammateEmail] = useState("");
   const [newTeammateRole, setNewTeammateRole] = useState("");
+  const [newTeammatePermissionLevel, setNewTeammatePermissionLevel] =
+    useState<ContentPermissionLevel>("reviewer");
   const [includeTeammateInProject, setIncludeTeammateInProject] = useState(true);
   const [isCreatingTeammate, setIsCreatingTeammate] = useState(false);
   const [teammateEmailExistsError, setTeammateEmailExistsError] = useState<
@@ -554,7 +584,13 @@ export function CreateReviewDrawer({
   >({});
   const [reviewTitleGenerating, setReviewTitleGenerating] = useState(false);
   const [reviewFocusGenerating, setReviewFocusGenerating] = useState(false);
+  const [reviewFocusGeneratingAction, setReviewFocusGeneratingAction] = useState<
+    "regenerate" | "optimise" | null
+  >(null);
   const [reviewFocusAiGenerated, setReviewFocusAiGenerated] = useState(false);
+  const [reviewFocusStale, setReviewFocusStale] = useState(false);
+  const [reviewFocusHasGenerated, setReviewFocusHasGenerated] = useState(false);
+  const reviewFocusSnapshotRef = useRef<string | null>(null);
   const [tradeoffsGenerating, setTradeoffsGenerating] = useState(false);
   const [aiTradeoffs, setAiTradeoffs] = useState<Tradeoff[]>([]);
   const [isBodyOverflowing, setIsBodyOverflowing] = useState(false);
@@ -597,6 +633,16 @@ export function CreateReviewDrawer({
     artifactsLatestRef.current = artifacts;
   }, [artifacts]);
   useEffect(() => {
+    if (reviewType !== "compare" || artifacts.length >= 2) return;
+    reviewTypeIsAiSuggested.current = false;
+    setReviewType("approve");
+    setArtifactToast(
+      "Compare requires at least 2 artifacts. Review type changed to Approve.",
+    );
+    const timer = window.setTimeout(() => setArtifactToast(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [artifacts.length, reviewType]);
+  useEffect(() => {
     figmaMetaMapRef.current = figmaMetaMap;
   }, [figmaMetaMap]);
 
@@ -625,6 +671,7 @@ export function CreateReviewDrawer({
     setArtifacts([]);
     setReviewers([]);
     setSendNotification(true);
+    setShowDraftWarningModal(false);
     setRelatedProblems([]);
     setReviewFocus("");
     setReviewerQuery("");
@@ -663,7 +710,11 @@ export function CreateReviewDrawer({
     figmaMetaMapRef.current = {};
     setReviewTitleGenerating(false);
     setReviewFocusGenerating(false);
+    setReviewFocusGeneratingAction(null);
     setReviewFocusAiGenerated(false);
+    setReviewFocusStale(false);
+    setReviewFocusHasGenerated(false);
+    reviewFocusSnapshotRef.current = null;
     setTradeoffsGenerating(false);
     setAiTradeoffs([]);
     artifactNameUserEdited.current = false;
@@ -674,6 +725,7 @@ export function CreateReviewDrawer({
     setNewTeammateName("");
     setNewTeammateEmail("");
     setNewTeammateRole("");
+    setNewTeammatePermissionLevel("reviewer");
     setIncludeTeammateInProject(true);
     setIsCreatingTeammate(false);
     setTeammateEmailExistsError(null);
@@ -688,6 +740,7 @@ export function CreateReviewDrawer({
     setNewTeammateName("");
     setNewTeammateEmail("");
     setNewTeammateRole("");
+    setNewTeammatePermissionLevel("reviewer");
     setTeammateEmailExistsError(null);
     setIncludeTeammateInProject(true);
     setIsCreatingTeammate(false);
@@ -786,6 +839,14 @@ export function CreateReviewDrawer({
     else onClose();
   }
 
+  function handleSendNotificationChange(checked: boolean) {
+    if (!checked && sendNotification) {
+      setShowDraftWarningModal(true);
+      return;
+    }
+    setSendNotification(checked);
+  }
+
   useEffect(() => {
     if (!addLinkModalOpen && !uploadModalOpen && !createTeammateModalOpen && !createProblemModalOpen)
       return;
@@ -867,10 +928,6 @@ export function CreateReviewDrawer({
   }, [problemsSelectOpen]);
 
   useEffect(() => {
-    setReviewers([]);
-  }, [reviewerPoolKey]);
-
-  useEffect(() => {
     setRelatedProblems([]);
   }, [reviewerPoolKey]);
 
@@ -884,9 +941,6 @@ export function CreateReviewDrawer({
 
   useEffect(() => {
     if (!open || currentStep !== 2) return;
-    if (!effectiveProjectId) return;
-    const projectId = effectiveProjectId.trim();
-    if (!projectId) return;
     let cancelled = false;
     const supabase = createSupabaseBrowserClient();
     const q = reviewerQuery.trim();
@@ -1099,19 +1153,21 @@ export function CreateReviewDrawer({
 
   const step1NextActive = artifactsValid;
 
-  const step2NextActive = step2SubmitEnabled(reviewType, reviewers);
+  const step2NextActive =
+    step2SubmitEnabled(reviewType, reviewers) &&
+    (projectScoped || Boolean(selectedRelatedProjectId.trim())) &&
+    Boolean(reviewTitle.trim());
 
   const step3CreateActive = reviewFocus.trim().length > 0;
 
-  const hasArtifactDescriptions = artifacts.some(
-    (a) => a.description.trim().length > 0,
-  );
+  const hasFocusGenerationContext =
+    artifacts.length > 0 || aiTradeoffs.length > 0 || Boolean(reviewType);
   const focusButtonDisabled =
     reviewFocusGenerating ||
-    (!hasArtifactDescriptions && reviewFocus.trim().length === 0);
+    (reviewFocus.trim().length === 0 && !hasFocusGenerationContext);
   const focusButtonTooltip =
-    !hasArtifactDescriptions && reviewFocus.trim().length === 0
-      ? "Add artifact descriptions to generate a review focus."
+    reviewFocus.trim().length === 0 && !hasFocusGenerationContext
+      ? "Add artifacts, tradeoffs, or a review type to generate a review focus."
       : undefined;
   const focusButtonOptimiseTooltip =
     reviewFocus.trim().length > 0 &&
@@ -1120,6 +1176,57 @@ export function CreateReviewDrawer({
       ? "Fixes grammar and spelling. Your content and meaning are preserved."
       : undefined;
   const focusAiButtonTooltip = focusButtonTooltip ?? focusButtonOptimiseTooltip;
+
+  const artifactDescriptionsKey = JSON.stringify(
+    artifacts.map((artifact) => artifact.description.trim()).filter((d) => d.length > 0),
+  );
+  const problemsKey = JSON.stringify(relatedProblems);
+  const tradeoffsKey = JSON.stringify(
+    aiTradeoffs.map((tradeoff) => tradeoff.description.trim()).filter((d) => d.length > 0),
+  );
+  const selectedProjectKey = effectiveProjectId.trim();
+
+  const buildReviewFocusSnapshot = useCallback(() => {
+    return JSON.stringify({
+      reviewTitle: reviewTitle.trim(),
+      reviewType,
+      selectedProject: selectedProjectKey,
+      artifactDescriptionsKey,
+      problemsKey,
+      tradeoffsKey,
+    });
+  }, [
+    reviewTitle,
+    reviewType,
+    selectedProjectKey,
+    artifactDescriptionsKey,
+    problemsKey,
+    tradeoffsKey,
+  ]);
+
+  useEffect(() => {
+    if (!reviewFocusHasGenerated || reviewFocusGenerating) return;
+    const snapshot = buildReviewFocusSnapshot();
+    if (reviewFocusSnapshotRef.current === null) {
+      reviewFocusSnapshotRef.current = snapshot;
+      return;
+    }
+    if (snapshot !== reviewFocusSnapshotRef.current) {
+      setReviewFocusStale(true);
+    }
+  }, [
+    buildReviewFocusSnapshot,
+    reviewFocusHasGenerated,
+    reviewFocusGenerating,
+  ]);
+
+  const showFocusGenerateButton =
+    !reviewFocusGenerating && reviewFocus.trim().length === 0;
+  const showFocusRegenerateButton =
+    reviewFocus.trim().length > 0 &&
+    reviewFocusStale &&
+    reviewFocusHasGenerated;
+  const showFocusOptimiseButton = reviewFocus.trim().length > 0;
 
   const step1TooltipLabel = useMemo(() => {
     if (artifacts.length === 0) return "Add at least one artifact to continue";
@@ -1130,9 +1237,11 @@ export function CreateReviewDrawer({
   }, [artifacts.length, artifactsValid]);
 
   const step2TooltipLabel = useMemo(() => {
+    if (!projectScoped && !selectedRelatedProjectId.trim()) return "Select a project to continue";
+    if (!reviewTitle.trim()) return "Enter a review title to continue";
     if (reviewers.length === 0) return "Add at least one reviewer to continue";
     return "Complete required fields to proceed";
-  }, [reviewers.length]);
+  }, [projectScoped, selectedRelatedProjectId, reviewTitle, reviewers.length]);
 
   const step3TooltipLabel = useMemo(() => {
     if (!reviewFocus.trim()) return "Add a review focus to continue";
@@ -1154,6 +1263,26 @@ export function CreateReviewDrawer({
       (u.email?.toLowerCase().includes(q) ?? false)
     );
   });
+
+  const projectTeammateIds = useMemo(
+    () =>
+      new Set(
+        teammateOptions
+          .map((teammate) => String(teammate.id ?? "").trim())
+          .filter(Boolean),
+      ),
+    [teammateOptions],
+  );
+
+  const projectTeammates = useMemo(
+    () => filteredTeammates.filter((user) => projectTeammateIds.has(user.id)),
+    [filteredTeammates, projectTeammateIds],
+  );
+
+  const otherWorkspaceMembers = useMemo(
+    () => filteredTeammates.filter((user) => !projectTeammateIds.has(user.id)),
+    [filteredTeammates, projectTeammateIds],
+  );
 
   const reviewerExclude = new Set(reviewers.map((r) => r.id));
 
@@ -1255,12 +1384,29 @@ export function CreateReviewDrawer({
   }
 
   /** Generate or optimise review focus (wand / labelled AI button on Step 3). */
-  async function runReviewFocusGeneration(currentArtifacts: ArtifactDraft[]) {
+  async function runReviewFocusGeneration(
+    currentArtifacts: ArtifactDraft[],
+    action: "regenerate" | "optimise" = "regenerate",
+  ) {
     const existing = reviewFocusRef.current.trim();
-    const descriptions = currentArtifacts
-      .map((a) => a.description.trim())
+    const artifactContext = currentArtifacts.map((artifact) => ({
+      name: artifact.title.trim() || "Untitled",
+      description: artifact.description.trim(),
+    }));
+    const descriptions = artifactContext
+      .map((artifact) => artifact.description)
       .filter(Boolean);
-    if (!existing && descriptions.length === 0) return;
+    if (
+      !existing &&
+      descriptions.length === 0 &&
+      aiTradeoffs.length === 0 &&
+      !reviewTypeRef.current
+    ) {
+      return;
+    }
+    if (action === "optimise" && !existing) {
+      return;
+    }
     const selectedProblems = relatedProblems
       .map((id) => availableProblems.find((p) => p.id === id)?.description ?? "")
       .map((d) => d.trim())
@@ -1269,18 +1415,24 @@ export function CreateReviewDrawer({
       .map((t) => t.description.trim())
       .filter(Boolean);
     setReviewFocusGenerating(true);
+    setReviewFocusGeneratingAction(action);
     const result = await generateReviewFocus({
       artifactDescriptions: descriptions,
+      artifactContext,
       reviewType: reviewTypeForAi(reviewTypeRef.current),
       projectName: selectedProjectName.trim() || undefined,
       selectedProblems: selectedProblems.length > 0 ? selectedProblems : undefined,
       selectedTradeoffs: selectedTradeoffs.length > 0 ? selectedTradeoffs : undefined,
-      existingContent: existing || undefined,
+      existingContent: action === "optimise" ? existing || undefined : undefined,
     });
     setReviewFocusGenerating(false);
+    setReviewFocusGeneratingAction(null);
     if (!result.ok) return;
     setReviewFocus(result.focus);
+    reviewFocusSnapshotRef.current = buildReviewFocusSnapshot();
+    setReviewFocusStale(false);
     setReviewFocusAiGenerated(true);
+    setReviewFocusHasGenerated(true);
   }
 
   /** Auto-generate tradeoffs when comparing exactly 2 artifacts (Step 3 mount via Populate-with-AI). */
@@ -1907,6 +2059,7 @@ export function CreateReviewDrawer({
                       <ArtifactPreview
                         key={a.localKey}
                         size="large"
+                        compact
                         fileType={getFileType(a)}
                         mode="editable"
                         showDetails={true}
@@ -1955,6 +2108,7 @@ export function CreateReviewDrawer({
                           )
                         }
                         descriptionAiState={a.descriptionAiState ?? "idle"}
+                        showOptimiseButton={false}
                         onRegenerateDescription={undefined}
                         onMinimise={() => removeArtifactByKey(a.localKey)}
                         highlightNameError={step1SubmitAttempted && !a.title.trim()}
@@ -1973,7 +2127,8 @@ export function CreateReviewDrawer({
               {!projectScoped && (
                 <div className="relative w-full">
                   <Select
-                    label="Related project"
+                    label="Project"
+                    required
                     options={projectMenuOptions.map((p) => ({
                       value: p.id,
                       label: p.name
@@ -2017,46 +2172,33 @@ export function CreateReviewDrawer({
                   label="Review type"
                   options={REVIEW_TYPE_OPTIONS.map((o) => ({
                     value: o.value,
-                    label: o.label
+                    label: o.label,
+                    disabled: o.value === "compare" && artifacts.length < 2,
+                    title:
+                      o.value === "compare" && artifacts.length < 2
+                        ? "Add at least 2 artifacts to use Compare"
+                        : undefined,
                   }))}
                   value={reviewType}
                   onChange={(v) => {
+                    if (v === "compare" && artifacts.length < 2) return;
                     reviewTypeIsAiSuggested.current = false;
                     setReviewType(v as ReviewType);
                   }}
                   placeholder="Select type"
                   size="sm"
                 />
-                {reviewType === "compare" && (
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: 12,
-                      fontWeight: 400,
-                      lineHeight: 1.45,
-                      letterSpacing: "0.24px",
-                      color: TOKENS.secondary
-                    }}
-                  >
-                    Reviewers will select a preferred option. A decision will be
-                    recorded when feedback is complete.
-                  </p>
-                )}
-                {reviewType === "approve" && (
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: 12,
-                      fontWeight: 400,
-                      lineHeight: 1.45,
-                      letterSpacing: "0.24px",
-                      color: TOKENS.secondary
-                    }}
-                  >
-                    Reviewers can approve or request changes on individual artifacts.
-                    A decision will be recorded when all feedback is in.
-                  </p>
-                )}
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: 12,
+                    fontWeight: 400,
+                    lineHeight: 1.45,
+                    color: TOKENS.secondary,
+                  }}
+                >
+                  {REVIEW_TYPE_HELPER_TEXT[reviewType]}
+                </p>
               </div>
 
               <div className="flex min-w-0 w-full flex-col" style={{ gap: 8 }}>
@@ -2079,18 +2221,15 @@ export function CreateReviewDrawer({
                     error={reviewersFieldError}
                     errorMessage="Reviewers is required"
                     helperText={
-                      reviewType === "compare" || reviewType === "approve"
+                      reviewType === "compare"
                         ? "The first reviewer selected is the final decision maker. Reviewers will select a preferred concept and provide feedback."
                         : undefined
                     }
-                    showHelper={
-                      (reviewType === "compare" || reviewType === "approve") &&
-                      !reviewersFieldError
-                    }
+                    showHelper={reviewType === "compare" && !reviewersFieldError}
                   />
                   <Menu
                     id={reviewersListboxId}
-                    open={reviewerMenuOpen && filteredTeammates.length > 0}
+                    open={reviewerMenuOpen}
                     onClose={() => setReviewerMenuOpen(false)}
                     type="multi-select"
                     anchorRef={reviewerBlockRef}
@@ -2108,30 +2247,65 @@ export function CreateReviewDrawer({
                       }
                     }}
                   >
-                    {filteredTeammates.map((u) => (
+                    {filteredTeammates.length === 0 ? (
                       <MenuItem
-                        key={u.id}
-                        label={u.name}
-                        avatarSrc={u.avatarUrl ?? undefined}
-                        avatarName={u.name}
-                        checkbox
-                        active={reviewerExclude.has(u.id)}
-                        onClick={() => {
-                          setReviewers((prev) =>
-                            prev.some((r) => r.id === u.id)
-                              ? prev.filter((r) => r.id !== u.id)
-                              : [...prev, u]
-                          );
-                        }}
+                        label="No teammates found"
+                        disabled
+                        onClick={() => {}}
                       />
-                    ))}
+                    ) : null}
+                    {effectiveProjectId.trim() && projectTeammates.length > 0 ? (
+                      <>
+                        <MenuSectionHeading>Project teammates</MenuSectionHeading>
+                        {projectTeammates.map((u) => (
+                          <MenuItem
+                            key={`project-${u.id}`}
+                            label={u.name}
+                            avatarSrc={u.avatarUrl ?? undefined}
+                            avatarName={u.name}
+                            checkbox
+                            active={reviewerExclude.has(u.id)}
+                            onClick={() => {
+                              setReviewers((prev) =>
+                                prev.some((r) => r.id === u.id)
+                                  ? prev.filter((r) => r.id !== u.id)
+                                  : [...prev, u]
+                              );
+                            }}
+                          />
+                        ))}
+                      </>
+                    ) : null}
+                    {effectiveProjectId.trim() &&
+                    projectTeammates.length > 0 &&
+                    otherWorkspaceMembers.length > 0 ? (
+                      <MenuSectionHeading>All members</MenuSectionHeading>
+                    ) : null}
+                    {(effectiveProjectId.trim() ? otherWorkspaceMembers : filteredTeammates).map(
+                      (u) => (
+                        <MenuItem
+                          key={u.id}
+                          label={u.name}
+                          avatarSrc={u.avatarUrl ?? undefined}
+                          avatarName={u.name}
+                          checkbox
+                          active={reviewerExclude.has(u.id)}
+                          onClick={() => {
+                            setReviewers((prev) =>
+                              prev.some((r) => r.id === u.id)
+                                ? prev.filter((r) => r.id !== u.id)
+                                : [...prev, u]
+                            );
+                          }}
+                        />
+                      ),
+                    )}
                   </Menu>
                 </div>
                 {reviewers.length > 0 && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                     {reviewers.map((user, idx) => {
-                      const isDecisionMaker =
-                        idx === 0 && requireDecisionMakerForDb(reviewType);
+                      const isDecisionMaker = idx === 0 && reviewType === "compare";
                       const chipInner = (
                         <div
                           onMouseEnter={() => setHoveredChipId(user.id)}
@@ -2148,7 +2322,7 @@ export function CreateReviewDrawer({
                               hoveredChipId === user.id
                                 ? isDecisionMaker
                                   ? "#c490c8"
-                                  : "#c9a0a8"
+                                  : "#e8d0d4"
                                 : isDecisionMaker
                                   ? "#d9a8dc"
                                   : "#e4ddd3"
@@ -2156,8 +2330,8 @@ export function CreateReviewDrawer({
                             backgroundColor:
                               hoveredChipId === user.id
                                 ? isDecisionMaker
-                                  ? "#e8cde8"
-                                  : "#e8d0d4"
+                                  ? "#f0e2f1"
+                                  : "#f5eaec"
                                 : isDecisionMaker
                                   ? "#f5e8f6"
                                   : "#f3efe9",
@@ -2166,23 +2340,12 @@ export function CreateReviewDrawer({
                               "background-color 120ms ease, border-color 120ms ease"
                           }}
                         >
-                          <span
-                            style={{
-                              width: 24,
-                              height: 24,
-                              borderRadius: 999,
-                              backgroundColor: "#ede8e0",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              fontSize: 11,
-                              fontWeight: 600,
-                              color: "#2e1c1c",
-                              flexShrink: 0
-                            }}
-                          >
-                            {user.name.trim().charAt(0).toUpperCase()}
-                          </span>
+                          <Avatar
+                            name={user.name}
+                            contributorId={user.id}
+                            size="md"
+                            prominence="high"
+                          />
                           <span
                             style={{
                               fontSize: 13,
@@ -2240,7 +2403,7 @@ export function CreateReviewDrawer({
                   id={notifyFieldId}
                   label="Send notification on create"
                   checked={sendNotification}
-                  onChange={setSendNotification}
+                  onChange={handleSendNotificationChange}
                 />
               </div>
             </div>
@@ -2253,37 +2416,33 @@ export function CreateReviewDrawer({
                     type="single"
                     size="sm"
                     placeholder="Select relevant project problems"
-                    selectedLabel={
-                      relatedProblems.length > 0
-                        ? `${relatedProblems.length} problem${relatedProblems.length > 1 ? "s" : ""} selected`
-                        : undefined
-                    }
+                    selectedLabel={undefined}
                     isOpen={problemsSelectOpen}
                     onOpen={() => setProblemsSelectOpen((prev) => !prev)}
                     fieldId={problemsFieldId}
                   />
                   <Menu
                     open={problemsSelectOpen}
-                    onClose={() => setProblemsSelectOpen(false)}
+                    onClose={() => {
+                      setProblemsSelectOpen(false);
+                    }}
                     type="multi-select"
                     anchorRef={problemsSelectRef}
                     align="left"
                     aria-label="Problem options"
-                    footerAction={
-                      availableProblems.length > 0
-                        ? {
-                            type: "button",
-                            label: "Done",
-                            onClick: () => setProblemsSelectOpen(false),
-                            additionalLinkLabel: "Create a new problem",
-                            showAdditionalLink: true,
-                            onAdditionalLink: () => {
-                              setProblemsSelectOpen(false);
-                              setCreateProblemModalOpen(true);
-                            }
-                          }
-                        : undefined
-                    }
+                    footerAction={{
+                      type: "button",
+                      label: "Done",
+                      onClick: () => {
+                        setProblemsSelectOpen(false);
+                      },
+                      additionalLinkLabel: "Create new problem",
+                      showAdditionalLink: true,
+                      onAdditionalLink: () => {
+                        setProblemsSelectOpen(false);
+                        setCreateProblemModalOpen(true);
+                      },
+                    }}
                   >
                     {availableProblems.length > 0
                       ? availableProblems.map((p) => (
@@ -2538,6 +2697,7 @@ export function CreateReviewDrawer({
                   label="Review focus*"
                   size="md"
                   variant="form-fixed"
+                  hideIdleAiFooter
                   placeholder={
                     reviewFocusGenerating
                       ? "Generating review focus…"
@@ -2547,27 +2707,91 @@ export function CreateReviewDrawer({
                   onChange={(e) => {
                     if (reviewFocusAiGenerated) {
                       setReviewFocusAiGenerated(false);
+                      setReviewFocusStale(false);
+                      reviewFocusSnapshotRef.current = null;
                     }
                     setReviewFocus(e.target.value);
                   }}
-                  showLoadingButton={reviewFocusGenerating}
-                  showAiButton={
-                    !reviewFocusGenerating &&
-                    !(
-                      reviewFocusAiGenerated && reviewFocus.trim().length > 0
-                    )
-                  }
-                  aiButtonLabel={
-                    reviewFocus.trim().length === 0
-                      ? "Generate with Ai"
-                      : "Optimise with Ai"
-                  }
-                  aiButtonTooltip={focusAiButtonTooltip}
-                  aiButtonDisabled={focusButtonDisabled}
-                  onAiButtonClick={() => {
-                    void runReviewFocusGeneration(artifacts);
-                  }}
+                  generating={reviewFocusGenerating}
                 />
+                {showFocusGenerateButton ||
+                showFocusRegenerateButton ||
+                showFocusOptimiseButton ? (
+                  <div className="flex items-center justify-end gap-2">
+                    {showFocusGenerateButton ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        icon="leading"
+                        iconName={
+                          reviewFocusGeneratingAction === "regenerate"
+                            ? "loading"
+                            : "ai-stars"
+                        }
+                        label={
+                          reviewFocusGeneratingAction === "regenerate"
+                            ? "Generating…"
+                            : "Generate with Ai"
+                        }
+                        disabled={
+                          focusButtonDisabled || reviewFocusGenerating
+                        }
+                        onClick={() => {
+                          void runReviewFocusGeneration(artifacts, "regenerate");
+                        }}
+                      />
+                    ) : null}
+                    {showFocusRegenerateButton ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        icon="leading"
+                        iconName={
+                          reviewFocusGeneratingAction === "regenerate"
+                            ? "loading"
+                            : "ai-stars"
+                        }
+                        label={
+                          reviewFocusGeneratingAction === "regenerate"
+                            ? "Re-generating…"
+                            : "Re-generate with Ai"
+                        }
+                        disabled={
+                          focusButtonDisabled || reviewFocusGenerating
+                        }
+                        onClick={() => {
+                          void runReviewFocusGeneration(artifacts, "regenerate");
+                        }}
+                      />
+                    ) : null}
+                    {showFocusOptimiseButton ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        icon="leading"
+                        iconName={
+                          reviewFocusGeneratingAction === "optimise"
+                            ? "loading"
+                            : "ai-stars"
+                        }
+                        label={
+                          reviewFocusGeneratingAction === "optimise"
+                            ? "Generating…"
+                            : "Optimise with Ai"
+                        }
+                        disabled={
+                          focusButtonDisabled || reviewFocusGenerating
+                        }
+                        onClick={() => {
+                          void runReviewFocusGeneration(artifacts, "optimise");
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
           )}
@@ -2623,12 +2847,18 @@ export function CreateReviewDrawer({
               const supabase = createSupabaseBrowserClient();
               const activeWorkspaceId = await getActiveWorkspaceId(supabase);
 
+              const storedPermissionLevel = toStoredPermissionLevel(
+                newTeammatePermissionLevel,
+                false,
+              );
+
               if (includeTeammateInProject && email && activeWorkspaceId) {
                 const inviteResult = await sendWorkspaceInvite({
                   workspace_id: activeWorkspaceId,
                   email,
                   name,
-                  role: "viewer",
+                  role: newTeammateRole.trim() || undefined,
+                  permission_level: storedPermissionLevel,
                 });
                 if (inviteResult.status === "error") {
                   setIsCreatingTeammate(false);
@@ -2649,6 +2879,8 @@ export function CreateReviewDrawer({
                   name,
                   email: email || null,
                   role: newTeammateRole.trim() || "Stakeholder",
+                  permission_level: storedPermissionLevel,
+                  is_paid: isPaidPermissionLevel(storedPermissionLevel),
                 })
                 .select("id, name, email, role")
                 .single();
@@ -2720,6 +2952,17 @@ export function CreateReviewDrawer({
         options={[...TEAMMATE_ROLE_SELECT_OPTIONS]}
         value={newTeammateRole || undefined}
         onChange={(v) => setNewTeammateRole(v)}
+      />
+      <Select
+        label="Permission Level"
+        size="sm"
+        portaled
+        placeholder="Select"
+        options={[...TEAMMATE_PERMISSION_SELECT_OPTIONS]}
+        value={newTeammatePermissionLevel}
+        onChange={(v) =>
+          setNewTeammatePermissionLevel(v as ContentPermissionLevel)
+        }
       />
     </Modal>
 
@@ -2911,7 +3154,7 @@ export function CreateReviewDrawer({
             style={{
               flex: 1,
               position: "relative",
-              background: "#c9c0b4",
+              background: "transparent",
               overflow: "hidden",
               minHeight: 0,
             }}
@@ -2946,11 +3189,6 @@ export function CreateReviewDrawer({
               </div>
             )}
             {isFigmaUrl(modalDraft.linkUrl) ? (
-              <div style={{ position: "absolute", top: 10, left: 10 }}>
-                <Tag label="Figma" variant="neutral" size="sm" />
-              </div>
-            ) : null}
-            {isFigmaUrl(modalDraft.linkUrl) ? (
               <div style={{ position: "absolute", top: 10, right: 10 }}>
                 <IconSquareButton
                   icon="trash"
@@ -2960,29 +3198,6 @@ export function CreateReviewDrawer({
                     setModalOembedRaw(null);
                     setModalDescriptionAiGenerated(false);
                   }}
-                />
-              </div>
-            ) : null}
-            {isFigmaUrl(modalDraft.linkUrl) ? (
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 10,
-                  right: 10,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                }}
-              >
-                <IconSquareButton
-                  icon="plus"
-                  label="Zoom in"
-                  onClick={() => {}}
-                />
-                <IconSquareButton
-                  icon="minus"
-                  label="Zoom out"
-                  onClick={() => {}}
                 />
               </div>
             ) : null}
@@ -3466,6 +3681,42 @@ export function CreateReviewDrawer({
         onClose();
       }}
     />
+    <Modal
+      open={showDraftWarningModal}
+      type="default"
+      size="sm"
+      title="Save as draft instead?"
+      showSubtitle={false}
+      backdropClosable={false}
+      onClose={() => setShowDraftWarningModal(false)}
+      footer={
+        <>
+          <div className={modalStyles.spacer} />
+          <button
+            type="button"
+            className={modalStyles.btnSecondary}
+            onClick={() => setShowDraftWarningModal(false)}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className={modalStyles.btnPrimary}
+            onClick={() => {
+              setShowDraftWarningModal(false);
+              setSendNotification(false);
+            }}
+          >
+            Save as draft
+          </button>
+        </>
+      }
+    >
+      <p className={modalStyles.description}>
+        Without notifying reviewers, this review will be saved as a draft. You can
+        publish it and notify reviewers later from the review page.
+      </p>
+    </Modal>
     </>
   );
 }

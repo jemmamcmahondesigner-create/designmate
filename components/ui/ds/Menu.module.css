@@ -316,41 +316,34 @@
 
 /* ─── Sections type ───────────────────────────────────────────────────────── */
 
-.sectionsMenu {
+.sectionsMenuAnchor {
   position: absolute;
   z-index: 40;
-  width: 229px;
-  background: #ffffff;
-  border: 1px solid #e4ddd3;
-  border-radius: 8px;
-  box-shadow: 0px 2px 4px rgba(41, 33, 28, 0.06), 0px 8px 16px rgba(41, 33, 28, 0.15);
-  overflow: hidden;
 }
 
 .sectionsRoot {
   display: flex;
   flex-direction: column;
+  background: #f5f1ed;
 }
 
 .sectionsHeadingWrap {
-  height: 32px;
   display: flex;
-  align-items: center;
-  padding: 0 12px;
-  background: #f3efe9;
+  align-items: flex-end;
+  padding: 12px 12px 4px;
+  background: transparent;
 }
 
 .sectionsHeading {
   font-size: 10px;
   font-weight: 600;
   color: #998c82;
-  letter-spacing: 1px;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
 }
 
 .sectionsDivider {
-  height: 1px;
-  background: #ede8e0;
+  display: none;
 }
 
 .sectionsRows {
@@ -359,24 +352,35 @@
 }
 
 .sectionsRow {
-  min-height: 40px;
   display: flex;
   align-items: center;
-  padding: 0 12px;
+  padding: 9px 12px;
   gap: 8px;
+  background: transparent;
+  transition: background-color 120ms ease;
 }
 
 .sectionsRowReviewer {
-  min-height: 40px;
   display: flex;
   align-items: center;
-  padding: 0 12px;
+  padding: 9px 12px;
   gap: 8px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.sectionsRow:hover,
+.sectionsRowReviewer:hover {
+  background: rgba(107, 30, 46, 0.05);
+}
+
+.sectionsRowAll {
+  margin-bottom: 4px;
 }
 
 .sectionsReviewerChip {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
@@ -390,13 +394,15 @@
 }
 
 .sectionsReviewerName {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: #2e1c1c;
 }
 
 .sectionsFooter {
   padding: 8px 12px;
+  background: #f5f1ed;
+  border-top: 1px solid #ede8e0;
 }
 
 .sectionsApplyButton {

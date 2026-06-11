@@ -16,6 +16,8 @@ export type TextareaVariant = 'default' | 'form-fixed';
 
 export interface TextareaProps {
   label?: string;
+  /** Marks the field as required — appends * to label */
+  required?: boolean;
   showLabel?: boolean;
   placeholder?: string;
   helperText?: string;
@@ -45,6 +47,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
   function Textarea(
     {
       label = 'Label',
+      required = false,
       showLabel = true,
       placeholder = 'Placeholder text for multiline content...',
       helperText,
@@ -118,6 +121,11 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
         {showLabel && label && (
           <label htmlFor={id} className={labelClass}>
             {label}
+            {required && (
+              <span className={styles.required} aria-hidden="true">
+                *
+              </span>
+            )}
           </label>
         )}
 

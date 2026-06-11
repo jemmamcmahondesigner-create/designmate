@@ -32,8 +32,72 @@
 }
 
 .previewLarge {
-  flex: 1 0 0;
-  min-height: 360px;   /* default — parent can override */
+  flex: 0 0 auto;
+  min-height: 400px;
+  overflow: hidden;
+}
+
+.previewInteractive {
+  cursor: pointer;
+}
+
+.readonlyNameButton {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.readonlyNameButton:hover {
+  text-decoration: underline;
+}
+
+.previewLargeCompact {
+  height: 220px;
+  min-height: 220px;
+  max-height: 220px;
+}
+
+.embedWrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.previewMedia > .embedWrap {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.embedWrapLarge {
+  min-height: 400px;
+}
+
+.embedFallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--bg-subtle, #f5f2ef);
+}
+
+.embedIframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+  background: transparent;
 }
 
 /* Artifact History: fixed-height preview chrome (Figma 290px grey area + file strip). */
@@ -60,6 +124,23 @@
   background: #c9c0b4;
   box-sizing: border-box;
   overflow: hidden;
+}
+
+.previewMedia {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  overflow: hidden;
+}
+
+.previewMedia > iframe,
+.previewMedia > img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .previewImageWrap {
@@ -224,8 +305,10 @@
 .descriptionField {
   width: 100%;
   min-width: 0;
-  margin: 0;
+  margin: 8px 0 0;
   padding: 0;
+  position: static;
+  z-index: auto;
 }
 
 .detailsRow {

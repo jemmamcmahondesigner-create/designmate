@@ -51,6 +51,8 @@ export type TableProps<T extends { id: string }> = {
   onRowClick?: (row: T) => void;
   emptyState?: ReactNode;
   className?: string;
+  /** `auto` sizes columns to content — use on settings tables only. */
+  layout?: 'fixed' | 'auto';
   pagination?: TablePagination;
   isRowMuted?: (row: T) => boolean;
 };
@@ -116,11 +118,14 @@ export function Table<T extends { id: string }>({
   onRowClick,
   emptyState,
   className,
+  layout = 'fixed',
   pagination,
   isRowMuted,
 }: TableProps<T>) {
   const wrapClass = [styles.wrap, className ?? ''].filter(Boolean).join(' ');
-  const tableClass = styles.table;
+  const tableClass = [styles.table, layout === 'auto' ? styles.tableAuto : '']
+    .filter(Boolean)
+    .join(' ');
 
   if (rows.length === 0 && emptyState) {
     return (

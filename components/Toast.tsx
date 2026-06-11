@@ -2,27 +2,60 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { Alert } from "@/components/ui/ds";
+
+export type ToastShowOptions = {
+  message?: string;
+  actionLabel?: string;
+  onAction?: () => void;
+};
 
 type Toast = {
   id: number;
   message: string;
+  actionLabel?: string;
+  onAction?: () => void;
 };
 
 type ToastContextValue = {
-  showToast: (message?: string) => void;
+  showToast: (messageOrOptions?: string | ToastShowOptions) => void;
 };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 const DEFAULT_MESSAGE = "Changes saved";
 
+function buildToast(messageOrOptions?: string | ToastShowOptions): Toast {
+  const opts =
+    typeof messageOrOptions === "string" || messageOrOptions == null
+      ? { message: messageOrOptions }
+      : messageOrOptions;
+  return {
+    id: 0,
+    message: opts.message?.trim() || DEFAULT_MESSAGE,
+    actionLabel: opts.actionLabel,
+    onAction: opts.onAction,
+  };
+}
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<Toast | null>(null);
   const idRef = useRef(0);
+  const queueRef = useRef<Toast[]>([]);
 
-  const showToast = useCallback((message?: string) => {
+  const showNextToast = useCallback(() => {
+    const next = queueRef.current.shift() ?? null;
+    setToast(next);
+  }, []);
+
+  const showToast = useCallback((messageOrOptions?: string | ToastShowOptions) => {
     idRef.current += 1;
-    setToast({ id: idRef.current, message: message?.trim() || DEFAULT_MESSAGE });
+    const item = { ...buildToast(messageOrOptions), id: idRef.current };
+    setToast((current) => {
+      if (current === null) return item;
+      queueRef.current.push(item);
+      return current;
+    });
   }, []);
 
   const value = useMemo<ToastContextValue>(() => ({ showToast }), [showToast]);
@@ -34,7 +67,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         <ToastPortal
           key={toast.id}
           message={toast.message}
-          onDone={() => setToast((current) => (current && current.id === toast.id ? null : current))}
+          actionLabel={toast.actionLabel}
+          onAction={toast.onAction}
+          onDone={showNextToast}
         />
       ) : null}
     </ToastContext.Provider>
@@ -55,7 +90,17 @@ export function useToast(): ToastContextValue {
   return ctx;
 }
 
-function ToastPortal({ message, onDone }: { message: string; onDone: () => void }) {
+function ToastPortal({
+  message,
+  actionLabel,
+  onAction,
+  onDone,
+}: {
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  onDone: () => void;
+}) {
   const [opacity, setOpacity] = useState(0);
   const [transition, setTransition] = useState("opacity 200ms ease");
   const [mounted, setMounted] = useState(false);
@@ -95,38 +140,20 @@ function ToastPortal({ message, onDone }: { message: string; onDone: () => void 
         bottom: 24,
         right: 24,
         zIndex: 1000,
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 10,
-        backgroundColor: "#ebf6ee",
-        border: "1px solid #7dc98f",
-        borderRadius: 8,
-        padding: "10px 14px",
-        fontFamily: "'Plus Jakarta Sans', sans-serif",
-        fontSize: 13,
-        fontWeight: 500,
-        color: "#256b38",
-        boxShadow: "0px 4px 12px rgba(41,33,28,0.12)",
         opacity,
         transition,
-        maxWidth: 360,
+        width: "min(360px, calc(100vw - 48px))",
       }}
-      role="status"
-      aria-live="polite"
     >
-      <span aria-hidden style={{ display: "inline-flex", flexShrink: 0 }}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="12" cy="12" r="10" fill="#2a8a45" />
-          <path
-            d="M7.5 12l3 3 6-6"
-            stroke="#ffffff"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </span>
-      <span>{message}</span>
+      <Alert
+        sentiment="success"
+        prominence="low"
+        title={message}
+        actionLabel={actionLabel}
+        onAction={onAction}
+        dismissible={false}
+        className="w-full shadow-[0_4px_12px_rgba(41,33,28,0.12)]"
+      />
     </div>,
     document.body
   );

@@ -5,6 +5,7 @@ import {
   mapInvitePermissionLevel,
   mapWorkspaceMemberRole,
 } from "@/lib/workspace/permissions";
+import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
 import type { InviteApiResponse } from "@/types/invites";
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -157,12 +158,16 @@ export async function createWorkspaceInvite({
       .eq("user_id", existingUser.id)
       .maybeSingle();
 
+    const jobRole = role?.trim() || null;
+    const roleFields = await resolveContributorRoleFields(service, jobRole);
+
     const contributorPayload = {
       workspace_id: workspaceId,
       user_id: existingUser.id,
       name: displayName,
       email: normalizedEmail,
-      role: role?.trim() || null,
+      role: roleFields.role,
+      role_id: roleFields.role_id,
       permission_level: permissionLevel,
       is_paid: isPaidPermissionLevel(permissionLevel),
       project_id: null as string | null,

@@ -6,6 +6,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { useLayoutEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { Avatar } from './Avatar';
+import { getAvatarColour } from '@/lib/utils/avatarColour';
 import { Tooltip } from './Tooltip';
 import styles from './Sidebar.module.css';
 
@@ -26,7 +27,7 @@ export interface SidebarProps {
   onShowAll?: () => void;
   onProjectClick?: (id: string) => void;
   onReviewsClick?: () => void;
-  user?: { name: string; avatarSrc?: string };
+  user?: { name: string; avatarSrc?: string; contributorId?: string };
   onUserClick?: () => void;
   /** Highlight footer row (settings route or menu open). */
   userActive?: boolean;
@@ -127,6 +128,14 @@ export function Sidebar({
   useLayoutEffect(() => {
     onRailWidthChange?.(isExpanded ? RAIL_EXPANDED : RAIL_COLLAPSED);
   }, [isExpanded, onRailWidthChange]);
+
+  const footerAvatarColourKey =
+    (user?.contributorId ?? user?.name ?? '').trim() || '?';
+  const footerAvatarPalette = getAvatarColour(footerAvatarColourKey);
+  const footerAvatarStyle = {
+    backgroundColor: footerAvatarPalette.bg,
+    color: footerAvatarPalette.text,
+  };
 
   const rootClass = [
     styles.root,
@@ -305,13 +314,14 @@ export function Sidebar({
             width: '100%',
           }}
         >
-          {wrapNavLink(
+          {/* TODO: restore Settings nav item */}
+          {/* {wrapNavLink(
             'settings',
             'Settings',
             '/settings/teammates',
             'nav-settings',
             settingsRouteActive
-          )}
+          )} */}
         </div>
         <button
           type="button"
@@ -329,7 +339,14 @@ export function Sidebar({
           aria-haspopup="menu"
           aria-expanded={settingsMenuOpen}
         >
-          <Avatar src={user?.avatarSrc} name={user?.name} size="md" />
+          <Avatar
+            src={user?.avatarSrc}
+            name={user?.name}
+            contributorId={user?.contributorId}
+            size="md"
+            prominence="high"
+            style={footerAvatarStyle}
+          />
           <span className={styles.footerUserNameWrap} style={navLabelSlotStyle(isExpanded)}>
             <span className={styles.footerUserName}>{user?.name ?? 'User'}</span>
           </span>
