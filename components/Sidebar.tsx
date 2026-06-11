@@ -6,6 +6,7 @@ import type { User } from "@supabase/supabase-js";
 import { Sidebar as DsSidebar } from "@/components/ui/ds";
 import { DevUserSwitcher } from "@/components/DevUserSwitcher";
 import { SidebarSettingsMenu } from "@/components/settings/SidebarSettingsMenu";
+import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 
@@ -25,6 +26,7 @@ export function Sidebar() {
   const [workspaceOptions, setWorkspaceOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [activeWorkspaceValue, setActiveWorkspaceValue] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const { permissionLevel: workspacePermissionLevel } = useActiveWorkspacePermission();
 
   const settingsPath = pathname.startsWith("/settings");
   const footerHighlight = settingsPath || settingsOpen;
@@ -186,6 +188,7 @@ export function Sidebar() {
         roleLabel={roleLabel ?? ""}
         workspaceOptions={workspaceOptions}
         workspaceValue={activeWorkspaceValue}
+        workspacePermissionLevel={workspacePermissionLevel}
       />
     </>
   );

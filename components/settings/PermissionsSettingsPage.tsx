@@ -381,7 +381,7 @@ function renderDescription(row: PermRow) {
   return <span style={descriptionStyle}>{row.description}</span>;
 }
 
-export function PermissionsSettingsPage() {
+export function PermissionsSettingsPage({ readOnly: _readOnly = false }: { readOnly?: boolean } = {}) {
   // TODO: Add a Members column (avatar chips per role) when workspace members data is available on this page.
 
   const columns: ColumnDef<PermRow>[] = [

@@ -15,7 +15,13 @@ export type ClientRow = {
   projectCount: number;
 };
 
-export function ClientsSettingsPage({ initialClients }: { initialClients: ClientRow[] }) {
+export function ClientsSettingsPage({
+  initialClients,
+  readOnly = false,
+}: {
+  initialClients: ClientRow[];
+  readOnly?: boolean;
+}) {
   const router = useRouter();
   const [clients, setClients] = useState(initialClients);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -166,48 +172,52 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
         <span style={{ fontSize: 13, fontWeight: 400, color: "var(--text-secondary, #6b5e55)" }}>{row.projectCount}</span>
       ),
     },
-    {
-      key: "actions",
-      label: "",
-      width: 40,
-      cellType: "kebab",
-      render: (row) => (
-        <>
-          <IconSquareButton
-            ref={(el) => {
-              actionRefs.current[row.id] = el;
-            }}
-            variant="ghost"
-            icon="kebab"
-            label="Group actions"
-            onClick={() => setOpenMenuId((prev) => (prev === row.id ? null : row.id))}
-          />
-          <Menu
-            open={openMenuId === row.id}
-            onClose={() => setOpenMenuId(null)}
-            anchorRef={{ current: actionRefs.current[row.id] as HTMLElement | null }}
-            align="right"
-            portal
-            portalZIndex={100}
-          >
-            <MenuItem
-              label="Edit"
-              onClick={() => {
-                openEdit(row);
-              }}
-            />
-            <MenuItem
-              label="Remove"
-              destructive
-              onClick={() => {
-                setOpenMenuId(null);
-                setRemoveClient(row);
-              }}
-            />
-          </Menu>
-        </>
-      ),
-    },
+    ...(readOnly
+      ? []
+      : [
+          {
+            key: "actions",
+            label: "",
+            width: 40,
+            cellType: "kebab" as const,
+            render: (row: ClientRow) => (
+              <>
+                <IconSquareButton
+                  ref={(el) => {
+                    actionRefs.current[row.id] = el;
+                  }}
+                  variant="ghost"
+                  icon="kebab"
+                  label="Group actions"
+                  onClick={() => setOpenMenuId((prev) => (prev === row.id ? null : row.id))}
+                />
+                <Menu
+                  open={openMenuId === row.id}
+                  onClose={() => setOpenMenuId(null)}
+                  anchorRef={{ current: actionRefs.current[row.id] as HTMLElement | null }}
+                  align="right"
+                  portal
+                  portalZIndex={100}
+                >
+                  <MenuItem
+                    label="Edit"
+                    onClick={() => {
+                      openEdit(row);
+                    }}
+                  />
+                  <MenuItem
+                    label="Remove"
+                    destructive
+                    onClick={() => {
+                      setOpenMenuId(null);
+                      setRemoveClient(row);
+                    }}
+                  />
+                </Menu>
+              </>
+            ),
+          },
+        ]),
   ];
 
   return (
@@ -245,16 +255,18 @@ export function ClientsSettingsPage({ initialClients }: { initialClients: Client
             Link projects to groups to organise your work and track decisions across teams and client relationships.
           </p>
         </div>
-        <div style={{ flexShrink: 0 }}>
-          <Button
-            label="New Group"
-            variant="primary"
-            size="sm"
-            icon="leading"
-            iconName="plus"
-            onClick={openCreate}
-          />
-        </div>
+        {!readOnly ? (
+          <div style={{ flexShrink: 0 }}>
+            <Button
+              label="New Group"
+              variant="primary"
+              size="sm"
+              icon="leading"
+              iconName="plus"
+              onClick={openCreate}
+            />
+          </div>
+        ) : null}
       </div>
 
       {formError && !createOpen && !editClient ? (

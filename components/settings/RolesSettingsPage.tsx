@@ -46,7 +46,13 @@ const overflowChipStyle = {
   fontFamily: "'Plus Jakarta Sans', sans-serif",
 } as const;
 
-export function RolesSettingsPage({ initialRoles }: { initialRoles: RoleRow[] }) {
+export function RolesSettingsPage({
+  initialRoles,
+  readOnly = false,
+}: {
+  initialRoles: RoleRow[];
+  readOnly?: boolean;
+}) {
   const router = useRouter();
   const [roles, setRoles] = useState(initialRoles);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -108,59 +114,63 @@ export function RolesSettingsPage({ initialRoles }: { initialRoles: RoleRow[] })
       cellType: "text",
       render: (row) => (BUILTIN.has(row.name) ? "Default" : ""),
     },
-    {
-      key: "actions",
-      label: "",
-      width: 40,
-      cellType: "kebab",
-      render: (row) => (
-        <>
-          <IconSquareButton
-            ref={(el) => {
-              actionRefs.current[row.id] = el;
-            }}
-            variant="ghost"
-            icon="kebab"
-            label="Role actions"
-            onClick={() => setOpenMenuId((prev) => (prev === row.id ? null : row.id))}
-          />
-          <Menu
-            open={openMenuId === row.id}
-            onClose={() => setOpenMenuId(null)}
-            anchorRef={{ current: actionRefs.current[row.id] as HTMLElement | null }}
-            align="right"
-            portal
-            portalZIndex={100}
-          >
-            <MenuItem
-              label="Edit"
-              onClick={() => {
-                setOpenMenuId(null);
-                setEditRole(row);
-                setEditName(row.name);
-                setFormError(null);
-              }}
-            />
-            {BUILTIN.has(row.name) ? (
-              <Tooltip label="Default roles cannot be removed." position="left" fullWidth>
-                <span style={{ display: "block" }}>
-                  <MenuItem label="Remove" disabled />
-                </span>
-              </Tooltip>
-            ) : (
-              <MenuItem
-                label="Remove"
-                destructive
-                onClick={() => {
-                  setOpenMenuId(null);
-                  void removeRole(row);
-                }}
-              />
-            )}
-          </Menu>
-        </>
-      ),
-    },
+    ...(readOnly
+      ? []
+      : [
+          {
+            key: "actions",
+            label: "",
+            width: 40,
+            cellType: "kebab" as const,
+            render: (row: RoleRow) => (
+              <>
+                <IconSquareButton
+                  ref={(el) => {
+                    actionRefs.current[row.id] = el;
+                  }}
+                  variant="ghost"
+                  icon="kebab"
+                  label="Role actions"
+                  onClick={() => setOpenMenuId((prev) => (prev === row.id ? null : row.id))}
+                />
+                <Menu
+                  open={openMenuId === row.id}
+                  onClose={() => setOpenMenuId(null)}
+                  anchorRef={{ current: actionRefs.current[row.id] as HTMLElement | null }}
+                  align="right"
+                  portal
+                  portalZIndex={100}
+                >
+                  <MenuItem
+                    label="Edit"
+                    onClick={() => {
+                      setOpenMenuId(null);
+                      setEditRole(row);
+                      setEditName(row.name);
+                      setFormError(null);
+                    }}
+                  />
+                  {BUILTIN.has(row.name) ? (
+                    <Tooltip label="Default roles cannot be removed." position="left" fullWidth>
+                      <span style={{ display: "block" }}>
+                        <MenuItem label="Remove" disabled />
+                      </span>
+                    </Tooltip>
+                  ) : (
+                    <MenuItem
+                      label="Remove"
+                      destructive
+                      onClick={() => {
+                        setOpenMenuId(null);
+                        void removeRole(row);
+                      }}
+                    />
+                  )}
+                </Menu>
+              </>
+            ),
+          },
+        ]),
   ];
 
   const createRole = async () => {
@@ -215,18 +225,20 @@ export function RolesSettingsPage({ initialRoles }: { initialRoles: RoleRow[] })
     <div className={settingsTableLayoutStyles.pageContent}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800, color: "var(--text-heading, #6b1e2e)" }}>Roles</h1>
-        <Button
-          label="New Role"
-          variant="primary"
-          size="sm"
-          icon="leading"
-          iconName="plus"
-          onClick={() => {
-            setFormError(null);
-            setNewName("");
-            setAddOpen(true);
-          }}
-        />
+        {!readOnly ? (
+          <Button
+            label="New Role"
+            variant="primary"
+            size="sm"
+            icon="leading"
+            iconName="plus"
+            onClick={() => {
+              setFormError(null);
+              setNewName("");
+              setAddOpen(true);
+            }}
+          />
+        ) : null}
       </div>
       {formError ? (
         <p role="alert" style={{ margin: "0 0 12px", fontSize: 13, color: "#8b2020" }}>

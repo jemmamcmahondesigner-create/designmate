@@ -3,22 +3,24 @@ import "server-only";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
-import { normalizeWorkspacePermission } from "@/lib/workspace/permissions";
+import {
+  normalizeWorkspacePermission,
+  type WorkspacePermissionLevel,
+} from "@/lib/workspace/permissions";
 
-/** Reviewers may only access profile settings — block roles, teammates, billing, etc. */
-export async function redirectReviewerFromRestrictedSettings() {
+async function resolveCurrentWorkspacePermissionLevel(): Promise<WorkspacePermissionLevel | null> {
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/login");
+    return null;
   }
 
   const workspaceId = getActiveWorkspaceIdFromUser(user);
   if (!workspaceId) {
-    return;
+    return null;
   }
 
   const { data: member } = await supabase
@@ -39,7 +41,17 @@ export async function redirectReviewerFromRestrictedSettings() {
     permissionLevel = "admin";
   }
 
-  if (normalizeWorkspacePermission(permissionLevel) === "reviewer") {
+  return normalizeWorkspacePermission(permissionLevel);
+}
+
+export async function getWorkspacePermissionLevelForCurrentUser(): Promise<WorkspacePermissionLevel | null> {
+  return resolveCurrentWorkspacePermissionLevel();
+}
+
+/** Reviewers cannot access the teammates roster — redirect direct URL visits. */
+export async function redirectReviewerFromTeammatesSettings() {
+  const level = await resolveCurrentWorkspacePermissionLevel();
+  if (level === "reviewer") {
     redirect("/projects");
   }
 }

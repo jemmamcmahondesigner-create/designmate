@@ -1,6 +1,6 @@
 import { RolesSettingsPage, type RoleRow } from "@/components/settings/RolesSettingsPage";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { redirectReviewerFromRestrictedSettings } from "@/lib/workspace/redirectReviewerFromRestrictedSettings";
+import { getWorkspacePermissionLevelForCurrentUser } from "@/lib/workspace/settingsAccess";
 
 type ContributorRow = {
   id?: string;
@@ -26,7 +26,8 @@ function contributorMatchesRole(
 }
 
 export default async function SettingsRolesPage() {
-  await redirectReviewerFromRestrictedSettings();
+  const permissionLevel = await getWorkspacePermissionLevelForCurrentUser();
+  const isReadOnly = permissionLevel === "reviewer";
 
   const supabase = await createSupabaseServerClient();
 
@@ -68,5 +69,5 @@ export default async function SettingsRolesPage() {
     };
   });
 
-  return <RolesSettingsPage initialRoles={initialRoles} />;
+  return <RolesSettingsPage initialRoles={initialRoles} readOnly={isReadOnly} />;
 }

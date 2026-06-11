@@ -10,7 +10,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
-import { Button, Avatar, Icon, Menu } from "@/components/ui/ds";
+import { Button, Avatar, Icon, Menu, Tooltip } from "@/components/ui/ds";
+import type { WorkspacePermissionLevel } from "@/lib/workspace/permissions";
 import menuStyles from "@/components/ui/ds/Menu.module.css";
 import selectStyles from "@/components/ui/ds/Select.module.css";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -24,6 +25,7 @@ type SidebarSettingsMenuProps = {
   roleLabel: string;
   workspaceOptions: Array<{ value: string; label: string }>;
   workspaceValue: string | null;
+  workspacePermissionLevel?: WorkspacePermissionLevel | null;
 };
 
 const SETTINGS_ITEMS = [
@@ -174,6 +176,7 @@ export function SidebarSettingsMenu({
   roleLabel,
   workspaceOptions,
   workspaceValue,
+  workspacePermissionLevel = null,
 }: SidebarSettingsMenuProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -314,18 +317,48 @@ export function SidebarSettingsMenu({
           </div>
         ) : null}
 
-        {SETTINGS_ITEMS.map((item) => (
-          <button
-            key={item.href}
-            type="button"
-            onMouseEnter={() => setHoveredHref(item.href)}
-            onMouseLeave={() => setHoveredHref(null)}
-            style={menuItemStyle(activePath === item.href, hoveredHref === item.href)}
-            onClick={() => navigate(item.href)}
-          >
-            {item.label}
-          </button>
-        ))}
+        {SETTINGS_ITEMS.map((item) => {
+          const teammatesDisabled =
+            item.href === "/settings/teammates" && workspacePermissionLevel === "reviewer";
+
+          if (teammatesDisabled) {
+            return (
+              <Tooltip
+                key={item.href}
+                label="Editor or Admin access required to view teammates."
+                position="right"
+                fullWidth
+              >
+                <span style={{ display: "block" }}>
+                  <button
+                    type="button"
+                    aria-disabled
+                    disabled
+                    style={disabledNavItemStyle()}
+                    onClick={(event) => {
+                      event.preventDefault();
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                </span>
+              </Tooltip>
+            );
+          }
+
+          return (
+            <button
+              key={item.href}
+              type="button"
+              onMouseEnter={() => setHoveredHref(item.href)}
+              onMouseLeave={() => setHoveredHref(null)}
+              style={menuItemStyle(activePath === item.href, hoveredHref === item.href)}
+              onClick={() => navigate(item.href)}
+            >
+              {item.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Your account section */}
@@ -350,9 +383,13 @@ export function SidebarSettingsMenu({
 
         <button
           type="button"
-          style={menuItemStyle(false, false, true)}
-          disabled
-          aria-disabled
+          onMouseEnter={() => setHoveredHref("/settings/subscription")}
+          onMouseLeave={() => setHoveredHref(null)}
+          style={menuItemStyle(
+            activePath === "/settings/subscription",
+            hoveredHref === "/settings/subscription",
+          )}
+          onClick={() => navigate("/settings/subscription")}
         >
           Subscription
         </button>
@@ -459,6 +496,23 @@ const footerRoleStyle: CSSProperties = {
   fontWeight: 400,
   color: "var(--text-secondary, #6b5e55)",
 };
+
+function disabledNavItemStyle(): CSSProperties {
+  return {
+    width: "100%",
+    height: 37,
+    boxSizing: "border-box",
+    border: "none",
+    textAlign: "left",
+    padding: "8px 12px",
+    background: "transparent",
+    color: "var(--text-disabled)",
+    fontSize: 13,
+    fontWeight: 500,
+    cursor: "default",
+    fontFamily: "'Plus Jakarta Sans', sans-serif",
+  };
+}
 
 function menuItemStyle(
   active: boolean,

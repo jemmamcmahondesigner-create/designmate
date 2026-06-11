@@ -1,5 +1,6 @@
 import { ClientsSettingsPage, type ClientRow } from "@/components/settings/ClientsSettingsPage";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getWorkspacePermissionLevelForCurrentUser } from "@/lib/workspace/settingsAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,9 @@ function projectCountFromRow(row: ClientRowDb): number {
 }
 
 export default async function SettingsClientsPage() {
+  const permissionLevel = await getWorkspacePermissionLevelForCurrentUser();
+  const isReadOnly = permissionLevel === "reviewer";
+
   const supabase = await createSupabaseServerClient();
 
   const { data: clientRows, error: clientsError } = await supabase
@@ -41,5 +45,5 @@ export default async function SettingsClientsPage() {
     };
   });
 
-  return <ClientsSettingsPage initialClients={initialClients} />;
+  return <ClientsSettingsPage initialClients={initialClients} readOnly={isReadOnly} />;
 }
