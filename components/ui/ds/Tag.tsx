@@ -9,6 +9,7 @@ export type TagVariant =
   | 'brand'
   | 'mint'
   | 'butter'
+  | 'mushroom'
   | 'aqua'
   | 'lilac'
   | 'success'

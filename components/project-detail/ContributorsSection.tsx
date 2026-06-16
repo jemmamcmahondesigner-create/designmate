@@ -10,7 +10,9 @@ import {
   Input,
   Modal,
   Select,
+  Tag,
 } from "@/components/ui/ds";
+import { AccessRequestPendingPill } from "@/components/accessRequests/AccessRequestPendingPill";
 import { useToast } from "@/components/Toast";
 import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -24,10 +26,15 @@ import {
 import { sendWorkspaceInvite } from "@/lib/workspace/invite-client";
 import { inviteToastMessage } from "@/lib/workspace/invite-toast";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
+import { approvePendingAccessRequestsClient } from "@/lib/accessRequests/approvePendingAccessRequests";
+import {
+  linkContributorToProject,
+  unlinkContributorFromProject,
+} from "@/lib/contributors/linkContributorToProject";
 import type { ProjectContributor } from "@/types/project";
 
 const sectionHeadingClass =
-  "text-[20px] font-semibold leading-[1.3] text-[#6b1e2e]";
+  "text-[20px] font-bold leading-[1.3] text-[#6b1e2e]";
 const sectionHeadingStyle = { letterSpacing: "-0.3px" as const };
 
 const TEAMMATE_PERMISSION_SELECT_OPTIONS = [
@@ -39,6 +46,9 @@ type ContributorsSectionProps = {
   projectId: string;
   initialContributors: ProjectContributor[];
   hideAddActions?: boolean;
+  pendingAccessRequestCount?: number;
+  pendingAccessRequesterNames?: string[];
+  onPendingAccessRequestsChanged?: () => void;
 };
 
 function TeammateTag({
@@ -121,10 +131,16 @@ export function ContributorsSection({
   projectId,
   initialContributors,
   hideAddActions = false,
+  pendingAccessRequestCount = 0,
+  pendingAccessRequesterNames = [],
+  onPendingAccessRequestsChanged,
 }: ContributorsSectionProps) {
   const { showToast } = useToast();
-  const { permissionLevel, loading: permissionLoading } = useActiveWorkspacePermission();
-  const canManageTeammates = canAddTeammates(permissionLevel);
+  const {
+    workspacePermissionLevel,
+    workspacePermissionLoading,
+  } = useActiveWorkspacePermission();
+  const canManageTeammates = canAddTeammates(workspacePermissionLevel);
   const [contributors, setContributors] =
     useState<ProjectContributor[]>(initialContributors);
   const [allContributors, setAllContributors] =
@@ -153,7 +169,9 @@ export function ContributorsSection({
         .select("id, name, email, role")
         .order("created_at", { ascending: true });
       if (activeWorkspaceId) {
-        query = query.eq("workspace_id", activeWorkspaceId);
+        query = query
+          .eq("workspace_id", activeWorkspaceId)
+          .or("project_id.is.null,user_id.not.is.null");
       }
       const { data } = await query;
         if (!Array.isArray(data)) return;
@@ -242,15 +260,23 @@ export function ContributorsSection({
       prev.filter((contributor) => contributor.id !== contributorId)
     );
     const supabase = createSupabaseBrowserClient();
-    const { error } = await supabase.from("contributors").delete().eq("id", contributorId);
-    if (!error) showToast("Changes saved");
+    await unlinkContributorFromProject(supabase, contributorId);
+    showToast("Changes saved");
   };
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className={sectionHeadingClass} style={sectionHeadingStyle}>
-        Teammates
-      </h2>
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className={sectionHeadingClass} style={sectionHeadingStyle}>
+          Teammates
+        </h2>
+        {canManageTeammates && pendingAccessRequestCount > 0 ? (
+          <AccessRequestPendingPill
+            count={pendingAccessRequestCount}
+            requesterNames={pendingAccessRequesterNames}
+          />
+        ) : null}
+      </div>
 
       {contributors.length === 0 && (
         <div
@@ -414,24 +440,60 @@ export function ContributorsSection({
                   size="sm"
                   label="Done"
                   onClick={() => {
-                    const toAdd = allContributors.filter((contributor) =>
-                      selectedContributorIds.includes(contributor.id)
-                    );
-                    let added = false;
-                    setContributors((prev) => {
-                      const next = [
+                    void (async () => {
+                      const toAdd = allContributors.filter((contributor) =>
+                        selectedContributorIds.includes(contributor.id),
+                      );
+                      const supabase = createSupabaseBrowserClient();
+                      const activeWorkspaceId = await getActiveWorkspaceId(supabase);
+                      const approveContributorIds: string[] = [];
+                      const addedContributors: ProjectContributor[] = [];
+
+                      for (const contributor of toAdd) {
+                        if (
+                          contributors.some((existing) => existing.id === contributor.id)
+                        ) {
+                          continue;
+                        }
+                        const linked = await linkContributorToProject(supabase, {
+                          projectId,
+                          workspaceId: activeWorkspaceId,
+                          contributorId: contributor.id,
+                          name: contributor.name,
+                          email: contributor.email,
+                          role: contributor.role,
+                          permissionLevel: "reviewer",
+                          isPaid: false,
+                        });
+                        if (!linked) continue;
+                        approveContributorIds.push(linked.id);
+                        addedContributors.push(linked);
+                      }
+
+                      if (addedContributors.length === 0) {
+                        setSelectedContributorIds([]);
+                        setMenuOpen(false);
+                        setSearch("");
+                        return;
+                      }
+
+                      setContributors((prev) => [
                         ...prev,
-                        ...toAdd.filter(
-                          (candidate) => !prev.some((existing) => existing.id === candidate.id)
+                        ...addedContributors.filter(
+                          (candidate) =>
+                            !prev.some((existing) => existing.id === candidate.id),
                         ),
-                      ];
-                      added = next.length > prev.length;
-                      return next;
-                    });
-                    setSelectedContributorIds([]);
-                    setMenuOpen(false);
-                    setSearch("");
-                    if (added) showToast("Changes saved");
+                      ]);
+                      await approvePendingAccessRequestsClient(supabase, {
+                        contributorIds: approveContributorIds,
+                        projectId,
+                      });
+                      onPendingAccessRequestsChanged?.();
+                      setSelectedContributorIds([]);
+                      setMenuOpen(false);
+                      setSearch("");
+                      showToast("Changes saved");
+                    })();
                   }}
                 />
                 <button
@@ -545,37 +607,25 @@ export function ContributorsSection({
                   showToast(inviteToastMessage(inviteResult, name, email));
                 }
 
-                const { data } = await supabase
-                  .from("contributors")
-                  .insert({
-                    project_id: projectId,
-                    workspace_id: activeWorkspaceId,
-                    name,
-                    email: email || null,
-                    role: newContributorRole.trim() || null,
-                    permission_level: storedPermissionLevel,
-                    is_paid: isPaidPermissionLevel(storedPermissionLevel),
-                  })
-                  .select("id, name, email, role")
-                  .single();
+                const linked = await linkContributorToProject(supabase, {
+                  projectId,
+                  workspaceId: activeWorkspaceId,
+                  name,
+                  email: email || null,
+                  role: newContributorRole.trim() || null,
+                  permissionLevel: storedPermissionLevel,
+                  isPaid: isPaidPermissionLevel(storedPermissionLevel),
+                });
                 setIsSaving(false);
-                if (!data) return;
-                const next: ProjectContributor = {
-                  id: String((data as Record<string, unknown>).id ?? ""),
-                  name: String((data as Record<string, unknown>).name ?? ""),
-                  email:
-                    ((data as Record<string, unknown>).email as
-                      | string
-                      | null
-                      | undefined) ?? null,
-                  role:
-                    ((data as Record<string, unknown>).role as
-                      | string
-                      | null
-                      | undefined) ?? null,
-                };
+                if (!linked) return;
+                const next = linked;
                 setAllContributors((prev) => [...prev, next]);
                 setContributors((prev) => [...prev, next]);
+                await approvePendingAccessRequestsClient(supabase, {
+                  contributorIds: [next.id],
+                  projectId,
+                });
+                onPendingAccessRequestsChanged?.();
                 await logTimelineEventClient({
                   projectId,
                   actorId: next.id,
@@ -591,7 +641,7 @@ export function ContributorsSection({
           </div>
         }
       >
-        {!canManageTeammates && !permissionLoading ? (
+        {!canManageTeammates && !workspacePermissionLoading ? (
           <Alert
             sentiment="warning"
             prominence="low"

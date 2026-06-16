@@ -17,7 +17,7 @@ type EnsureContributorProfileInput = {
 export async function ensureContributorProfile(
   supabase: SupabaseClient,
   input: EnsureContributorProfileInput,
-): Promise<void> {
+): Promise<{ error: string | null }> {
   const {
     userId,
     email,
@@ -26,7 +26,9 @@ export async function ensureContributorProfile(
     activeWorkspaceId,
     permissionLevel = "admin",
   } = input;
-  if (!activeWorkspaceId || !displayName.trim()) return;
+  if (!activeWorkspaceId || !displayName.trim()) {
+    return { error: null };
+  }
 
   const name = displayName.trim();
   const emailValue = email?.trim() || null;
@@ -70,16 +72,17 @@ export async function ensureContributorProfile(
   }
 
   if (matchingIds.size > 0) {
-    await supabase
+    const { error } = await supabase
       .from("contributors")
       .update(contributorUpdates)
       .in("id", [...matchingIds]);
-    return;
+    return { error: error?.message ?? null };
   }
 
-  await supabase.from("contributors").insert({
+  const { error } = await supabase.from("contributors").insert({
     workspace_id: activeWorkspaceId,
     project_id: null as string | null,
     ...contributorUpdates,
   });
+  return { error: error?.message ?? null };
 }

@@ -49,9 +49,11 @@ const overflowChipStyle = {
 export function RolesSettingsPage({
   initialRoles,
   readOnly = false,
+  activeWorkspaceId = null,
 }: {
   initialRoles: RoleRow[];
   readOnly?: boolean;
+  activeWorkspaceId?: string | null;
 }) {
   const router = useRouter();
   const [roles, setRoles] = useState(initialRoles);
@@ -200,9 +202,17 @@ export function RolesSettingsPage({
       setFormError(uErr.message || "Could not update role.");
       return;
     }
-    if (oldName !== name) {
-      await supabase.from("contributors").update({ role: name }).eq("role", oldName);
-      await supabase.from("contributors").update({ role: name }).eq("role_id", editRole.id);
+    if (oldName !== name && activeWorkspaceId) {
+      await supabase
+        .from("contributors")
+        .update({ role: name })
+        .eq("role", oldName)
+        .eq("workspace_id", activeWorkspaceId);
+      await supabase
+        .from("contributors")
+        .update({ role: name })
+        .eq("role_id", editRole.id)
+        .eq("workspace_id", activeWorkspaceId);
     }
     setEditRole(null);
     refresh();
@@ -211,8 +221,18 @@ export function RolesSettingsPage({
   const removeRole = async (row: RoleRow) => {
     if (BUILTIN.has(row.name)) return;
     const supabase = createSupabaseBrowserClient();
-    await supabase.from("contributors").update({ role: null, role_id: null }).eq("role", row.name);
-    await supabase.from("contributors").update({ role_id: null }).eq("role_id", row.id);
+    if (activeWorkspaceId) {
+      await supabase
+        .from("contributors")
+        .update({ role: null, role_id: null })
+        .eq("role", row.name)
+        .eq("workspace_id", activeWorkspaceId);
+      await supabase
+        .from("contributors")
+        .update({ role_id: null })
+        .eq("role_id", row.id)
+        .eq("workspace_id", activeWorkspaceId);
+    }
     const { error } = await supabase.from("contributor_roles").delete().eq("id", row.id);
     if (error) {
       setFormError(error.message || "Could not remove role.");
@@ -255,7 +275,7 @@ export function RolesSettingsPage({
               className={`${settingsTableLayoutStyles.tableBorderless} ${rolesTableStyles.rolesTable}`}
               columns={columns}
               rows={roles}
-              emptyState={<span style={{ color: "var(--text-secondary, #6b5e55)" }}>No roles</span>}
+              emptyState={<span>No roles</span>}
             />
           </div>
         </div>

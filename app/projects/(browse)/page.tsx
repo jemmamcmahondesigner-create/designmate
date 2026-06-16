@@ -1,7 +1,18 @@
 import { ProjectsView } from "@/components/ProjectsView";
+import { resolveClientDisplayName } from "@/lib/projects/resolveClientDisplayName";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
+import { isAssignedReviewerScope } from "@/lib/workspace/permissions";
+import {
+  getAssignedReviewerProjectIds,
+  getWorkspaceMembershipForCurrentUser,
+} from "@/lib/workspace/resolveWorkspaceMembership";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Project, ProjectStatus, ProjectsByStatus } from "@/types/project";
+import {
+  bucketReviewStatusForProjectCard,
+  emptyProjectReviewStatusBreakdown,
+  type ProjectReviewStatusBreakdown,
+} from "@/lib/reviews/projectReviewStatusBreakdown";
 
 export const dynamic = "force-dynamic";
 
@@ -23,11 +34,14 @@ export default async function ProjectsPage() {
       <ProjectsView
         grouped={{ active: [], paused: [], complete: [] }}
         reviewCounts={{}}
+        reviewBreakdowns={{}}
         searchPlaceholder="Filter by project, group, or teammate..."
         workspaceEmptyMessage="Set up your workspace to see projects."
       />
     );
   }
+
+  const membership = await getWorkspaceMembershipForCurrentUser();
 
   const { data, error } = await supabase
     .from("projects")
@@ -36,10 +50,12 @@ export default async function ProjectsPage() {
       id,
       name,
       client,
+      client_id,
       description,
       status,
       created_at,
-      contributors ( name )
+      clients ( id, name ),
+      contributors ( id, name )
     `
     )
     .eq("workspace_id", activeWorkspaceId)
@@ -62,7 +78,28 @@ export default async function ProjectsPage() {
     );
   }
 
-  const rows = data ?? [];
+  let rows = data ?? [];
+
+  if (
+    isAssignedReviewerScope(
+      membership.workspacePermissionLevel,
+      membership.reviewerType,
+    ) &&
+    membership.userId &&
+    activeWorkspaceId
+  ) {
+    const allowedProjectIds = new Set(
+      await getAssignedReviewerProjectIds(
+        supabase,
+        activeWorkspaceId,
+        membership.userId,
+      ),
+    );
+    rows = rows.filter((row) =>
+      allowedProjectIds.has(String((row as Record<string, unknown>).id ?? "")),
+    );
+  }
+
   const teammateLabelOk =
     rows.length === 0 ||
     (rows[0] != null && Object.prototype.hasOwnProperty.call(rows[0], "contributors"));
@@ -70,16 +107,30 @@ export default async function ProjectsPage() {
     ? "Filter by project, group, or teammate..."
     : "Filter by project or group...";
 
-  function contributorNamesFromRow(r: Record<string, unknown>): string[] {
+  function contributorsFromRow(r: Record<string, unknown>): Project["contributors"] {
     const raw = r.contributors;
     if (!Array.isArray(raw)) return [];
-    return raw
-      .map((c) => String((c as Record<string, unknown>).name ?? "").trim())
-      .filter(Boolean);
+
+    const contributors: Project["contributors"] = [];
+    for (const c of raw) {
+      const o = c as Record<string, unknown>;
+      const id = String(o.id ?? "").trim();
+      const name = String(o.name ?? "").trim();
+      if (!id || !name) continue;
+      contributors.push({
+        id,
+        name,
+        email: null,
+        role: null,
+        avatarUrl: null,
+      });
+    }
+    return contributors;
   }
 
   const projects: Project[] = rows.map((row) => {
     const r = row as Record<string, unknown>;
+    const contributors = contributorsFromRow(r);
     const descRaw = r.description;
     const description =
       descRaw == null
@@ -88,12 +139,10 @@ export default async function ProjectsPage() {
           ? String(descRaw).trim()
           : null;
     const clientRaw = r.client;
-    const client =
-      clientRaw == null
-        ? null
-        : String(clientRaw).trim().length > 0
-          ? String(clientRaw).trim()
-          : null;
+    const client = resolveClientDisplayName(
+      clientRaw == null ? null : String(clientRaw),
+      r.clients,
+    );
     return {
       id: String(r.id),
       name: String(r.name ?? ""),
@@ -101,7 +150,8 @@ export default async function ProjectsPage() {
       description,
       status: normalizeStatus(r.status as string | undefined),
       created_at: String(r.created_at ?? ""),
-      contributor_names: contributorNamesFromRow(r)
+      contributors,
+      contributor_names: contributors.map((c) => c.name),
     };
   });
 
@@ -112,20 +162,27 @@ export default async function ProjectsPage() {
   };
 
   const reviewCounts: Record<string, number> = {};
+  const reviewBreakdowns: Record<string, ProjectReviewStatusBreakdown> = {};
 
-  // TODO: when a `reviews` table (with `project_id` → `projects.id`) is migrated, replace this
-  // with an efficient count query or RPC instead of fetching all rows.
   const { data: reviewRows, error: reviewsError } = await supabase
     .from("reviews")
-    .select("project_id, projects!inner(workspace_id)")
+    .select("project_id, status, projects!inner(workspace_id)")
     .eq("projects.workspace_id", activeWorkspaceId);
 
   if (!reviewsError && reviewRows) {
+    const visibleProjectIds = new Set(projects.map((project) => project.id));
+
     for (const row of reviewRows) {
-      const pid = String((row as { project_id?: string }).project_id ?? "");
-      if (pid) {
-        reviewCounts[pid] = (reviewCounts[pid] ?? 0) + 1;
-      }
+      const r = row as { project_id?: string; status?: string | null };
+      const pid = String(r.project_id ?? "");
+      if (!pid || !visibleProjectIds.has(pid)) continue;
+
+      reviewCounts[pid] = (reviewCounts[pid] ?? 0) + 1;
+
+      const breakdown = reviewBreakdowns[pid] ?? emptyProjectReviewStatusBreakdown();
+      const bucket = bucketReviewStatusForProjectCard(r.status);
+      breakdown[bucket] += 1;
+      reviewBreakdowns[pid] = breakdown;
     }
   }
 
@@ -133,6 +190,7 @@ export default async function ProjectsPage() {
     <ProjectsView
       grouped={grouped}
       reviewCounts={reviewCounts}
+      reviewBreakdowns={reviewBreakdowns}
       searchPlaceholder={searchPlaceholder}
     />
   );

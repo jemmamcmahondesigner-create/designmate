@@ -54,6 +54,15 @@ export function ActivityTab({
     return map;
   }, [artifacts]);
 
+  const artifactLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const artifact of artifacts) {
+      const label = artifact.label?.trim() || artifact.title?.trim() || artifact.id;
+      map.set(artifact.id, label);
+    }
+    return map;
+  }, [artifacts]);
+
   const artifactUrlByName = useMemo(() => {
     const map = new Map<string, string>();
     for (const artifact of artifacts) {
@@ -120,6 +129,28 @@ export function ActivityTab({
         }
 
         const payload = (event.payload ?? {}) as Record<string, unknown>;
+        const selectedIds = Array.isArray(payload.selected_artifact_ids)
+          ? payload.selected_artifact_ids.map((id) => String(id).trim()).filter(Boolean)
+          : [];
+        const hasSelectedNames = Array.isArray(payload.selected_artifact_names) &&
+          payload.selected_artifact_names.some((name) => String(name).trim());
+        if (selectedIds.length > 0 && !hasSelectedNames) {
+          const selectedNames = selectedIds
+            .map((id) => artifactLabelById.get(id)?.trim() || "")
+            .filter(Boolean);
+          if (selectedNames.length > 0) {
+            return [
+              {
+                ...event,
+                payload: {
+                  ...payload,
+                  selected_artifact_names: selectedNames,
+                },
+              },
+            ];
+          }
+        }
+
         const approvedNames = Array.isArray(payload.approved_artifact_names)
           ? payload.approved_artifact_names.map((name) => String(name).trim()).filter(Boolean)
           : [];
@@ -158,7 +189,7 @@ export function ActivityTab({
 
         return [...splitApproved, ...splitChanges];
       }),
-    [events],
+    [events, artifactLabelById],
   );
 
   const scoped = useMemo(
@@ -332,6 +363,7 @@ export function ActivityTab({
                       onReviewClick={(id) => router.push(`/reviews/${id}`)}
                       onArtifactClick={onNavigateToArtifact}
                       artifactIdByName={artifactIdByName}
+                      artifactLabelById={artifactLabelById}
                       artifactUrlByName={artifactUrlByName}
                     />
                     {showDivider ? <TimelineDateDivider label={currentMonth} /> : null}

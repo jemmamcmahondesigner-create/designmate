@@ -1,5 +1,64 @@
 /* Artifact drawer detail rows — avatar stack (DS Table owns table chrome). */
 
+.artifactsTable {
+  overflow-x: auto;
+}
+
+/*
+ * Title is the only flexible column — must NOT use width: 100% (that steals the
+ * entire table in table-layout: fixed). Table .row td max-width: 0 enables ellipsis.
+ */
+.artifactsTable :global(table td:nth-child(2)),
+.artifactsTable :global(table th:nth-child(2)) {
+  min-width: 0;
+}
+
+/* Fixed / hug columns — override Table max-width: 0 so colgroup widths are honoured. */
+.artifactsTable :global(table td:nth-child(1)),
+.artifactsTable :global(table th:nth-child(1)),
+.artifactsTable :global(table td:nth-child(3)),
+.artifactsTable :global(table th:nth-child(3)),
+.artifactsTable :global(table td:nth-child(4)),
+.artifactsTable :global(table th:nth-child(4)),
+.artifactsTable :global(table td:nth-child(5)),
+.artifactsTable :global(table th:nth-child(5)),
+.artifactsTable :global(table td:nth-child(6)),
+.artifactsTable :global(table th:nth-child(6)) {
+  max-width: none;
+  white-space: nowrap;
+}
+
+.artifactsTable :global(table td:nth-child(1)),
+.artifactsTable :global(table th:nth-child(1)) {
+  min-width: 96px;
+}
+
+.artifactsTable :global(table td:nth-child(4)),
+.artifactsTable :global(table th:nth-child(4)) {
+  min-width: 128px;
+}
+
+.artifactsTable :global(table td:nth-child(5)),
+.artifactsTable :global(table th:nth-child(5)) {
+  min-width: 104px;
+}
+
+.artifactsTable [class*="cellPill"] {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.artifactsTable [class*="cellPill"] [class*="StatusPill_root"] {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.artifactsTable [class*="cellPill"] [class*="StatusPill_label"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
 .avatarGroup {
   display: inline-flex;
   flex-direction: row;
@@ -14,5 +73,16 @@
 }
 
 .avatarGroupItem:last-child {
+  margin-right: 0;
+}
+
+.decisionMakerAvatarRing {
+  display: inline-flex;
+  margin-right: -4px;
+  border-radius: 9999px;
+  box-shadow: 0 0 0 2px #d9a8dc;
+}
+
+.avatarGroup > .decisionMakerAvatarRing:last-child {
   margin-right: 0;
 }

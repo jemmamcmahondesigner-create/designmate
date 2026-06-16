@@ -18,6 +18,7 @@ import {
 import { useNewReviewDrawer } from "@/components/NewReviewDrawerProvider";
 import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
 import { canCreateReviews, CREATE_REVIEW_DENIED_TOOLTIP } from "@/lib/workspace/permissions";
+import { parseReviewDbStatus } from "@/lib/reviews/reviewStatusDisplay";
 import { STATUS_DISPLAY_LABELS } from "@/lib/reviews/reviewStatusDisplay";
 
 export type AllReviewsRow = {
@@ -34,6 +35,8 @@ export type AllReviewsRow = {
   description?: string | null;
   /** Review creator display name (`reviews.owner_display_name`). */
   owner_display_name: string | null;
+  /** Canonical contributors.id for creator avatar colour. */
+  creator_id?: string | null;
   feedback_count: number;
   change_request_count: number;
   contributor_names: string[];
@@ -61,13 +64,19 @@ type SectionPresentation = {
 };
 
 type StatusFilterKey =
+  | "draft"
   | "inReview"
   | "feedbackSubmitted"
   | "changesNeeded"
-  | "draft"
   | "paused"
-  | "approvedComplete"
+  | "approved"
+  | "complete"
   | "archived";
+
+type StatusFilterState = {
+  all: boolean;
+  statuses: Set<StatusFilterKey>;
+};
 
 const MAX_VISIBLE = 8;
 
@@ -100,33 +109,155 @@ const SECTIONS: SectionPresentation[] = [
 ];
 
 const STATUS_FILTER_STORAGE_KEY = "designtrace_reviews_filter_statuses";
-const STATUS_FILTER_KEYS: StatusFilterKey[] = [
+
+const SELECTABLE_STATUS_FILTER_KEYS: StatusFilterKey[] = [
+  "draft",
   "inReview",
   "feedbackSubmitted",
   "changesNeeded",
-  "draft",
   "paused",
-  "approvedComplete",
-  "archived",
+  "approved",
+  "complete",
 ];
 
 const FILTER_DEFINITIONS: Array<{
   key: StatusFilterKey;
   label: string;
-  group: "active" | "closed";
+  disabled?: boolean;
 }> = [
-  { key: "inReview", label: STATUS_DISPLAY_LABELS["in-review"], group: "active" },
-  { key: "feedbackSubmitted", label: STATUS_DISPLAY_LABELS["feedback-submitted"], group: "active" },
-  { key: "changesNeeded", label: STATUS_DISPLAY_LABELS["needs-changes"], group: "active" },
-  { key: "draft", label: STATUS_DISPLAY_LABELS.draft, group: "active" },
-  { key: "paused", label: STATUS_DISPLAY_LABELS.paused, group: "active" },
-  { key: "approvedComplete", label: "Approved/Complete", group: "closed" },
-  { key: "archived", label: "Archived", group: "closed" },
+  { key: "draft", label: STATUS_DISPLAY_LABELS.draft },
+  { key: "inReview", label: STATUS_DISPLAY_LABELS["in-review"] },
+  { key: "feedbackSubmitted", label: STATUS_DISPLAY_LABELS["feedback-submitted"] },
+  { key: "changesNeeded", label: STATUS_DISPLAY_LABELS["needs-changes"] },
+  { key: "paused", label: STATUS_DISPLAY_LABELS.paused },
+  { key: "approved", label: STATUS_DISPLAY_LABELS.approved },
+  { key: "complete", label: STATUS_DISPLAY_LABELS.complete },
+  { key: "archived", label: "Archived", disabled: true },
 ];
+
+const DEFAULT_STATUS_FILTER: StatusFilterState = {
+  all: true,
+  statuses: new Set(),
+};
+
+function isSelectableStatusFilterKey(value: string): value is StatusFilterKey {
+  return SELECTABLE_STATUS_FILTER_KEYS.includes(value as StatusFilterKey);
+}
+
+function statusFiltersEqual(a: StatusFilterState, b: StatusFilterState) {
+  if (a.all !== b.all) return false;
+  if (a.statuses.size !== b.statuses.size) return false;
+  for (const key of a.statuses) {
+    if (!b.statuses.has(key)) return false;
+  }
+  return true;
+}
+
+function cloneStatusFilter(state: StatusFilterState): StatusFilterState {
+  return {
+    all: state.all,
+    statuses: new Set(state.statuses),
+  };
+}
+
+function migrateLegacyStatusFilterKeys(values: string[]): Set<StatusFilterKey> {
+  const next = new Set<StatusFilterKey>();
+  for (const value of values) {
+    if (value === "approvedComplete") {
+      next.add("approved");
+      next.add("complete");
+      continue;
+    }
+    if (isSelectableStatusFilterKey(value)) {
+      next.add(value);
+    }
+  }
+  return next;
+}
+
+function parseStoredStatusFilter(raw: string | null): StatusFilterState {
+  if (!raw) return cloneStatusFilter(DEFAULT_STATUS_FILTER);
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && "all" in parsed) {
+      const record = parsed as { all?: unknown; statuses?: unknown };
+      const statuses = Array.isArray(record.statuses)
+        ? migrateLegacyStatusFilterKeys(record.statuses.map((value) => String(value)))
+        : new Set<StatusFilterKey>();
+      if (record.all === true) {
+        return { all: true, statuses: new Set() };
+      }
+      return { all: false, statuses };
+    }
+    if (Array.isArray(parsed)) {
+      const legacy = parsed.map((value) => String(value));
+      const migrated = migrateLegacyStatusFilterKeys(legacy);
+      if (
+        legacy.includes("approvedComplete") &&
+        migrated.size >= SELECTABLE_STATUS_FILTER_KEYS.length - 1
+      ) {
+        return cloneStatusFilter(DEFAULT_STATUS_FILTER);
+      }
+      if (migrated.size === SELECTABLE_STATUS_FILTER_KEYS.length) {
+        return cloneStatusFilter(DEFAULT_STATUS_FILTER);
+      }
+      return { all: false, statuses: migrated };
+    }
+  } catch {
+    // Fall through to default.
+  }
+  return cloneStatusFilter(DEFAULT_STATUS_FILTER);
+}
+
+function serializeStatusFilter(state: StatusFilterState): string {
+  return JSON.stringify({
+    all: state.all,
+    statuses: Array.from(state.statuses),
+  });
+}
+
+function setStatusFilterAll(checked: boolean): StatusFilterState {
+  if (checked) {
+    return cloneStatusFilter(DEFAULT_STATUS_FILTER);
+  }
+  return { all: false, statuses: new Set() };
+}
+
+function setStatusFilterItem(
+  state: StatusFilterState,
+  key: StatusFilterKey,
+  checked: boolean,
+): StatusFilterState {
+  if (key === "archived") return state;
+
+  if (state.all) {
+    if (!checked) {
+      const nextStatuses = new Set(
+        SELECTABLE_STATUS_FILTER_KEYS.filter((item) => item !== key),
+      );
+      return { all: false, statuses: nextStatuses };
+    }
+    return { all: false, statuses: new Set([key]) };
+  }
+
+  const nextStatuses = new Set(state.statuses);
+  if (checked) nextStatuses.add(key);
+  else nextStatuses.delete(key);
+
+  if (nextStatuses.size === SELECTABLE_STATUS_FILTER_KEYS.length) {
+    return cloneStatusFilter(DEFAULT_STATUS_FILTER);
+  }
+  return { all: false, statuses: nextStatuses };
+}
 
 function accordionStorageKey(sectionId: SectionKey) {
   return `designtrace_accordion_${sectionId}`;
 }
+
+const TEXT_DISABLED = "var(--text-disabled, #c9c0b4)";
+const ICON_DISABLED = "var(--text-disabled, #c9c0b4)";
+const EMPTY_SECTION_TOOLTIP = "No reviews currently exist.";
+const FILTER_DISABLED_TOOLTIP = "There are no available reviews to filter.";
 
 function readStoredBoolean(key: string, fallback: boolean) {
   if (typeof window === "undefined") return fallback;
@@ -151,36 +282,8 @@ function writeStoredBoolean(key: string, value: boolean) {
   }
 }
 
-function statusFilterKeyForReview(status: string): StatusFilterKey {
-  const normalized = status.trim().toLowerCase();
-  if (normalized === "archived") return "archived";
-  if (normalized === "approved" || normalized === "complete") return "approvedComplete";
-  if (normalized === "feedback-submitted") return "feedbackSubmitted";
-  if (normalized === "needs-changes" || normalized === "changes-needed") {
-    return "changesNeeded";
-  }
-  if (normalized === "draft") return "draft";
-  if (normalized === "paused") return "paused";
-  return "inReview";
-}
-
 function toReviewStatus(status: string): ReviewStatus {
-  const normalized = status.trim().toLowerCase();
-  const allowed: ReviewStatus[] = [
-    "draft",
-    "in-review",
-    "feedback-submitted",
-    "paused",
-    "complete",
-    "approved",
-    "needs-changes",
-    "changes-needed",
-    "blocked",
-    "archived"
-  ];
-  return allowed.includes(normalized as ReviewStatus)
-    ? (normalized as ReviewStatus)
-    : "in-review";
+  return parseReviewDbStatus(status) as ReviewStatus;
 }
 
 /** Same accordion header pattern as `ProjectsView` (`AccordionHeaderRow`), with review count badge. */
@@ -202,8 +305,12 @@ function AccordionHeaderRow({
   trailingBadgeLabel?: string;
 }) {
   let iconColor: string;
-  const labelColor = disabled ? "#998c82" : open ? "#6b1e2e" : "#6b5e55";
-  iconColor = disabled ? "#998c82" : "#6b5e55";
+  const labelColor = disabled
+    ? TEXT_DISABLED
+    : open
+      ? "#6b1e2e"
+      : "#6b5e55";
+  iconColor = disabled ? ICON_DISABLED : "#6b5e55";
 
   const chevronEl = open ? (
     <ChevronUp size={12} weight="fill" color={iconColor} />
@@ -220,18 +327,20 @@ function AccordionHeaderRow({
         {chevronEl}
       </span>
       <span
-        className="ml-2 shrink-0 text-[18px] font-semibold leading-[1.5]"
-        style={{ color: labelColor }}
+        className="ml-2 shrink-0 text-[18px] leading-[1.5]"
+        style={{ color: labelColor, fontWeight: 700 }}
       >
         {title}
       </span>
-      <span className="ml-3 inline-flex shrink-0 items-center self-center">
-        <NotificationBadge
-          count={count}
-          sentiment="brand"
-          prominence={open ? "high" : "low"}
-        />
-      </span>
+      {count > 0 ? (
+        <span className="ml-3 inline-flex shrink-0 items-center self-center">
+          <NotificationBadge
+            count={count}
+            sentiment={disabled ? "disabled" : "brand"}
+            prominence={disabled || !open ? "low" : "high"}
+          />
+        </span>
+      ) : null}
       <Divider className="ml-3 min-w-0 flex-1" />
     </>
   );
@@ -256,8 +365,20 @@ function AccordionHeaderRow({
 
   if (disabled) {
     return (
-      <div className="flex w-full items-center gap-2" aria-disabled="true">
-        <div className="flex w-full cursor-default items-center">{rowInner}</div>
+      <div className="flex w-full items-center gap-2">
+        <Tooltip
+          label={EMPTY_SECTION_TOOLTIP}
+          position="top"
+          fullWidth
+          className="min-w-0 flex-1"
+        >
+          <div
+            className="flex w-full cursor-default items-center"
+            aria-disabled="true"
+          >
+            {rowInner}
+          </div>
+        </Tooltip>
         {infoButton}
       </div>
     );
@@ -287,21 +408,36 @@ function reviewMatchesQuery(row: AllReviewsRow, q: string): boolean {
   return hay.includes(q);
 }
 
-function buildVisibleStatusSet(selectedStatuses: Set<StatusFilterKey>) {
+function buildVisibleStatusSet(filter: StatusFilterState) {
+  if (filter.all) {
+    return new Set([
+      "in-review",
+      "feedback-submitted",
+      "needs-changes",
+      "changes-needed",
+      "draft",
+      "paused",
+      "approved",
+      "complete",
+      "archived",
+      "blocked",
+      "closed",
+      "direction-approved",
+    ]);
+  }
+
   const visible = new Set<string>();
-  if (selectedStatuses.has("inReview")) visible.add("in-review");
-  if (selectedStatuses.has("feedbackSubmitted")) visible.add("feedback-submitted");
-  if (selectedStatuses.has("changesNeeded")) {
+  if (filter.statuses.has("inReview")) visible.add("in-review");
+  if (filter.statuses.has("feedbackSubmitted")) visible.add("feedback-submitted");
+  if (filter.statuses.has("changesNeeded")) {
     visible.add("needs-changes");
     visible.add("changes-needed");
   }
-  if (selectedStatuses.has("draft")) visible.add("draft");
-  if (selectedStatuses.has("paused")) visible.add("paused");
-  if (selectedStatuses.has("approvedComplete")) {
-    visible.add("approved");
-    visible.add("complete");
-  }
-  if (selectedStatuses.has("archived")) visible.add("archived");
+  if (filter.statuses.has("draft")) visible.add("draft");
+  if (filter.statuses.has("paused")) visible.add("paused");
+  if (filter.statuses.has("approved")) visible.add("approved");
+  if (filter.statuses.has("complete")) visible.add("complete");
+  if (filter.statuses.has("archived")) visible.add("archived");
   return visible;
 }
 
@@ -315,8 +451,8 @@ export function AllReviewsView({
   const router = useRouter();
   const { openNewReview } = useNewReviewDrawer();
   const [searchQuery, setSearchQuery] = useState("");
-  const { permissionLevel } = useActiveWorkspacePermission();
-  const canCreateReview = canCreateReviews(permissionLevel);
+  const { workspacePermissionLevel } = useActiveWorkspacePermission();
+  const canCreateReview = canCreateReviews(workspacePermissionLevel);
   const filterButtonRef = useRef<HTMLDivElement | null>(null);
   const filterPanelRef = useRef<HTMLDivElement | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -337,16 +473,16 @@ export function AllReviewsView({
     critique: false,
     approve: false
   });
-  const [selectedStatuses, setSelectedStatuses] = useState<Set<StatusFilterKey>>(
-    () => new Set(STATUS_FILTER_KEYS)
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<StatusFilterState>(
+    () => cloneStatusFilter(DEFAULT_STATUS_FILTER),
   );
-  const [draftSelectedStatuses, setDraftSelectedStatuses] = useState<Set<StatusFilterKey>>(
-    () => new Set(STATUS_FILTER_KEYS)
+  const [draftStatusFilter, setDraftStatusFilter] = useState<StatusFilterState>(
+    () => cloneStatusFilter(DEFAULT_STATUS_FILTER),
   );
 
   const activeFilterStatuses = useMemo(
-    () => buildVisibleStatusSet(selectedStatuses),
-    [selectedStatuses],
+    () => buildVisibleStatusSet(selectedStatusFilter),
+    [selectedStatusFilter],
   );
   const filteredGrouped = useMemo((): AllReviewsGroupedByType => {
     const q = searchQuery.trim().toLowerCase();
@@ -363,6 +499,16 @@ export function AllReviewsView({
     };
   }, [activeFilterStatuses, grouped, searchQuery]);
 
+  const totalReviewCount = useMemo(
+    () =>
+      grouped.align.length +
+      grouped.compare.length +
+      grouped.critique.length +
+      grouped.approve.length,
+    [grouped],
+  );
+  const filterDisabled = totalReviewCount === 0;
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     setOpenState({
@@ -371,23 +517,11 @@ export function AllReviewsView({
       approve: readStoredBoolean(accordionStorageKey("approve"), false),
       critique: readStoredBoolean(accordionStorageKey("critique"), false),
     });
-    try {
-      const storedFilters = window.localStorage.getItem(STATUS_FILTER_STORAGE_KEY);
-      if (!storedFilters) return;
-      const parsed = JSON.parse(storedFilters) as string[];
-      const nextSelected = new Set(
-        Array.isArray(parsed)
-          ? parsed.filter((value): value is StatusFilterKey =>
-              STATUS_FILTER_KEYS.includes(value as StatusFilterKey)
-            )
-          : STATUS_FILTER_KEYS
-      );
-      setSelectedStatuses(nextSelected);
-      setDraftSelectedStatuses(new Set(nextSelected));
-    } catch {
-      setSelectedStatuses(new Set(STATUS_FILTER_KEYS));
-      setDraftSelectedStatuses(new Set(STATUS_FILTER_KEYS));
-    }
+    const storedFilters = parseStoredStatusFilter(
+      window.localStorage.getItem(STATUS_FILTER_STORAGE_KEY),
+    );
+    setSelectedStatusFilter(storedFilters);
+    setDraftStatusFilter(cloneStatusFilter(storedFilters));
   }, []);
 
   useEffect(() => {
@@ -395,12 +529,12 @@ export function AllReviewsView({
     try {
       window.localStorage.setItem(
         STATUS_FILTER_STORAGE_KEY,
-        JSON.stringify(Array.from(selectedStatuses))
+        serializeStatusFilter(selectedStatusFilter),
       );
     } catch {
       // Ignore storage failures.
     }
-  }, [selectedStatuses]);
+  }, [selectedStatusFilter]);
 
   useEffect(() => {
     if (!filterOpen) return;
@@ -417,6 +551,12 @@ export function AllReviewsView({
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, [filterOpen]);
+
+  useEffect(() => {
+    if (filterDisabled && filterOpen) {
+      setFilterOpen(false);
+    }
+  }, [filterDisabled, filterOpen]);
 
   const pageHeaderPrimary = canCreateReview ? (
     <Button
@@ -445,41 +585,42 @@ export function AllReviewsView({
     </Tooltip>
   );
 
-  const selectedStatusCount = selectedStatuses.size;
-  const hiddenStatusCount = STATUS_FILTER_KEYS.length - selectedStatusCount;
-  const showInlineFilterBadge = hiddenStatusCount > 0;
-  const draftSelectedCount = draftSelectedStatuses.size;
-  const allDraftChecked = draftSelectedCount === STATUS_FILTER_KEYS.length;
+  const activeStatusFilterCount = selectedStatusFilter.all
+    ? 0
+    : selectedStatusFilter.statuses.size;
+  const showInlineFilterBadge = activeStatusFilterCount > 0;
+  const hasStatusFilter = !selectedStatusFilter.all;
+  const hasSearch = searchQuery.trim() !== "";
+  const draftSelectedCount = draftStatusFilter.all
+    ? 0
+    : draftStatusFilter.statuses.size;
+  const allDraftChecked = draftStatusFilter.all;
   const allDraftIndeterminate =
-    draftSelectedCount > 0 && draftSelectedCount < STATUS_FILTER_KEYS.length;
-  const isDraftAtDefault = draftSelectedCount === STATUS_FILTER_KEYS.length;
-  const isApplyEnabled = useMemo(() => {
-    if (draftSelectedStatuses.size !== selectedStatuses.size) return true;
-    for (const key of STATUS_FILTER_KEYS) {
-      if (draftSelectedStatuses.has(key) !== selectedStatuses.has(key)) return true;
-    }
-    return false;
-  }, [draftSelectedStatuses, selectedStatuses]);
+    !draftStatusFilter.all &&
+    draftSelectedCount > 0 &&
+    draftSelectedCount < SELECTABLE_STATUS_FILTER_KEYS.length;
+  const isDraftAtDefault = statusFiltersEqual(draftStatusFilter, DEFAULT_STATUS_FILTER);
+  const isApplyEnabled = useMemo(
+    () => !statusFiltersEqual(draftStatusFilter, selectedStatusFilter),
+    [draftStatusFilter, selectedStatusFilter],
+  );
 
   const statusFilterGroups = useMemo(
-    () =>
-      (["active", "closed"] as const).map((group) => ({
-        id: group,
-        heading: group === "active" ? "ACTIVE" : "CLOSED",
-        items: FILTER_DEFINITIONS.filter((item) => item.group === group).map((item) => ({
+    () => [
+      {
+        id: "statuses",
+        heading: "Statuses",
+        items: FILTER_DEFINITIONS.map((item) => ({
           id: item.key,
           label: item.label,
-          checked: draftSelectedStatuses.has(item.key),
+          disabled: item.disabled,
+          checked: !draftStatusFilter.all && draftStatusFilter.statuses.has(item.key),
           onChange: (checked: boolean) =>
-            setDraftSelectedStatuses((prev) => {
-              const next = new Set(prev);
-              if (checked) next.add(item.key);
-              else next.delete(item.key);
-              return next;
-            }),
+            setDraftStatusFilter((prev) => setStatusFilterItem(prev, item.key, checked)),
         })),
-      })),
-    [draftSelectedStatuses],
+      },
+    ],
+    [draftStatusFilter],
   );
 
   return (
@@ -525,32 +666,48 @@ export function AllReviewsView({
               className="max-w-xl text-[15px] font-normal leading-[1.65]"
               style={{ color: "#6b5e55" }}
             >
-              Here are all your reviews, organized by their review type
+              All workspace reviews organized by their type.
             </p>
           </div>
           <div ref={filterButtonRef} className="relative shrink-0">
             <div className="relative inline-flex">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                label="Filter"
-                icon="leading"
-                iconName="filter"
-                trailingContent={
-                  showInlineFilterBadge ? (
-                    <NotificationBadge
-                      count={hiddenStatusCount}
-                      sentiment="brand"
-                      prominence="high"
+              {filterDisabled ? (
+                <Tooltip label={FILTER_DISABLED_TOOLTIP} position="bottom">
+                  <span style={{ display: "inline-flex" }}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      label="Filter"
+                      icon="leading"
+                      iconName="filter"
+                      disabled
                     />
-                  ) : undefined
-                }
-                onClick={() => {
-                  setDraftSelectedStatuses(new Set(selectedStatuses));
-                  setFilterOpen((prev) => !prev);
-                }}
-              />
+                  </span>
+                </Tooltip>
+              ) : (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  label="Filter"
+                  icon="leading"
+                  iconName="filter"
+                  trailingContent={
+                    showInlineFilterBadge ? (
+                      <NotificationBadge
+                        count={activeStatusFilterCount}
+                        sentiment="brand"
+                        prominence="high"
+                      />
+                    ) : undefined
+                  }
+                  onClick={() => {
+                    setDraftStatusFilter(cloneStatusFilter(selectedStatusFilter));
+                    setFilterOpen((prev) => !prev);
+                  }}
+                />
+              )}
             </div>
             {filterOpen ? (
               <div
@@ -564,17 +721,17 @@ export function AllReviewsView({
                     checked: allDraftChecked,
                     indeterminate: allDraftIndeterminate,
                     onChange: (checked) => {
-                      setDraftSelectedStatuses(
-                        checked ? new Set(STATUS_FILTER_KEYS) : new Set<StatusFilterKey>(),
-                      );
+                      setDraftStatusFilter(setStatusFilterAll(checked));
                     },
                   }}
                   groups={statusFilterGroups}
                   resetDisabled={isDraftAtDefault}
-                  onReset={() => setDraftSelectedStatuses(new Set(STATUS_FILTER_KEYS))}
+                  onReset={() =>
+                    setDraftStatusFilter(cloneStatusFilter(DEFAULT_STATUS_FILTER))
+                  }
                   applyDisabled={!isApplyEnabled}
                   onApply={() => {
-                    setSelectedStatuses(new Set(draftSelectedStatuses));
+                    setSelectedStatusFilter(cloneStatusFilter(draftStatusFilter));
                     setFilterOpen(false);
                   }}
                   style={{ minWidth: 240 }}
@@ -587,9 +744,19 @@ export function AllReviewsView({
         <div className="flex flex-col">
           {SECTIONS.map((section) => {
             const rows = filteredGrouped[section.key];
-            if (rows.length === 0) return null;
+            const totalInSection = grouped[section.key].length;
+            const sectionDisabled =
+              !hasSearch && !hasStatusFilter && totalInSection === 0;
 
-            const open = openState[section.key];
+            if ((hasSearch || hasStatusFilter) && rows.length === 0) {
+              return null;
+            }
+
+            const open = sectionDisabled
+              ? false
+              : hasStatusFilter && rows.length > 0
+                ? true
+                : openState[section.key];
             const expanded = expandedState[section.key];
             const showToggle = rows.length > MAX_VISIBLE;
             const visibleRows = expanded ? rows : rows.slice(0, MAX_VISIBLE);
@@ -599,9 +766,9 @@ export function AllReviewsView({
                 <div className="pb-2 pt-1">
                   <AccordionHeaderRow
                     title={section.title}
-                    count={rows.length}
+                    count={sectionDisabled ? totalInSection : rows.length}
                     open={open}
-                    disabled={false}
+                    disabled={sectionDisabled}
                     description={section.description}
                     trailingBadgeLabel={section.trailingBadgeLabel}
                     onToggle={() =>
@@ -622,7 +789,7 @@ export function AllReviewsView({
 
                 {open ? (
                   <div className="pb-6">
-                    <div className="grid grid-cols-1 items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    <div className="grid grid-cols-1 items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3">
                       {visibleRows.map((review) => (
                         <ReviewCard
                           key={review.id}
@@ -635,6 +802,7 @@ export function AllReviewsView({
                             review.owner_display_name?.trim() ||
                             undefined
                           }
+                          creatorId={review.creator_id ?? undefined}
                           dateLabel={review.updated_ago}
                           dateTooltipIso={review.date_tooltip_iso ?? undefined}
                           breadcrumb={{

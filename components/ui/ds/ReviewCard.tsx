@@ -4,6 +4,7 @@ import { Avatar } from './Avatar';
 import { Tag } from './Tag';
 import { StatusPill, type StatusPillColor } from './StatusPill';
 import { Tooltip } from './Tooltip';
+import { TruncatedTooltip } from './TruncatedTooltip';
 import { Breadcrumb, type BreadcrumbSegment } from './Breadcrumb';
 import {
   normalizeReviewTypeKey,
@@ -20,6 +21,7 @@ export type ReviewStatus =
   | 'paused'
   | 'complete'
   | 'approved'
+  | 'direction-approved'
   | 'needs-changes'
   | 'changes-needed'
   | 'blocked'
@@ -40,6 +42,8 @@ export interface ReviewCardProps {
    * Prefer `creatorName`; `ownerName` must be the same person (`reviews.owner_display_name`), not the decision maker.
    */
   creatorName?: string;
+  /** Canonical `contributors.id` for deterministic avatar colour (from `reviews.creator_id`). */
+  creatorId?: string;
   creatorAvatarSrc?: string;
   /** Review creator display name when `creatorName` is not passed (not the decision maker). */
   ownerName?: string;
@@ -86,25 +90,6 @@ function norm(s: string | null | undefined) {
   return String(s ?? '').trim().toLowerCase();
 }
 
-function formatReviewCardDateTooltip(iso: string | null | undefined) {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  const dateLabel = date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-  const timeLabel = date
-    .toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    })
-    .toLowerCase();
-  return `Created ${dateLabel} at ${timeLabel}`;
-}
-
 function formatFeedbackChangeRequestCounts(
   status: ReviewStatus,
   feedbackCount: number,
@@ -141,11 +126,12 @@ export function ReviewCard({
   decisionStatus = null,
   requireDecisionMaker = true,
   creatorName,
+  creatorId,
   creatorAvatarSrc,
   ownerName,
   ownerAvatarSrc,
   dateLabel,
-  dateTooltipIso,
+  dateTooltipIso: _dateTooltipIso,
   clientName,
   breadcrumb = null,
   description,
@@ -185,7 +171,7 @@ export function ReviewCard({
   /** Avatar always reflects the review creator (submitter), never reviewers[0] / decision maker. */
   const metaName = creatorName ?? ownerName;
   const metaAvatarSrc = creatorAvatarSrc ?? ownerAvatarSrc;
-  const dateTooltipLabel = formatReviewCardDateTooltip(dateTooltipIso);
+  const metaContributorId = creatorId?.trim() || undefined;
   const hiddenReviewers = reviewers.length > 3 ? reviewers.slice(3) : [];
   const hiddenReviewerTooltipLabel = hiddenReviewers.map((reviewer) => reviewer.name).join('\n');
 
@@ -221,6 +207,8 @@ export function ReviewCard({
     showDetailCounts && (countText != null || iterationLabel || reviewers.length > 0);
   const showBreadcrumb = breadcrumb != null;
   const showClientTag = !showBreadcrumb && Boolean(clientName?.trim());
+  const descriptionText = description?.trim() ?? '';
+  const hasDescription = showDescription && descriptionText.length > 0;
 
   const breadcrumbSegments: BreadcrumbSegment[] | null = showBreadcrumb
     ? (() => {
@@ -247,7 +235,11 @@ export function ReviewCard({
       tabIndex={onClick ? 0 : undefined}
       onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
     >
-      <h3 className={titleClass}>{title}</h3>
+      <h3 className="m-0 min-w-0 w-full">
+        <TruncatedTooltip label={title} className={titleClass} fullWidth maxWidth={320}>
+          {title}
+        </TruncatedTooltip>
+      </h3>
 
       <div className={styles.meta}>
         {pill.tooltip ? (
@@ -281,105 +273,118 @@ export function ReviewCard({
             size="sm"
           />
         )}
-        {(metaName || metaAvatarSrc) && (
+        {(metaName || metaAvatarSrc || metaContributorId) && (
           <Avatar
             src={metaAvatarSrc}
             name={metaName?.trim() || undefined}
+            contributorId={metaContributorId}
             size="md"
+            style={
+              metaContributorId
+                ? getAvatarInlineStyle(metaContributorId)
+                : metaName
+                  ? getAvatarInlineStyle(metaName)
+                  : undefined
+            }
           />
         )}
         {dateLabel && (
-          dateTooltipLabel ? (
-            <Tooltip label={dateTooltipLabel} position="top">
-              <span className={styles.date}>{dateLabel}</span>
-            </Tooltip>
-          ) : (
-            <span className={styles.date}>{dateLabel}</span>
-          )
+          <TruncatedTooltip label={dateLabel} className={styles.date}>
+            {dateLabel}
+          </TruncatedTooltip>
         )}
       </div>
 
-      {showDescription && description ? (
-        <Tooltip label={description} position="top" maxWidth={320} fullWidth>
-          <p className={styles.description}>{description}</p>
-        </Tooltip>
-      ) : null}
-
-      {breadcrumbSegments ? (
-        <div
-          className={styles.breadcrumbRow}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-        >
-          <Breadcrumb segments={breadcrumbSegments} variant="compact" />
+      {hasDescription ? (
+        <div className={styles.descriptionSlot}>
+          <Tooltip label={descriptionText} position="top" maxWidth={320} fullWidth>
+            <p className={styles.description}>{descriptionText}</p>
+          </Tooltip>
         </div>
       ) : null}
 
-      {showClientTag ? (
-        <div className={styles.clientTagRow}>
-          <Tag label={clientName!.trim()} variant="default" size="sm" />
-        </div>
-      ) : null}
+      {breadcrumbSegments ||
+      showClientTag ||
+      hasArtifact ||
+      showFooterSection ? (
+        <div className={styles.cardBottom}>
+          {breadcrumbSegments ? (
+            <div
+              className={styles.breadcrumbRow}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <Breadcrumb segments={breadcrumbSegments} variant="compact" />
+            </div>
+          ) : null}
 
-      {hasArtifact ? (
-        <div className={artifactClass}>
-          <span className={styles.artifactText}>
-            📎&nbsp;&nbsp;{artifactLabel ?? 'Figma artifact attached'}
-          </span>
-        </div>
-      ) : null}
+          {showClientTag ? (
+            <div className={styles.clientTagRow}>
+              <Tag label={clientName!.trim()} variant="mushroom" size="sm" />
+            </div>
+          ) : null}
 
-      {showFooterSection ? (
-        <div style={{ marginTop: 'auto' }}>
-          {iterationLabel ? (
-            <div className={styles.iterationRow}>
-              <span className={styles.iterationSlot}>
-                <Tag label={iterationLabel} variant="default" size="sm" />
+          {hasArtifact ? (
+            <div className={artifactClass}>
+              <span className={styles.artifactText}>
+                📎&nbsp;&nbsp;{artifactLabel ?? 'Figma artifact attached'}
               </span>
             </div>
           ) : null}
-          {countText || reviewers.length > 0 ? (
-            <div className={footerClass}>
-              {countText ? <span className={countsClass}>{countText}</span> : <span />}
-              {reviewers.length > 0 ? (
-                <span className={styles.reviewersSlot}>
-                  {reviewers.slice(0, 3).map((reviewer, index) => (
-                    <span
-                      key={`${reviewer.name}-${index}`}
-                      className={styles.reviewerAvatar}
-                      style={{ zIndex: reviewers.length - index }}
-                    >
-                      <Avatar
-                        src={reviewer.avatarSrc ?? undefined}
-                        name={reviewer.name}
-                        contributorId={reviewer.id}
-                        size="md"
-                        style={
-                          reviewer.id
-                            ? getAvatarInlineStyle(reviewer.id, {
-                                ring: reviewerAvatarRing,
-                              })
-                            : undefined
-                        }
-                      />
+
+          {showFooterSection ? (
+            <div>
+              {iterationLabel ? (
+                <div className={styles.iterationRow}>
+                  <span className={styles.iterationSlot}>
+                    <Tag label={iterationLabel} variant="mushroom" size="sm" />
+                  </span>
+                </div>
+              ) : null}
+              {countText || reviewers.length > 0 ? (
+                <div className={footerClass}>
+                  {countText ? <span className={countsClass}>{countText}</span> : <span />}
+                  {reviewers.length > 0 ? (
+                    <span className={styles.reviewersSlot}>
+                      {reviewers.slice(0, 3).map((reviewer, index) => (
+                        <span
+                          key={`${reviewer.name}-${index}`}
+                          className={styles.reviewerAvatar}
+                          style={{ zIndex: reviewers.length - index }}
+                        >
+                          <Avatar
+                            src={reviewer.avatarSrc ?? undefined}
+                            name={reviewer.name}
+                            contributorId={reviewer.id}
+                            size="md"
+                            style={
+                              reviewer.id
+                                ? getAvatarInlineStyle(reviewer.id, {
+                                    ring: reviewerAvatarRing,
+                                  })
+                                : undefined
+                            }
+                          />
+                        </span>
+                      ))}
+                      {reviewers.length > 3 ? (
+                        <Tooltip
+                          label={hiddenReviewerTooltipLabel}
+                          position="top"
+                          maxWidth={320}
+                        >
+                          <span
+                            className={styles.reviewerOverflow}
+                            style={{ zIndex: 0 }}
+                            aria-label={`${reviewers.length - 3} more reviewers`}
+                          >
+                            +{reviewers.length - 3}
+                          </span>
+                        </Tooltip>
+                      ) : null}
                     </span>
-                  ))}
-                  {reviewers.length > 3 ? (
-                    <Tooltip
-                      label={hiddenReviewerTooltipLabel}
-                      position="top"
-                      maxWidth={320}
-                    >
-                      <span
-                        className={styles.reviewerOverflow}
-                        style={{ zIndex: 0 }}
-                        aria-label={`${reviewers.length - 3} more reviewers`}
-                      >
-                        +{reviewers.length - 3}
-                      </span>
-                    </Tooltip>
                   ) : null}
-                </span>
+                </div>
               ) : null}
             </div>
           ) : null}

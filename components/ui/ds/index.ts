@@ -96,6 +96,9 @@ export type { AvatarProps, AvatarSize } from './Avatar'
 export { Tooltip } from './Tooltip'
 export type { TooltipProps, TooltipPosition } from './Tooltip'
 
+export { TruncatedTooltip } from './TruncatedTooltip'
+export type { TruncatedTooltipProps } from './TruncatedTooltip'
+
 export { ButtonGroup } from './ButtonGroup'
 export type {
   ButtonGroupProps,
@@ -167,6 +170,13 @@ export type {
   TradeOffOption,
   TradeOffSentiment
 } from './TradeOffBlock'
+
+export { TradeoffCard } from './TradeoffCard'
+export type {
+  TradeoffCardProps,
+  TradeoffCardLayout,
+  TradeoffSeverity,
+} from './TradeoffCard'
 
 export { CommentThread } from './CommentThread'
 export type {

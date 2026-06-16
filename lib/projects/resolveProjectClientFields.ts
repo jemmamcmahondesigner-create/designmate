@@ -11,15 +11,21 @@ export type ProjectClientFields = {
  */
 export async function resolveProjectClientFields(
   supabase: SupabaseClient,
-  input: { clientId?: string | null; clientName?: string | null },
+  input: {
+    clientId?: string | null;
+    clientName?: string | null;
+    workspaceId?: string | null;
+  },
 ): Promise<ProjectClientFields> {
+  const workspaceId = input.workspaceId?.trim() || null;
   const clientId = input.clientId?.trim() || null;
+
   if (clientId) {
-    const { data, error } = await supabase
-      .from("clients")
-      .select("id, name")
-      .eq("id", clientId)
-      .maybeSingle();
+    let lookup = supabase.from("clients").select("id, name").eq("id", clientId);
+    if (workspaceId) {
+      lookup = lookup.eq("workspace_id", workspaceId);
+    }
+    const { data, error } = await lookup.maybeSingle();
 
     if (error) {
       console.error("clients lookup by id error:", error);
@@ -38,7 +44,11 @@ export async function resolveProjectClientFields(
   const clientName = input.clientName?.trim() || null;
   if (!clientName) return { client: null, client_id: null };
 
-  const { data: clientRows, error } = await supabase.from("clients").select("id, name");
+  let nameLookup = supabase.from("clients").select("id, name");
+  if (workspaceId) {
+    nameLookup = nameLookup.eq("workspace_id", workspaceId);
+  }
+  const { data: clientRows, error } = await nameLookup;
 
   if (error) {
     console.error("clients lookup error:", error);

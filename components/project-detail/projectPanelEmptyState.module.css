@@ -1,0 +1,46 @@
+.root {
+  box-sizing: border-box;
+  container-type: inline-size;
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 136px;
+  height: 136px;
+  padding: 24px 32px;
+  border: 1px solid #e4ddd3;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.surfaceWhite {
+  background: var(--surface-card-default, #ffffff);
+}
+
+.surfaceRecessed {
+  background: var(--surface-card-recessed, #f3efe9);
+}
+
+.sectionHeaderZone {
+  margin-bottom: 16px;
+  min-height: 32px;
+}
+
+.copy {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-tertiary, #998c82);
+  white-space: normal;
+}
+
+@media (min-width: 1024px) {
+  @container (min-width: 34rem) {
+    .copy {
+      white-space: nowrap;
+    }
+  }
+}

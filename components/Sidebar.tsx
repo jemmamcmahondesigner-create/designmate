@@ -26,7 +26,7 @@ export function Sidebar() {
   const [workspaceOptions, setWorkspaceOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [activeWorkspaceValue, setActiveWorkspaceValue] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const { permissionLevel: workspacePermissionLevel } = useActiveWorkspacePermission();
+  const { workspacePermissionLevel } = useActiveWorkspacePermission();
 
   const settingsPath = pathname.startsWith("/settings");
   const footerHighlight = settingsPath || settingsOpen;
@@ -37,9 +37,8 @@ export function Sidebar() {
 
     const loadProfile = async () => {
       const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const user = session?.user;
+        data: { user },
+      } = await supabase.auth.getUser();
 
       if (!isMounted.current) return;
       setAuthUser(user ?? null);
@@ -98,10 +97,31 @@ export function Sidebar() {
       }
 
       const devContributorId = window.localStorage.getItem(DEV_STORAGE_KEY);
-      let resolvedContributorId: string | null = null;
+      let avatarContributorId: string | null = null;
+
+      if (user?.id && activeWorkspaceId) {
+        const { data: contributorRows } = await supabase
+          .from("contributors")
+          .select("id, name, role")
+          .eq("user_id", user.id)
+          .eq("workspace_id", activeWorkspaceId)
+          .limit(1);
+
+        const workspaceContributor = contributorRows?.[0] ?? null;
+        if (workspaceContributor && typeof workspaceContributor === "object" && "id" in workspaceContributor) {
+          avatarContributorId =
+            String((workspaceContributor as { id?: string }).id ?? "").trim() || null;
+        }
+
+        if (!devContributorId && workspaceContributor) {
+          const name = String((workspaceContributor as Record<string, unknown>).name ?? "");
+          const role = String((workspaceContributor as Record<string, unknown>).role ?? "");
+          if (name.trim()) nextName = name.trim();
+          if (role.trim()) nextRole = role.trim();
+        }
+      }
 
       if (devContributorId) {
-        resolvedContributorId = devContributorId;
         const { data } = await supabase
           .from("contributors")
           .select("id, name, role")
@@ -112,31 +132,13 @@ export function Sidebar() {
         const role = data ? String((data as Record<string, unknown>).role ?? "") : "";
         if (name.trim()) nextName = name.trim();
         if (role.trim()) nextRole = role.trim();
-      } else if (user?.id) {
-        let contributorQuery = supabase
-          .from("contributors")
-          .select("id, name, role")
-          .eq("user_id", user.id);
-
-        if (activeWorkspaceId) {
-          contributorQuery = contributorQuery.eq("workspace_id", activeWorkspaceId);
-        }
-
-        const { data } = await contributorQuery.maybeSingle();
-        const name = data ? String((data as Record<string, unknown>).name ?? "") : "";
-        const role = data ? String((data as Record<string, unknown>).role ?? "") : "";
-        if (data && typeof data === "object" && "id" in data) {
-          resolvedContributorId = String((data as { id?: string }).id ?? "").trim() || null;
-        }
-        if (name.trim()) nextName = name.trim();
-        if (role.trim()) nextRole = role.trim();
       }
 
       if (!isMounted.current) return;
 
       setDisplayName(nextName);
       setRoleLabel(nextRole);
-      setContributorId(resolvedContributorId);
+      setContributorId(avatarContributorId);
     };
 
     void loadProfile();
@@ -160,7 +162,7 @@ export function Sidebar() {
       subscription.unsubscribe();
       window.removeEventListener("storage", onStorage);
     };
-  }, [supabase]);
+  }, [pathname, supabase]);
 
   useEffect(() => {
     setSettingsOpen(false);

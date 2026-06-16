@@ -519,7 +519,7 @@ export function SubmitFeedbackDrawer({
           }}
         >
           <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
-            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "#6b1e2e" }}>
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#6b1e2e" }}>
               {headerTitle}
             </h2>
             <StatusPill

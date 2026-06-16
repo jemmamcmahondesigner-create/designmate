@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Avatar } from './Avatar';
 import { Button } from './Button';
 import { Icon } from './Icon';
-import { Tag } from './Tag';
+import { Tag, type TagVariant } from './Tag';
 import { Tooltip } from './Tooltip';
 import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
 import styles from './CommentThread.module.css';
@@ -67,6 +67,8 @@ export interface CommentThreadProps {
   body?: string;
   /** Option/artifact tags shown below the body */
   options?: CommentOption[];
+  /** Tag styling for option/artifact chips (compare preferred option uses aqua). */
+  optionTagVariant?: TagVariant;
   /** Nested reply — shown in with-reply type */
   reply?: CommentReply;
   replies?: Array<{
@@ -95,6 +97,7 @@ export function CommentThread({
   timestamp,
   body,
   options = [],
+  optionTagVariant = 'brand',
   reply,
   replies = [],
   onReply,
@@ -219,14 +222,19 @@ export function CommentThread({
       {/* ── Option tags ── */}
       {options.length > 0 && (isFeedback || isWithReply || isDecision) && (
         <div className={styles.options}>
-          {options.map((opt, i) => (
-            <Tag
-              key={i}
-              label={opt.label}
-              variant="brand"
-              size="sm"
-            />
-          ))}
+          {options.map((opt, i) => {
+            const tag = (
+              <Tag label={opt.label} variant={optionTagVariant} size="sm" />
+            );
+            if (optionTagVariant === 'aqua') {
+              return (
+                <Tooltip key={i} label="Preferred Option" position="top">
+                  <span className="inline-flex">{tag}</span>
+                </Tooltip>
+              );
+            }
+            return <span key={i} className="inline-flex">{tag}</span>;
+          })}
         </div>
       )}
 
@@ -238,8 +246,7 @@ export function CommentThread({
               key={`${entry.authorName}-${entry.timestamp}-${idx}`}
               className="rounded-[4px] bg-[#f3efe9] p-3 flex gap-[10px] items-start"
             >
-              <div className="flex flex-col gap-1 flex-1 min-w-0">
-                <p className="text-[14px] text-[#2e1c1c] break-words m-0">{entry.text}</p>
+              <div className="flex flex-col gap-2 flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <Avatar
                     name={entry.authorName}
@@ -254,13 +261,13 @@ export function CommentThread({
                   <span className="text-[12px] text-[#998c82]">·</span>
                   <span className="text-[12px] text-[#998c82]">{entry.timestamp}</span>
                 </div>
+                <p className="text-[13px] text-[#2e1c1c] break-words m-0">{entry.text}</p>
               </div>
             </div>
           ))}
           {isWithReply && reply && (
             <div className="rounded-[4px] bg-[#f3efe9] p-3 flex gap-[10px] items-start">
-              <div className="flex flex-col gap-1 flex-1 min-w-0">
-                <p className="text-[14px] text-[#2e1c1c] break-words m-0">{reply.body}</p>
+              <div className="flex flex-col gap-2 flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <Avatar
                     src={reply.authorAvatarSrc}
@@ -272,6 +279,7 @@ export function CommentThread({
                   <span className="text-[12px] text-[#998c82]">·</span>
                   <span className="text-[12px] text-[#998c82]">{reply.timestamp}</span>
                 </div>
+                <p className="text-[13px] text-[#2e1c1c] break-words m-0">{reply.body}</p>
               </div>
             </div>
           )}

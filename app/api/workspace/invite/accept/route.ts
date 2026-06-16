@@ -65,6 +65,7 @@ export async function POST(request: Request) {
       workspace_id: invite.workspace_id,
       user_id: user.id,
       role: memberRole,
+      permission_level: permissionLevel,
       status: "active",
       invite_email: invite.email,
     });

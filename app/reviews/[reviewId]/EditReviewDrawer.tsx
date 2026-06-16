@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { logEditReviewSaveEventsAction } from "@/app/reviews/[reviewId]/actions";
 import { AddLinkModal } from "@/components/AddLinkModal";
+import { ArtifactCountIndicator } from "@/components/artifacts/ArtifactCountIndicator";
 import { UploadModal } from "@/components/UploadModal";
 import { useToast } from "@/components/Toast";
 import type { ArtifactModalInitialValues, ArtifactModalSavePayload } from "@/components/artifact-modals/artifactModalShared";
@@ -527,7 +528,6 @@ export function EditReviewDrawer({
               .from("review-artifacts")
               .upload(objectPath, artifact.file, { cacheControl: "3600", upsert: false });
             if (uploadError) {
-              setSaving(false);
               setError(uploadError.message);
               return;
             }
@@ -575,6 +575,18 @@ export function EditReviewDrawer({
           id: artifact.localKey,
           title: artifact.title,
           linkUrl: artifact.kind === "link" ? artifact.linkUrl : null,
+        }));
+
+      const addedArtifacts = artifacts
+        .filter(
+          (artifact) =>
+            !initialSnapshotRef.current.artifacts.some(
+              (initialArtifact) => initialArtifact.localKey === artifact.localKey,
+            ),
+        )
+        .map((artifact) => ({
+          title: artifact.title.trim() || "Artifact",
+          iterationLabel: artifact.iterationLabel.trim() || "v1",
         }));
 
       const artifactDescriptionEdits = artifacts.flatMap((artifact) => {
@@ -667,31 +679,7 @@ export function EditReviewDrawer({
         .eq("id", reviewId);
 
       if (reviewUpdateError) {
-        setSaving(false);
         setError(reviewUpdateError.message);
-        return;
-      }
-
-      const timelineResult = await logEditReviewSaveEventsAction({
-        reviewId,
-        projectId,
-        reviewTitle: title.trim(),
-        reviewType,
-        previousTitle: initialSnapshotRef.current.title,
-        newTitle: title.trim(),
-        previousFocus: initialSnapshotRef.current.focus,
-        newFocus: focus.trim(),
-        previousReviewType: initialSnapshotRef.current.reviewType,
-        newReviewType: reviewType,
-        reviewTypeLocked,
-        previousStatus: initialSnapshotRef.current.status,
-        newStatus: reviewStatus,
-        removedArtifacts,
-        artifactDescriptionEdits,
-      });
-      if (!timelineResult.success) {
-        setSaving(false);
-        setError(timelineResult.error ?? "Could not record activity log entries.");
         return;
       }
 
@@ -701,7 +689,6 @@ export function EditReviewDrawer({
           .select("artifact_id")
           .eq("review_id", reviewId);
         if (versionQueryError) {
-          setSaving(false);
           setError(versionQueryError.message);
           return;
         }
@@ -717,7 +704,6 @@ export function EditReviewDrawer({
           .delete()
           .eq("review_id", reviewId);
         if (deleteVersionsError) {
-          setSaving(false);
           setError(deleteVersionsError.message);
           return;
         }
@@ -736,7 +722,6 @@ export function EditReviewDrawer({
               })
               .eq("id", canonicalArtifactId);
             if (artifactUpdateError) {
-              setSaving(false);
               setError(artifactUpdateError.message);
               return;
             }
@@ -751,7 +736,6 @@ export function EditReviewDrawer({
               .select("id")
               .single();
             if (artifactInsertError || !insertedArtifact) {
-              setSaving(false);
               setError(artifactInsertError?.message ?? "Could not create artifact.");
               return;
             }
@@ -774,7 +758,6 @@ export function EditReviewDrawer({
             description: artifact.description.trim() || null,
           });
           if (insertVersionError) {
-            setSaving(false);
             setError(insertVersionError.message);
             return;
           }
@@ -794,9 +777,42 @@ export function EditReviewDrawer({
             .select("id", { count: "exact", head: true })
             .eq("artifact_id", artifactId);
           if ((count ?? 0) === 0) {
-            await supabase.from("artifacts").delete().eq("id", artifactId);
+            const { error: deleteArtifactError } = await supabase
+              .from("artifacts")
+              .delete()
+              .eq("id", artifactId);
+            if (deleteArtifactError) {
+              setError(deleteArtifactError.message);
+              return;
+            }
           }
         }
+      }
+
+      const timelineResult = await logEditReviewSaveEventsAction({
+        reviewId,
+        projectId,
+        reviewTitle: title.trim(),
+        reviewType,
+        previousTitle: initialSnapshotRef.current.title,
+        newTitle: title.trim(),
+        previousFocus: initialSnapshotRef.current.focus,
+        newFocus: focus.trim(),
+        previousReviewType: initialSnapshotRef.current.reviewType,
+        newReviewType: reviewType,
+        reviewTypeLocked,
+        previousStatus: initialSnapshotRef.current.status,
+        newStatus: reviewStatus,
+        removedArtifacts,
+        addedArtifacts,
+        artifactDescriptionEdits,
+      });
+      if (!timelineResult.success) {
+        console.error(
+          "[EditReviewDrawer] activity log failed:",
+          timelineResult.error,
+        );
+        showToast("Changes saved, but activity log could not be updated.");
       }
 
       const isReactivation =
@@ -813,14 +829,21 @@ export function EditReviewDrawer({
             router.push(`/reviews/${reviewId}?tab=activity`);
           },
         });
-        router.refresh();
       } else if (isCompleteSave) {
         showToast("Review marked as complete");
-        router.refresh();
-      } else {
-        onSaved?.();
+      } else if (timelineResult.success) {
+        showToast("Changes saved");
       }
-      onClose();
+
+      if (isReactivation) {
+        router.push(`/reviews/${reviewId}?tab=activity`);
+      }
+
+      onSaved?.();
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error ? saveError.message : "Could not save review.",
+      );
     } finally {
       setSaving(false);
     }
@@ -958,6 +981,7 @@ export function EditReviewDrawer({
                     setUploadModalOpen(true);
                   }}
                 />
+                <ArtifactCountIndicator count={artifacts.length} />
               </div>
             ) : (
               <p className="m-0 text-[12px] text-[#6b5e55]">

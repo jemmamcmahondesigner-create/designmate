@@ -116,12 +116,23 @@
 .mainNav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
   flex: 1 1 0;
   min-height: 0;
   width: 100%;
   background: #ffffff;
   box-sizing: border-box;
+}
+
+.mainNavTop {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mainNavSpacer {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .navRowLink {
@@ -206,7 +217,7 @@
 }
 
 .workspaceHeading {
-  padding: 8px 0 4px 20px;
+  padding: 0 12px 8px 16px;
   background: #ffffff;
   flex-shrink: 0;
 }

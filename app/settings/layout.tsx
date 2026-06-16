@@ -27,7 +27,7 @@ export default function SettingsLayout({
             overflowY: "auto",
             paddingLeft: 32,
             paddingRight: 32,
-            paddingTop: 16,
+            paddingTop: 32,
           }}
         >
           {children}

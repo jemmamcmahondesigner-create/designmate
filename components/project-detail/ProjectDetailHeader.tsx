@@ -34,7 +34,18 @@ import { getProjectSaveToastMessage } from "@/lib/projects/projectSaveToastMessa
 import { getProjectStatusMenuOptions } from "@/lib/projects/projectStatusTransitions";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
-import { canCreateReviews, CREATE_REVIEW_DENIED_TOOLTIP } from "@/lib/workspace/permissions";
+import { loadPendingAccessRequestClient } from "@/lib/accessRequests/loadPendingAccessRequest";
+import { formatAccessRequestSentTooltip } from "@/lib/accessRequests/formatAccessRequestSentTooltip";
+import { submitAccessRequestClient } from "@/lib/accessRequests/submitAccessRequestClient";
+import {
+  deriveIsProjectMember,
+  resolveHasProjectContributorRowClient,
+} from "@/lib/project-detail/resolveProjectMembershipClient";
+import {
+  canCreateReviews,
+  CREATE_REVIEW_DENIED_TOOLTIP,
+  normalizeWorkspacePermission,
+} from "@/lib/workspace/permissions";
 import type { ProjectProblem, ProjectStatus } from "@/types/project";
 import type { User } from "@/types/user";
 
@@ -81,7 +92,28 @@ export function ProjectDetailHeader({
   const pathname = usePathname();
   const { openNewReview } = useNewReviewDrawer();
   const { showToast } = useToast();
-  const { permissionLevel } = useActiveWorkspacePermission();
+  const {
+    workspacePermissionLevel,
+    userId: workspaceUserId,
+    workspacePermissionLoading,
+  } = useActiveWorkspacePermission();
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+
+  const [accessRequestSent, setAccessRequestSent] = useState(false);
+  const [accessRequestRecipientName, setAccessRequestRecipientName] = useState<
+    string | null
+  >(null);
+  const [accessRequestSentAt, setAccessRequestSentAt] = useState<string | null>(
+    null,
+  );
+  const [accessRequestSubmitting, setAccessRequestSubmitting] = useState(false);
+  const [hasProjectContributorRow, setHasProjectContributorRow] = useState<
+    boolean | null
+  >(null);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [requesterContributorId, setRequesterContributorId] = useState<
+    string | null
+  >(null);
 
   const [displayName, setDisplayName] = useState(projectName);
   const [displayClientLabel, setDisplayClientLabel] = useState(clientLabel);
@@ -108,6 +140,20 @@ export function ProjectDetailHeader({
     });
   }, [openNewReview, projectId, reviewSeed.projectProblems, reviewSeed.teammateOptions]);
 
+  const isProjectMember = useMemo(
+    () =>
+      deriveIsProjectMember(
+        workspacePermissionLevel,
+        hasProjectContributorRow,
+        workspacePermissionLoading,
+      ),
+    [
+      workspacePermissionLevel,
+      hasProjectContributorRow,
+      workspacePermissionLoading,
+    ],
+  );
+
   useEffect(() => {
     setDisplayName(projectName);
   }, [projectName]);
@@ -127,6 +173,87 @@ export function ProjectDetailHeader({
   useEffect(() => {
     setStatus(initialStatus);
   }, [initialStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const hasRow = await resolveHasProjectContributorRowClient(
+        supabase,
+        projectId,
+        workspaceUserId,
+      );
+
+      if (cancelled) return;
+      setHasProjectContributorRow(hasRow);
+
+      const { data: projectRow } = await supabase
+        .from("projects")
+        .select("workspace_id")
+        .eq("id", projectId)
+        .maybeSingle();
+      const resolvedWorkspaceId = String(
+        (projectRow as { workspace_id?: string | null } | null)?.workspace_id ?? "",
+      ).trim();
+      if (!resolvedWorkspaceId) {
+        setWorkspaceId(null);
+        return;
+      }
+      setWorkspaceId(resolvedWorkspaceId);
+
+      const { requesterContributorId: requesterId, pending } =
+        await loadPendingAccessRequestClient(supabase, {
+          workspaceId: resolvedWorkspaceId,
+          projectId,
+        });
+      if (cancelled) return;
+      setRequesterContributorId(requesterId);
+      if (pending) {
+        setAccessRequestSent(true);
+        setAccessRequestRecipientName(pending.recipientName);
+        setAccessRequestSentAt(pending.createdAt);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, supabase, workspaceUserId]);
+
+  const handleRequestAccess = useCallback(async () => {
+    if (
+      accessRequestSent ||
+      accessRequestSubmitting ||
+      !workspaceId ||
+      !requesterContributorId
+    ) {
+      return;
+    }
+
+    setAccessRequestSubmitting(true);
+    const result = await submitAccessRequestClient({
+      supabase,
+      projectId,
+      workspaceId,
+      requestedByContributorId: requesterContributorId,
+    });
+    setAccessRequestSubmitting(false);
+
+    if (!result.success) return;
+
+    showToast({ message: "Access request sent" });
+    setAccessRequestSent(true);
+    setAccessRequestRecipientName(result.recipientName);
+    setAccessRequestSentAt(new Date().toISOString());
+  }, [
+    accessRequestSent,
+    accessRequestSubmitting,
+    projectId,
+    requesterContributorId,
+    showToast,
+    supabase,
+    workspaceId,
+  ]);
 
   const closeAllMenus = useCallback(() => {
     setStatusMenuOpen(false);
@@ -348,8 +475,87 @@ export function ProjectDetailHeader({
   );
 
   const pill = projectStatusToPill(status);
-  const canCreateReview = canCreateReviews(permissionLevel);
+  const canCreateReview = canCreateReviews(workspacePermissionLevel);
   const isProjectComplete = status === "complete";
+  const showRequestAccessOrSent =
+    isProjectMember === false &&
+    !workspacePermissionLoading &&
+    normalizeWorkspacePermission(workspacePermissionLevel) === "reviewer";
+
+  const primaryActionSlot = useMemo(() => {
+    if (isProjectComplete) return null;
+
+    if (showRequestAccessOrSent) {
+      if (accessRequestSent) {
+        const tooltipLabel = formatAccessRequestSentTooltip(
+          accessRequestRecipientName,
+          accessRequestSentAt,
+        );
+        return (
+          <Tooltip label={tooltipLabel} position="bottom">
+            <span style={{ display: "inline-flex" }}>
+              <Button
+                variant="accent"
+                size="sm"
+                label="Request Sent"
+                disabled
+              />
+            </span>
+          </Tooltip>
+        );
+      }
+
+      return (
+        <Button
+          variant="accent"
+          size="sm"
+          label="Request Access"
+          disabled={accessRequestSubmitting || !requesterContributorId}
+          onClick={() => void handleRequestAccess()}
+        />
+      );
+    }
+
+    if (canCreateReview) {
+      return (
+        <Button
+          variant="primary"
+          size="sm"
+          label="Review"
+          icon="leading"
+          iconName="plus"
+          onClick={openReviewDrawer}
+        />
+      );
+    }
+
+    return (
+      <Tooltip label={CREATE_REVIEW_DENIED_TOOLTIP} position="bottom">
+        <span style={{ display: "inline-flex" }}>
+          <Button
+            variant="primary"
+            size="sm"
+            label="Review"
+            icon="leading"
+            iconName="plus"
+            disabled
+            onClick={openReviewDrawer}
+          />
+        </span>
+      </Tooltip>
+    );
+  }, [
+    accessRequestRecipientName,
+    accessRequestSent,
+    accessRequestSentAt,
+    accessRequestSubmitting,
+    canCreateReview,
+    handleRequestAccess,
+    isProjectComplete,
+    openReviewDrawer,
+    requesterContributorId,
+    showRequestAccessOrSent,
+  ]);
 
   return (
     <>
@@ -399,32 +605,7 @@ export function ProjectDetailHeader({
         ]}
         activeTab={activeTabIndex}
         onTabChange={onTabChange}
-        primaryActionSlot={
-          isProjectComplete ? null : canCreateReview ? (
-            <Button
-              variant="primary"
-              size="sm"
-              label="Review"
-              icon="leading"
-              iconName="plus"
-              onClick={openReviewDrawer}
-            />
-          ) : (
-            <Tooltip label={CREATE_REVIEW_DENIED_TOOLTIP} position="bottom">
-              <span style={{ display: "inline-flex" }}>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  label="Review"
-                  icon="leading"
-                  iconName="plus"
-                  disabled
-                  onClick={openReviewDrawer}
-                />
-              </span>
-            </Tooltip>
-          )
-        }
+        primaryActionSlot={primaryActionSlot}
         onKebab={() => {
           setKebabOpen((o) => !o);
           setStatusMenuOpen(false);
@@ -440,7 +621,6 @@ export function ProjectDetailHeader({
           >
             <MenuItem
               label="Edit project"
-              icon="edit"
               onClick={() => {
                 setKebabOpen(false);
                 setEditOpen(true);
@@ -449,7 +629,6 @@ export function ProjectDetailHeader({
             {!isProjectComplete ? (
               <MenuItem
                 label="Delete project"
-                icon="trash"
                 destructive
                 onClick={() => void deleteProject()}
               />

@@ -50,7 +50,7 @@ export interface DecisionCardProps {
   timestamp: string;
   decisionText: string;
   artifactTags?: string[];
-  /** Preference variant: concept name(s) the reviewer selected, rendered as brand Tags. */
+  /** Preference variant: concept name(s) the reviewer selected, rendered as aqua Tags. */
   selectedConcepts?: string[];
   changeRequests?: DecisionCardChangeRequestItem[];
   /** Greyed-out completed state for change request cards. */
@@ -175,7 +175,11 @@ export function DecisionCard({
   const completedCrKebabTooltip =
     'Reopen this review to manage change requests';
 
-  function renderArtifactTag(label: string, variant: 'brand' | 'neutral', key: string) {
+  function renderArtifactTag(
+    label: string,
+    variant: 'brand' | 'neutral' | 'aqua',
+    key: string,
+  ) {
     const href = resolveArtifactTagHref?.(label) ?? null;
     const tag = <Tag label={label} variant={variant} size="sm" />;
     if (!href) return <span key={key}>{tag}</span>;
@@ -574,7 +578,11 @@ export function DecisionCard({
                 {footerTags.map((label, index) =>
                   renderArtifactTag(
                     label,
-                    superseded || isPreferenceAmended ? 'neutral' : 'brand',
+                    superseded || isPreferenceAmended
+                      ? 'neutral'
+                      : isPreferenceVariant
+                        ? 'aqua'
+                        : 'brand',
                     `${label}-${index}`,
                   ),
                 )}

@@ -18,6 +18,7 @@ import { Button } from './Button';
 import { Checkbox } from './Checkbox';
 import { FilterPanel } from './FilterPanel';
 import { Icon, type IconName } from './Icon';
+import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
 import styles from './Menu.module.css';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -80,6 +81,8 @@ export interface MenuItemProps {
   /** Avatar variant — when provided, renders in place of the icon */
   avatarSrc?: string;
   avatarName?: string;
+  /** Contributor UUID for deterministic avatar colour in multi-select menus. */
+  avatarContributorId?: string;
   /** Render a leading checkbox (multi-select pattern) */
   checkbox?: boolean;
   /** Active / selected — blush bg, brand text, trailing check */
@@ -99,6 +102,7 @@ export function MenuItem({
   icon,
   avatarSrc,
   avatarName,
+  avatarContributorId,
   checkbox = false,
   active = false,
   destructive = false,
@@ -147,7 +151,17 @@ export function MenuItem({
 
       {hasAvatar ? (
         <span className={styles.itemAvatar} aria-hidden="true">
-          <Avatar src={avatarSrc} name={avatarName ?? label} size="md" />
+          <Avatar
+            src={avatarSrc}
+            name={avatarName ?? label}
+            contributorId={avatarContributorId}
+            size="md"
+            style={
+              avatarContributorId
+                ? getAvatarInlineStyle(avatarContributorId, { ring: true })
+                : undefined
+            }
+          />
         </span>
       ) : icon ? (
         <span
@@ -470,17 +484,17 @@ export function Menu({
   );
   const tagKeys = ['feedback', 'changeRequests', 'replies', 'notifications'] as const;
   const selectedReviewerIds = draftSections.people.reviewerIds;
-  const selectedTagCount = draftSections.tags.all
-    ? tagKeys.length
-    : tagKeys.filter((key) => draftSections.tags[key]).length;
-  const selectedPeopleCount = draftSections.people.all
-    ? reviewers.length
-    : selectedReviewerIds.length;
-  const tagsAllChecked = selectedTagCount === tagKeys.length;
-  const peopleAllChecked = reviewers.length === 0 ? draftSections.people.all : selectedPeopleCount === reviewers.length;
-  const tagsIndeterminate = selectedTagCount > 0 && selectedTagCount < tagKeys.length;
+  const selectedTagCount = tagKeys.filter((key) => draftSections.tags[key]).length;
+  const selectedPeopleCount = selectedReviewerIds.length;
+  const tagsAllChecked = draftSections.tags.all;
+  const peopleAllChecked = draftSections.people.all;
+  const tagsIndeterminate =
+    !draftSections.tags.all &&
+    selectedTagCount > 0 &&
+    selectedTagCount < tagKeys.length;
   const peopleIndeterminate =
     reviewers.length > 0 &&
+    !draftSections.people.all &&
     selectedPeopleCount > 0 &&
     selectedPeopleCount < reviewers.length;
   const appliedSections = sections ?? defaultSections;
@@ -538,11 +552,55 @@ export function Menu({
     checked: boolean
   ) {
     setDraftSections((prev) => {
+      if (prev.tags.all) {
+        if (checked) {
+          return {
+            ...prev,
+            tags: {
+              all: false,
+              feedback: key === 'feedback',
+              changeRequests: key === 'changeRequests',
+              replies: key === 'replies',
+              notifications: key === 'notifications',
+            },
+          };
+        }
+        const nextSelections = {
+          feedback: key !== 'feedback',
+          changeRequests: key !== 'changeRequests',
+          replies: key !== 'replies',
+          notifications: key !== 'notifications',
+        };
+        const nextSelectedCount = tagKeys.filter((tagKey) => nextSelections[tagKey]).length;
+        if (nextSelectedCount === tagKeys.length) {
+          return {
+            ...prev,
+            tags: {
+              all: true,
+              feedback: false,
+              changeRequests: false,
+              replies: false,
+              notifications: false,
+            },
+          };
+        }
+        return {
+          ...prev,
+          tags: {
+            all: false,
+            feedback: nextSelections.feedback,
+            changeRequests: nextSelections.changeRequests,
+            replies: nextSelections.replies,
+            notifications: nextSelections.notifications,
+          },
+        };
+      }
+
       const nextSelections = {
-        feedback: prev.tags.all ? true : prev.tags.feedback,
-        changeRequests: prev.tags.all ? true : prev.tags.changeRequests,
-        replies: prev.tags.all ? true : prev.tags.replies,
-        notifications: prev.tags.all ? true : prev.tags.notifications,
+        feedback: prev.tags.feedback,
+        changeRequests: prev.tags.changeRequests,
+        replies: prev.tags.replies,
+        notifications: prev.tags.notifications,
         [key]: checked,
       };
       const nextSelectedCount = tagKeys.filter((tagKey) => nextSelections[tagKey]).length;
@@ -610,25 +668,25 @@ export function Menu({
             {
               id: 'tags-feedback',
               label: 'Feedback',
-              checked: draftSections.tags.all || draftSections.tags.feedback,
+              checked: !draftSections.tags.all && draftSections.tags.feedback,
               onChange: (checked: boolean) => setIndividualTag('feedback', checked),
             },
             {
               id: 'tags-change-requests',
               label: 'Change Requests',
-              checked: draftSections.tags.all || draftSections.tags.changeRequests,
+              checked: !draftSections.tags.all && draftSections.tags.changeRequests,
               onChange: (checked: boolean) => setIndividualTag('changeRequests', checked),
             },
             {
               id: 'tags-replies',
               label: 'Replies',
-              checked: draftSections.tags.all || draftSections.tags.replies,
+              checked: !draftSections.tags.all && draftSections.tags.replies,
               onChange: (checked: boolean) => setIndividualTag('replies', checked),
             },
             {
               id: 'tags-notifications',
               label: 'Notifications',
-              checked: draftSections.tags.all || draftSections.tags.notifications,
+              checked: !draftSections.tags.all && draftSections.tags.notifications,
               onChange: (checked: boolean) => setIndividualTag('notifications', checked),
             },
           ],
@@ -646,14 +704,33 @@ export function Menu({
             id: reviewer.id,
             name: reviewer.name,
             initials: reviewer.initials,
-            checked: draftSections.people.all || selectedReviewerIds.includes(reviewer.id),
+            checked:
+              !draftSections.people.all && selectedReviewerIds.includes(reviewer.id),
             onChange: (checked: boolean) =>
               setDraftSections((prev) => {
                 const allReviewerIds = reviewers.map((item) => item.id);
-                const currentIds = prev.people.all ? allReviewerIds : prev.people.reviewerIds;
+                if (prev.people.all) {
+                  if (checked) {
+                    return {
+                      ...prev,
+                      people: { all: false, reviewerIds: [reviewer.id] },
+                    };
+                  }
+                  const nextIds = allReviewerIds.filter((idValue) => idValue !== reviewer.id);
+                  if (nextIds.length === reviewers.length) {
+                    return {
+                      ...prev,
+                      people: { all: true, reviewerIds: [] },
+                    };
+                  }
+                  return {
+                    ...prev,
+                    people: { all: false, reviewerIds: nextIds },
+                  };
+                }
                 const nextIds = checked
-                  ? Array.from(new Set([...currentIds, reviewer.id]))
-                  : currentIds.filter((idValue) => idValue !== reviewer.id);
+                  ? Array.from(new Set([...prev.people.reviewerIds, reviewer.id]))
+                  : prev.people.reviewerIds.filter((idValue) => idValue !== reviewer.id);
                 if (nextIds.length === reviewers.length) {
                   return {
                     ...prev,

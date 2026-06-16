@@ -127,6 +127,13 @@
   color: #7a5500;
 }
 
+/* mushroom — neutral group / client tag (StatusPill mushroom outline tokens) */
+.variant-mushroom {
+  background: #ffffff;
+  border-color: #e4ddd3;
+  color: #6b5e55;
+}
+
 /* aqua - surface/card/aqua bg, #b8dcf0 border, feedback/info/text */
 .variant-aqua {
   background: #e5f3f9;

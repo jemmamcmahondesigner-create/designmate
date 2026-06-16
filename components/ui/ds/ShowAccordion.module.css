@@ -11,6 +11,10 @@
   padding: 4px 0;
 }
 
+.rootNoLines {
+  justify-content: center;
+}
+
 .line {
   flex: 1 0 0;
   height: 1px;

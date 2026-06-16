@@ -5,19 +5,21 @@
 /* ─── Number badge ──────────────────────────────────────────────────────────── */
 
 .badge {
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   height: 20px;
   min-width: 20px;
-  padding: 1px 7px 1px;
+  padding: 0 6px;
   border-radius: 50px;
   font-family: 'Plus Jakarta Sans', sans-serif;
   font-size: 10px;
   font-weight: 600;
-  line-height: 1.5;
-  letter-spacing: 1px;
-  text-transform: uppercase;
+  line-height: 1;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
   white-space: nowrap;
   flex-shrink: 0;
 }

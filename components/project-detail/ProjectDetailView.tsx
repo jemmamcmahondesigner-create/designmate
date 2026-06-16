@@ -9,8 +9,7 @@ import {
   useRef,
   useState
 } from "react";
-import { ChevronDown, ChevronUp } from "@/lib/phosphor";
-import { Button, NotificationBadge, ReviewCard, Tooltip } from "@/components/ui/ds";
+import { Button, NotificationBadge, ReviewCard } from "@/components/ui/ds";
 import { useNewReviewDrawer } from "@/components/NewReviewDrawerProvider";
 import type {
   ProjectContributor,
@@ -18,7 +17,8 @@ import type {
   ProjectReference,
   ProjectStatus
 } from "@/types/project";
-import type { ReviewCardData, ReviewDbStatus, ReviewType } from "@/types/review";
+import { parseReviewDbStatus, sortReviewCardsForProjectSidebar } from "@/lib/reviews/reviewStatusDisplay";
+import type { ReviewCardData, ReviewType } from "@/types/review";
 import type { User } from "@/types/user";
 import { ProjectDescriptionField } from "@/components/project-detail/ProjectDescriptionField";
 import { ProjectDetailHeader } from "@/components/project-detail/ProjectDetailHeader";
@@ -31,59 +31,41 @@ import { formatDistanceToNow } from "@/lib/formatDistanceToNow";
 import {
   buildReviewCardReviewers,
   fetchReviewCardMeta,
+  resolveReviewCardCreatorId,
 } from "@/lib/reviews/fetchProjectReviews";
+import { resolveRequesterContributorId } from "@/lib/accessRequests/loadPendingAccessRequest";
+import { readDevImpersonationContributorIdFromBrowser } from "@/lib/auth/resolveEffectiveContributor";
 import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
-import { canCreateReviews, CREATE_REVIEW_DENIED_TOOLTIP } from "@/lib/workspace/permissions";
+import {
+  deriveIsProjectMember,
+  resolveHasProjectContributorRowClient,
+} from "@/lib/project-detail/resolveProjectMembershipClient";
+import { loadProjectPendingAccessRequestSummary } from "@/lib/accessRequests/loadPendingAccessRequestSummaries";
+import {
+  canCreateReviews,
+  isAssignedReviewerScope,
+  normalizeWorkspacePermission,
+} from "@/lib/workspace/permissions";
 import { TimelineTab } from "@/app/projects/[projectId]/TimelineTab";
 import { ArtifactsTab } from "@/components/project-detail/ArtifactsTab";
 import type { ProjectArtifactsTabPayload } from "@/lib/projects/loadProjectArtifactsTab";
+import panelEmptyStateStyles from "@/components/project-detail/projectPanelEmptyState.module.css";
 
 const sectionHeadingClass =
-  "text-[20px] font-semibold leading-[1.3] text-[#6b1e2e]";
+  "text-[20px] font-bold leading-[1.3] text-[#6b1e2e]";
 
 const sectionHeadingStyle = { letterSpacing: "-0.3px" as const };
 
-function reviewsAccordionStorageKey(projectId: string) {
-  return `designtrace_project_accordion_${projectId}_reviews`;
-}
+const REVIEWS_RHC_CLOSED_WIDTH = 48;
+const REVIEWS_RHC_STORAGE_KEY = "designtrace_project_reviews_rhc_open";
+const REVIEWS_RHC_OPEN_WIDTH = "clamp(360px, 34vw, 440px)";
 
-function readStoredBoolean(key: string, fallback: boolean) {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const stored = window.localStorage.getItem(key);
-    if (stored == null) return fallback;
-    const parsed = JSON.parse(stored) as boolean;
-    return typeof parsed === "boolean" ? parsed : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStoredBoolean(key: string, value: boolean) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Ignore storage failures.
-  }
-}
-
-function parseStatus(s: string): ReviewDbStatus {
-  const v = s.trim().toLowerCase();
-  const allowed: ReviewDbStatus[] = [
-    "draft",
-    "in-review",
-    "feedback-submitted",
-    "paused",
-    "complete",
-    "approved",
-    "needs-changes",
-    "changes-needed",
-    "blocked"
-  ];
-  if (allowed.includes(v as ReviewDbStatus)) return v as ReviewDbStatus;
-  return "in-review";
-}
+const reviewsRhcHeaderIconButtonStyle = {
+  width: 32,
+  height: 32,
+  padding: 0,
+  flexShrink: 0,
+} as const;
 
 function parseReviewType(raw: string | null | undefined): ReviewType {
   const s = String(raw ?? "").toLowerCase();
@@ -202,16 +184,34 @@ export function ProjectDetailView({
   const { openNewReview } = useNewReviewDrawer();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [reviews, setReviews] = useState<ReviewCardData[]>(initialReviews);
-  const [reviewsAccordionOpen, setReviewsAccordionOpen] = useState(true);
   const reviewsScrollRef = useRef<HTMLDivElement | null>(null);
   const [isReviewsScrolled, setIsReviewsScrolled] = useState(false);
+  const [reviewsRhcOpen, setReviewsRhcOpen] = useState(false);
+  const [reviewsRhcHydrated, setReviewsRhcHydrated] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
-  const { permissionLevel } = useActiveWorkspacePermission();
+  const {
+    workspacePermissionLevel,
+    reviewerType,
+    userId: workspaceUserId,
+    workspacePermissionLoading,
+  } = useActiveWorkspacePermission();
+  const [hasProjectContributorRow, setHasProjectContributorRow] = useState<
+    boolean | null
+  >(null);
+  const [pendingAccessRequestCount, setPendingAccessRequestCount] = useState(0);
+  const [pendingAccessRequesterNames, setPendingAccessRequesterNames] = useState<
+    string[]
+  >([]);
   const clientLabel = project.client?.trim() || "Unassigned";
   const isProjectComplete = project.status === "complete";
   const descriptionText = project.description?.trim() ?? "";
   const descriptionPlaceholder =
     "Add a short overview of goals, scope, and success criteria…";
+
+  const sortedReviews = useMemo(
+    () => sortReviewCardsForProjectSidebar(reviews),
+    [reviews],
+  );
 
   const reviewSeed = useMemo(
     () => ({
@@ -221,20 +221,109 @@ export function ProjectDetailView({
     [initialProblems, initialContributors]
   );
 
+  const isProjectMember = useMemo(
+    () =>
+      deriveIsProjectMember(
+        workspacePermissionLevel,
+        hasProjectContributorRow,
+        workspacePermissionLoading,
+      ),
+    [
+      workspacePermissionLevel,
+      hasProjectContributorRow,
+      workspacePermissionLoading,
+    ],
+  );
+
+  const reviewerContentReadOnly = useMemo(
+    () =>
+      normalizeWorkspacePermission(workspacePermissionLevel) === "reviewer" &&
+      isProjectMember === false,
+    [isProjectMember, workspacePermissionLevel],
+  );
+
+  const fieldsReadOnly = isProjectComplete || reviewerContentReadOnly;
+  const hideContentActions = isProjectComplete || reviewerContentReadOnly;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const hasRow = await resolveHasProjectContributorRowClient(
+        supabase,
+        project.id,
+        workspaceUserId,
+      );
+      if (cancelled) return;
+      setHasProjectContributorRow(hasRow);
+
+      const pendingSummary = await loadProjectPendingAccessRequestSummary(
+        supabase,
+        project.id,
+      );
+      if (!cancelled) {
+        setPendingAccessRequestCount(pendingSummary.count);
+        setPendingAccessRequesterNames(pendingSummary.requesterNames);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id, supabase, workspaceUserId]);
+
+  const refreshPendingAccessRequests = useCallback(async () => {
+    const pendingSummary = await loadProjectPendingAccessRequestSummary(
+      supabase,
+      project.id,
+    );
+    setPendingAccessRequestCount(pendingSummary.count);
+    setPendingAccessRequesterNames(pendingSummary.requesterNames);
+  }, [project.id, supabase]);
+
   const fetchReviews = useCallback(async () => {
     const { data, error } = await supabase
       .from("reviews")
       .select(
-        "id, title, status, created_at, owner_display_name, review_focus, reviewer_contributor_ids, artifacts, review_type, decision_status, decision_comments, decision_selected_artifact_ids, decision_text, require_decision_maker, artifact_file_name, artifact_file_type, artifact_name, artifact_iteration, artifact_description, artifact_file_url"
+        "id, title, status, created_at, owner_display_name, creator_id, review_focus, reviewer_contributor_ids, artifacts, review_type, decision_status, decision_comments, decision_selected_artifact_ids, decision_text, require_decision_maker, artifact_file_name, artifact_file_type, artifact_name, artifact_iteration, artifact_description, artifact_file_url"
       )
       .eq("project_id", project.id)
       .order("created_at", { ascending: false });
     if (error || !data) return;
-    const reviewIds = data
+
+    let rows = data;
+    if (isAssignedReviewerScope(workspacePermissionLevel, reviewerType)) {
+      const { data: projectRow } = await supabase
+        .from("projects")
+        .select("workspace_id")
+        .eq("id", project.id)
+        .maybeSingle();
+      const workspaceId = String(
+        (projectRow as { workspace_id?: string | null } | null)?.workspace_id ?? "",
+      ).trim();
+      const contributorId = workspaceId
+        ? await resolveRequesterContributorId(
+            supabase,
+            workspaceId,
+            readDevImpersonationContributorIdFromBrowser(),
+          )
+        : null;
+      if (!contributorId) {
+        setReviews([]);
+        return;
+      }
+      rows = data.filter((row) => {
+        const ids = (row as Record<string, unknown>).reviewer_contributor_ids;
+        if (!Array.isArray(ids)) return false;
+        return ids.some((id) => String(id ?? "").trim() === contributorId);
+      });
+    }
+
+    const reviewIds = rows
       .map((row) => String((row as Record<string, unknown>).id ?? ""))
       .filter(Boolean);
     const reviewerIds = [...new Set(
-      data.flatMap((row) =>
+      rows.flatMap((row) =>
         Array.isArray((row as Record<string, unknown>).reviewer_contributor_ids)
           ? ((row as Record<string, unknown>).reviewer_contributor_ids as unknown[])
               .map((id) => String(id).trim())
@@ -242,11 +331,17 @@ export function ProjectDetailView({
           : [],
       ),
     )];
+    const creatorIds = [...new Set(
+      rows
+        .map((row) => String((row as Record<string, unknown>).creator_id ?? "").trim())
+        .filter(Boolean),
+    )];
     const { reviewerResolutionByRawId, countsByReviewId } = await fetchReviewCardMeta(supabase, {
       reviewIds,
       reviewerIds,
+      creatorIds,
     });
-    const mapped: ReviewCardData[] = data.map((row) => {
+    const mapped: ReviewCardData[] = rows.map((row) => {
       const r = row as Record<string, unknown>;
       const created = r.created_at ? new Date(String(r.created_at)) : new Date();
       const dateLabel = `Updated ${formatDistanceToNow(created, { addSuffix: true })}`;
@@ -261,7 +356,7 @@ export function ProjectDetailView({
       return {
         id: String(r.id ?? ""),
         title: String(r.title ?? ""),
-        status: parseStatus(String(r.status ?? "")),
+        status: parseReviewDbStatus(String(r.status ?? "")),
         reviewType: parseReviewType(r.review_type as string | undefined),
         decisionStatus:
           r.decision_status == null || String(r.decision_status).trim() === ""
@@ -269,6 +364,7 @@ export function ProjectDetailView({
             : String(r.decision_status),
         requireDecisionMaker: Boolean(r.require_decision_maker),
         ownerName: String(r.owner_display_name ?? "Reviewer"),
+        creatorId: resolveReviewCardCreatorId(r.creator_id, reviewerResolutionByRawId),
         dateLabel,
         dateTooltipIso:
           r.created_at == null ? null : String(r.created_at),
@@ -299,19 +395,32 @@ export function ProjectDetailView({
       };
     });
     setReviews(mapped);
-  }, [supabase, project.id]);
+  }, [project.id, reviewerType, supabase, workspacePermissionLevel]);
 
   useEffect(() => {
     setReviews(initialReviews);
   }, [initialReviews]);
 
   useEffect(() => {
-    setReviewsAccordionOpen(readStoredBoolean(reviewsAccordionStorageKey(project.id), true));
-  }, [project.id]);
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(REVIEWS_RHC_STORAGE_KEY);
+    if (stored !== null) {
+      setReviewsRhcOpen(stored === "true");
+    } else {
+      setReviewsRhcOpen(window.matchMedia("(min-width: 1024px)").matches);
+    }
+    setReviewsRhcHydrated(true);
+  }, []);
 
-  useEffect(() => {
-    writeStoredBoolean(reviewsAccordionStorageKey(project.id), reviewsAccordionOpen);
-  }, [project.id, reviewsAccordionOpen]);
+  const toggleReviewsRhc = useCallback(() => {
+    setReviewsRhcOpen((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(REVIEWS_RHC_STORAGE_KEY, String(next));
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     void fetchReviews();
@@ -339,7 +448,7 @@ export function ProjectDetailView({
   }, [supabase, project.id, fetchReviews]);
 
   useEffect(() => {
-    if (!reviewsAccordionOpen) {
+    if (!reviewsRhcOpen) {
       setIsReviewsScrolled(false);
       return;
     }
@@ -353,9 +462,13 @@ export function ProjectDetailView({
     handleScroll();
     root.addEventListener("scroll", handleScroll, { passive: true });
     return () => root.removeEventListener("scroll", handleScroll);
-  }, [reviewsAccordionOpen]);
+  }, [reviewsRhcOpen, reviews.length]);
 
-  const canCreateReview = canCreateReviews(permissionLevel);
+  const canCreateReview = canCreateReviews(workspacePermissionLevel);
+  const reviewsEmptyCopy =
+    !isProjectComplete && canCreateReview
+      ? "No reviews yet. Create a review to start capturing design decisions."
+      : "No reviews yet. Reviews for this project will appear here.";
 
   const handleNewReview = useCallback(() => {
     if (!canCreateReview) return;
@@ -395,7 +508,7 @@ export function ProjectDetailView({
       >
         <SidebarDetailCollapsible
           projectName={project.name}
-          clientName={project.client ?? "Internal Project"}
+          clientName={clientLabel === "Unassigned" ? "Internal Project" : clientLabel}
           recentProjects={recentProjects}
         />
       </div>
@@ -435,7 +548,7 @@ export function ProjectDetailView({
           }}
         >
           <div
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto pl-8 py-8"
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto pl-8 pt-6 pb-8"
             style={{
               flex: 1,
               minWidth: 0,
@@ -458,7 +571,7 @@ export function ProjectDetailView({
                       projectId={project.id}
                       initialValue={descriptionText}
                       placeholder={descriptionPlaceholder}
-                      readOnly={isProjectComplete}
+                      readOnly={fieldsReadOnly}
                     />
                   </div>
                 </section>
@@ -466,19 +579,24 @@ export function ProjectDetailView({
                 <ProblemsSection
                   projectId={project.id}
                   initialProblems={initialProblems}
-                  hideAddActions={isProjectComplete}
+                  hideAddActions={hideContentActions}
                 />
 
                 <ContributorsSection
                   projectId={project.id}
                   initialContributors={initialContributors}
                   hideAddActions={isProjectComplete}
+                  pendingAccessRequestCount={pendingAccessRequestCount}
+                  pendingAccessRequesterNames={pendingAccessRequesterNames}
+                  onPendingAccessRequestsChanged={() =>
+                    void refreshPendingAccessRequests()
+                  }
                 />
 
                 <ReferencesSection
                   projectId={project.id}
                   initialReferences={initialReferences}
-                  hideAddActions={isProjectComplete}
+                  hideAddActions={hideContentActions}
                 />
               </div>
             ) : null}
@@ -503,102 +621,78 @@ export function ProjectDetailView({
           </div>
 
           <aside
-            className="hidden min-h-0 flex-col bg-white lg:flex lg:w-[360px] xl:w-[440px]"
+            className="flex shrink-0 min-h-0 flex-col bg-white h-full overflow-hidden"
             style={{
-              alignSelf: "stretch",
-              display: "flex",
-              flexDirection: "column",
-              flexShrink: 0,
+              width: reviewsRhcOpen ? REVIEWS_RHC_OPEN_WIDTH : REVIEWS_RHC_CLOSED_WIDTH,
+              minWidth: reviewsRhcOpen ? 360 : REVIEWS_RHC_CLOSED_WIDTH,
+              maxWidth: reviewsRhcOpen ? 440 : REVIEWS_RHC_CLOSED_WIDTH,
               borderLeft: "1px solid #e6dbd8",
-              overflow: "hidden",
-              padding: 0,
-              minHeight: 0,
-              height: "100%",
-              maxHeight: "100%",
+              transition: reviewsRhcHydrated ? "width 200ms ease-in-out" : "none",
             }}
+            aria-label="Reviews"
           >
-            <div
-              className={`${sectionHeadingClass} shrink-0`}
-              style={{
-                ...sectionHeadingStyle,
-                position: "sticky",
-                top: 0,
-                zIndex: 10,
-                backgroundColor: "#ffffff",
-                padding: "24px 24px 16px 24px",
-                boxShadow: isReviewsScrolled
-                  ? "0 4px 12px 0 rgba(107, 30, 46, 0.08)"
-                  : "none",
-                transition: "box-shadow 150ms ease",
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setReviewsAccordionOpen((prev) => !prev)}
-                className="flex w-full items-center border-0 bg-transparent p-0 text-left"
-                aria-expanded={reviewsAccordionOpen}
-              >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center">
-                  {reviewsAccordionOpen ? (
-                    <ChevronUp size={12} weight="fill" color="#6b1e2e" />
-                  ) : (
-                    <ChevronDown size={12} weight="fill" color="#6b5e55" />
-                  )}
-                </span>
-                <span className="ml-2 shrink-0">Reviews</span>
-                <span className="ml-3 inline-flex shrink-0 items-center self-center">
-                  <NotificationBadge
-                    count={reviews.length}
-                    sentiment="brand"
-                    prominence={reviewsAccordionOpen ? "high" : "low"}
-                  />
-                </span>
-              </button>
-            </div>
-            {reviewsAccordionOpen ? (
-            <div
-              ref={reviewsScrollRef}
-              className="min-h-0 flex-1 px-6 pb-8"
-              style={{
-                flex: 1,
-                minHeight: 0,
-                overflowY: "auto",
-                height: "100%",
-              }}
-            >
-              {reviews.length === 0 ? (
+            {reviewsRhcOpen ? (
+              <>
                 <div
-                  className="flex min-h-0 flex-1 flex-col items-center justify-center text-center"
+                  className={`${sectionHeadingClass} shrink-0`}
                   style={{
-                    flex: "1 1 auto",
-                    minHeight: 0,
-                    gap: 12,
-                    padding: 32,
-                    backgroundColor: "#f3efe9",
-                    border: "1px solid #e4ddd3",
-                    borderRadius: 8
+                    ...sectionHeadingStyle,
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 10,
+                    backgroundColor: "#ffffff",
+                    padding: "24px 24px 16px 24px",
+                    boxShadow: isReviewsScrolled
+                      ? "0 4px 12px 0 rgba(107, 30, 46, 0.08)"
+                      : "none",
+                    transition: "box-shadow 150ms ease",
                   }}
                 >
-                  <p
-                    className="m-0 text-[12px] font-normal leading-[1.5]"
-                    style={{ color: "#998c82", letterSpacing: "0.24px" }}
-                  >
-                    No reviews yet. Create a review to start capturing design
-                    decisions.
-                  </p>
-                  {!isProjectComplete && canCreateReview ? (
+                  <div className="flex w-full items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center">
+                      <span className="shrink-0">Reviews</span>
+                      {reviews.length > 0 ? (
+                        <span className="ml-3 inline-flex shrink-0 items-center self-center">
+                          <NotificationBadge
+                            count={reviews.length}
+                            sentiment="brand"
+                            prominence="high"
+                          />
+                        </span>
+                      ) : null}
+                    </div>
                     <Button
                       type="button"
+                      label="Collapse reviews panel"
+                      aria-label="Collapse reviews panel"
                       variant="secondary"
-                      label="Review"
-                      icon="leading"
-                      iconName="plus"
                       size="sm"
-                      onClick={handleNewReview}
+                      icon="leading"
+                      iconOnly
+                      iconName="close-drawer"
+                      style={reviewsRhcHeaderIconButtonStyle}
+                      onClick={toggleReviewsRhc}
                     />
-                  ) : !isProjectComplete ? (
-                    <Tooltip label={CREATE_REVIEW_DENIED_TOOLTIP}>
-                      <span style={{ display: "inline-flex" }}>
+                  </div>
+                </div>
+                <div
+                  ref={reviewsScrollRef}
+                  className="min-h-0 flex-1 px-6 pb-8"
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    overflowY: "auto",
+                    height: "100%",
+                  }}
+                >
+                  {reviews.length === 0 ? (
+                    <div
+                      className={`${panelEmptyStateStyles.root} ${panelEmptyStateStyles.surfaceRecessed}`}
+                    >
+                      <p className={panelEmptyStateStyles.copy}>
+                        {reviewsEmptyCopy}
+                      </p>
+                      {!isProjectComplete && canCreateReview ? (
                         <Button
                           type="button"
                           variant="secondary"
@@ -606,59 +700,78 @@ export function ProjectDetailView({
                           icon="leading"
                           iconName="plus"
                           size="sm"
-                          disabled
-                          aria-disabled
+                          onClick={handleNewReview}
                         />
-                      </span>
-                    </Tooltip>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="flex min-h-0 flex-1 flex-col" style={{ gap: 12 }}>
-                  <div className="flex flex-col" style={{ gap: 4 }}>
-                    {reviews.map((r) => {
-                      const card = (
-                        <ReviewCard
-                          title={r.title}
-                          status={r.status}
-                          reviewType={r.reviewType}
-                          decisionStatus={r.decisionStatus}
-                          requireDecisionMaker={r.requireDecisionMaker}
-                          ownerName={r.ownerName}
-                          dateLabel={r.dateLabel}
-                          dateTooltipIso={r.dateTooltipIso ?? undefined}
-                          clientName={clientLabel}
-                          description={r.description ?? undefined}
-                          hasArtifact={false}
-                          showDetailCounts={true}
-                          feedbackCount={r.feedbackCount ?? 0}
-                          changeRequestCount={r.changeRequestCount ?? 0}
-                          reviewers={r.reviewers ?? []}
-                        />
-                      );
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="flex min-h-0 flex-1 flex-col" style={{ gap: 12 }}>
+                      <div className="flex flex-col" style={{ gap: 4 }}>
+                        {sortedReviews.map((r) => {
+                          const card = (
+                            <ReviewCard
+                              title={r.title}
+                              status={r.status}
+                              reviewType={r.reviewType}
+                              decisionStatus={r.decisionStatus}
+                              requireDecisionMaker={r.requireDecisionMaker}
+                              ownerName={r.ownerName}
+                              creatorId={r.creatorId}
+                              dateLabel={r.dateLabel}
+                              dateTooltipIso={r.dateTooltipIso ?? undefined}
+                              clientName={clientLabel}
+                              description={r.description ?? undefined}
+                              hasArtifact={false}
+                              showDetailCounts={true}
+                              feedbackCount={r.feedbackCount ?? 0}
+                              changeRequestCount={r.changeRequestCount ?? 0}
+                              reviewers={r.reviewers ?? []}
+                            />
+                          );
 
-                      if (!r.id) {
-                        return (
-                          <div key={r.title}>{card}</div>
-                        );
-                      }
+                          if (!r.id) {
+                            return <div key={r.title}>{card}</div>;
+                          }
 
-                      return (
-                        <Link
-                          key={r.id}
-                          href={`/reviews/${r.id}`}
-                          className="block rounded-lg no-underline text-inherit focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-                          style={{ color: "inherit" }}
-                        >
-                          {card}
-                        </Link>
-                      );
-                    })}
-                  </div>
+                          return (
+                            <Link
+                              key={r.id}
+                              href={`/reviews/${r.id}`}
+                              className="block rounded-lg no-underline text-inherit focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                              style={{ color: "inherit" }}
+                            >
+                              {card}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-            ) : null}
+              </>
+            ) : (
+              <div className="flex flex-col items-center gap-4 py-4">
+                <Button
+                  type="button"
+                  label="Expand reviews panel"
+                  aria-label="Expand reviews panel"
+                  variant="secondary"
+                  size="sm"
+                  icon="leading"
+                  iconOnly
+                  iconName="open-drawer"
+                  style={reviewsRhcHeaderIconButtonStyle}
+                  onClick={toggleReviewsRhc}
+                />
+                {reviews.length > 0 ? (
+                  <NotificationBadge
+                    count={reviews.length}
+                    sentiment="brand"
+                    prominence="high"
+                  />
+                ) : null}
+              </div>
+            )}
           </aside>
         </div>
       </div>

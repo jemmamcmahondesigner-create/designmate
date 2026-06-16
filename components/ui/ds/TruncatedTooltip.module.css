@@ -1,0 +1,25 @@
+.root {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.fullWidth {
+  width: 100%;
+}
+
+.inline {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.measureInlineFlex {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  vertical-align: middle;
+}

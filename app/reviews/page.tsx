@@ -1,10 +1,13 @@
 import { AllReviewsView, type AllReviewsGroupedByType } from "@/components/AllReviewsView";
 import { getEffectiveCurrentContributor } from "@/lib/auth/effectiveContributor";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
+import { isAssignedReviewerScope } from "@/lib/workspace/permissions";
+import { getWorkspaceMembershipForCurrentUser } from "@/lib/workspace/resolveWorkspaceMembership";
 import { formatDistanceToNow } from "@/lib/formatDistanceToNow";
 import {
   buildReviewCardReviewers,
   fetchReviewCardMeta,
+  resolveReviewCardCreatorId,
 } from "@/lib/reviews/fetchProjectReviews";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -78,6 +81,7 @@ export default async function AllReviewsPage() {
     );
   }
 
+  const membership = await getWorkspaceMembershipForCurrentUser();
   const contributor = await getEffectiveCurrentContributor(supabase);
   const byId = new Map<string, Record<string, unknown>>();
 
@@ -91,6 +95,7 @@ export default async function AllReviewsPage() {
     decision_comments,
     decision_text,
     owner_display_name,
+    creator_id,
     created_at,
     updated_at,
     review_focus,
@@ -106,19 +111,26 @@ export default async function AllReviewsPage() {
     )
   `;
 
-  const { data: workspaceReviews } = await supabase
-    .from("reviews")
-    .select(reviewSelect)
-    .eq("projects.workspace_id", activeWorkspaceId)
-    .eq("projects.status", "active");
+  const assignedReviewerScope = isAssignedReviewerScope(
+    membership.workspacePermissionLevel,
+    membership.reviewerType,
+  );
 
-  for (const row of workspaceReviews ?? []) {
-    const cast = row as Record<string, unknown>;
-    const id = String(cast.id ?? "");
-    if (id) byId.set(id, cast);
+  if (!assignedReviewerScope) {
+    const { data: workspaceReviews } = await supabase
+      .from("reviews")
+      .select(reviewSelect)
+      .eq("projects.workspace_id", activeWorkspaceId)
+      .eq("projects.status", "active");
+
+    for (const row of workspaceReviews ?? []) {
+      const cast = row as Record<string, unknown>;
+      const id = String(cast.id ?? "");
+      if (id) byId.set(id, cast);
+    }
   }
 
-  if (contributor?.id) {
+  if (assignedReviewerScope && contributor?.id) {
     const { data: reviewerRows } = await supabase
       .from("reviews")
       .select(reviewSelect)
@@ -159,9 +171,15 @@ export default async function AllReviewsPage() {
         : [],
     ),
   )];
+  const creatorIds = [...new Set(
+    sorted
+      .map((review) => String(review.creator_id ?? "").trim())
+      .filter(Boolean),
+  )];
   const { reviewerResolutionByRawId, countsByReviewId } = await fetchReviewCardMeta(supabase, {
     reviewIds: sorted.map((review) => String(review.id ?? "").trim()).filter(Boolean),
     reviewerIds,
+    creatorIds,
   });
   for (const review of sorted) {
     const bucket = reviewTypeBucket(review.review_type);
@@ -194,6 +212,7 @@ export default async function AllReviewsPage() {
         review.owner_display_name == null
           ? null
           : String(review.owner_display_name).trim() || null,
+      creator_id: resolveReviewCardCreatorId(review.creator_id, reviewerResolutionByRawId) ?? null,
       feedback_count: countsByReviewId.get(String(review.id ?? "").trim())?.feedbackCount ?? 0,
       change_request_count:
         countsByReviewId.get(String(review.id ?? "").trim())?.changeRequestCount ?? 0,

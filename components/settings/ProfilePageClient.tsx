@@ -23,10 +23,18 @@ import {
   Modal,
   Tooltip,
 } from "@/components/ui/ds";
+import inputStyles from "@/components/ui/ds/Input.module.css";
 import { CreatableRoleSelect } from "@/components/settings/CreatableRoleSelect";
 import { getSiteOrigin } from "@/lib/auth/mapAuthError";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { WorkspaceSwitchConfirmModal } from "@/components/settings/WorkspaceSwitchConfirmModal";
+import { ensureContributorProfile } from "@/lib/workspace/ensureContributorProfile";
 import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
+import {
+  duplicateOwnedWorkspaceMessage,
+  normalizeWorkspaceNameKey,
+  parseWorkspaceCreateError,
+} from "@/lib/workspace/workspaceCreateErrors";
 import { generateInviteCode } from "@/lib/workspace/utils";
 import { getAvatarInlineStyle } from "@/lib/utils/avatarColour";
 
@@ -552,6 +560,12 @@ export function ProfilePageClient({
   const [addWorkspaceSubmitting, setAddWorkspaceSubmitting] = useState(false);
   const [createWorkspaceErrorMessage, setCreateWorkspaceErrorMessage] = useState<string | null>(null);
   const [joinInviteErrorMessage, setJoinInviteErrorMessage] = useState<string | null>(null);
+  const [workspaceSwitchConfirm, setWorkspaceSwitchConfirm] = useState<{
+    workspaceId: string;
+    workspaceName: string;
+    kind: "created" | "joined";
+  } | null>(null);
+  const addWorkspaceSubmittingRef = useRef(false);
   const [emailSuccessNotice, setEmailSuccessNotice] = useState<string | null>(null);
   const [emailErrorMessage, setEmailErrorMessage] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
@@ -594,6 +608,16 @@ export function ProfilePageClient({
   const showInviteLinkCopiedToast = useCallback(() => {
     showToast("Invite link copied");
   }, [showToast]);
+
+  const reportCreateWorkspaceError = useCallback((message: string) => {
+    setCreateWorkspaceErrorMessage(message);
+    setErrorToast(message);
+  }, []);
+
+  const reportJoinWorkspaceError = useCallback((message: string) => {
+    setJoinInviteErrorMessage(message);
+    setErrorToast(message);
+  }, []);
 
   const roleSelectOptions = useMemo(
     () => roleOptions.map((role) => ({ value: role.name, label: role.name })),
@@ -749,6 +773,7 @@ export function ProfilePageClient({
     setAddWorkspaceActiveCard(null);
     setCreateWorkspaceErrorMessage(null);
     setJoinInviteErrorMessage(null);
+    addWorkspaceSubmittingRef.current = false;
     setAddWorkspaceSubmitting(false);
   }, []);
 
@@ -765,32 +790,79 @@ export function ProfilePageClient({
     [createWorkspaceName],
   );
 
-  const handleGoToWorkspace = useCallback(async () => {
-    if (!userId || !addWorkspaceHasValue || addWorkspaceSubmitting) return;
+  const resolveAddWorkspaceAction = useCallback((): "create" | "join" | null => {
+    const trimmedCreate = createWorkspaceName.trim();
+    const trimmedJoin = joinInviteLink.trim();
 
+    if (addWorkspaceActiveCard === "join" && trimmedJoin) return "join";
+    if (addWorkspaceActiveCard === "create" && trimmedCreate) return "create";
+    if (trimmedCreate) return "create";
+    if (trimmedJoin) return "join";
+    return null;
+  }, [addWorkspaceActiveCard, createWorkspaceName, joinInviteLink]);
+
+  const userAlreadyOwnsWorkspaceName = useCallback(
+    async (name: string): Promise<boolean> => {
+      const normalized = normalizeWorkspaceNameKey(name);
+      if (
+        workspaces.some((workspace) => normalizeWorkspaceNameKey(workspace.name) === normalized)
+      ) {
+        return true;
+      }
+
+      const { data: ownedRows, error } = await supabase
+        .from("workspaces")
+        .select("name")
+        .eq("created_by", userId!);
+
+      if (error) return false;
+
+      return (ownedRows ?? []).some(
+        (row) => normalizeWorkspaceNameKey(String(row.name ?? "")) === normalized,
+      );
+    },
+    [supabase, userId, workspaces],
+  );
+
+  const handleConfirmStayHere = useCallback(() => {
+    setWorkspaceSwitchConfirm(null);
+    router.refresh();
+  }, [router]);
+
+  const handleGoToWorkspace = useCallback(async () => {
+    if (!userId || !addWorkspaceHasValue) return;
+    if (addWorkspaceSubmittingRef.current) return;
+
+    const action = resolveAddWorkspaceAction();
+    if (!action) return;
+
+    addWorkspaceSubmittingRef.current = true;
     setAddWorkspaceSubmitting(true);
-    setCreateWorkspaceErrorMessage(null);
-    setJoinInviteErrorMessage(null);
 
     const joinNotFoundMessage =
       "We couldn't find that workspace. Check the link and try again.";
 
     try {
-      if (createWorkspaceName.trim()) {
+      if (action === "create") {
+        const trimmedName = createWorkspaceName.trim();
+
+        if (await userAlreadyOwnsWorkspaceName(trimmedName)) {
+          reportCreateWorkspaceError(duplicateOwnedWorkspaceMessage(trimmedName));
+          return;
+        }
+
         const { data: workspace, error: wsError } = await supabase
           .from("workspaces")
           .insert({
-            name: createWorkspaceName.trim(),
-            invite_code: generateInviteCode(createWorkspaceName),
+            name: trimmedName,
+            invite_code: generateInviteCode(trimmedName),
             created_by: userId,
           })
           .select()
           .single();
 
         if (wsError || !workspace) {
-          setCreateWorkspaceErrorMessage(
-            wsError?.message ?? "Couldn't create workspace. Please try a different name.",
-          );
+          reportCreateWorkspaceError(parseWorkspaceCreateError(wsError, trimmedName));
           return;
         }
 
@@ -798,103 +870,138 @@ export function ProfilePageClient({
           workspace_id: workspace.id,
           user_id: userId,
           role: "admin",
+          permission_level: "admin",
           status: "active",
         });
 
         if (memberError) {
-          setCreateWorkspaceErrorMessage(memberError.message);
+          reportCreateWorkspaceError(memberError.message);
           return;
         }
 
-        await supabase.auth.updateUser({
-          data: {
-            active_workspace_id: workspace.id,
-            workspace_id: workspace.id,
-          },
+        const creatorDisplayName =
+          combineDisplayName(firstName, lastName).trim() ||
+          contributor?.name?.trim() ||
+          email?.split("@")[0] ||
+          "User";
+
+        const { error: contributorError } = await ensureContributorProfile(supabase, {
+          userId,
+          email: email?.trim() || null,
+          displayName: creatorDisplayName,
+          role: roleName.trim() || contributor?.roleName || null,
+          activeWorkspaceId: workspace.id,
+          permissionLevel: "admin",
         });
 
+        if (contributorError) {
+          reportCreateWorkspaceError(contributorError);
+          return;
+        }
+
+        setWorkspaces((current) => [
+          ...current,
+          {
+            id: workspace.id,
+            name: workspace.name,
+            memberRole: "admin",
+            status: "active",
+            isOnlyAdmin: true,
+          },
+        ]);
+        setWorkspaceSwitchConfirm({
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
+          kind: "created",
+        });
         closeAddWorkspaceModal();
-        router.refresh();
-        showToast("Workspace created");
         return;
       }
 
-      if (joinInviteLink.trim()) {
-        const shortId = parseJoinLinkShortId(joinInviteLink);
-        if (!shortId) {
-          setJoinInviteErrorMessage(joinNotFoundMessage);
-          return;
-        }
-
-        const { data: workspaceRows, error: lookupError } = await supabase
-          .from("workspaces")
-          .select("id, name");
-
-        if (lookupError) {
-          setJoinInviteErrorMessage(lookupError.message);
-          return;
-        }
-
-        const workspace = workspaceRows?.find((row) =>
-          String(row.id).toLowerCase().startsWith(shortId),
-        );
-
-        if (!workspace) {
-          setJoinInviteErrorMessage(joinNotFoundMessage);
-          return;
-        }
-
-        const { data: existingMember } = await supabase
-          .from("workspace_members")
-          .select("id")
-          .eq("workspace_id", workspace.id)
-          .eq("user_id", userId)
-          .maybeSingle();
-
-        if (existingMember) {
-          await supabase
-            .from("workspace_members")
-            .update({ status: "active", joined_at: new Date().toISOString() })
-            .eq("workspace_id", workspace.id)
-            .eq("user_id", userId);
-        } else {
-          const { error: joinError } = await supabase.from("workspace_members").insert({
-            workspace_id: workspace.id,
-            user_id: userId,
-            role: "member",
-            status: "active",
-          });
-          if (joinError) {
-            setJoinInviteErrorMessage(joinError.message);
-            return;
-          }
-        }
-
-        await supabase.auth.updateUser({
-          data: {
-            active_workspace_id: workspace.id,
-            workspace_id: workspace.id,
-          },
-        });
-
-        closeAddWorkspaceModal();
-        router.refresh();
-        showToast("Joined workspace");
+      const shortId = parseJoinLinkShortId(joinInviteLink);
+      if (!shortId) {
+        reportJoinWorkspaceError(joinNotFoundMessage);
+        return;
       }
+
+      const { data: workspaceRows, error: lookupError } = await supabase
+        .from("workspaces")
+        .select("id, name");
+
+      if (lookupError) {
+        reportJoinWorkspaceError(lookupError.message);
+        return;
+      }
+
+      const workspace = workspaceRows?.find((row) =>
+        String(row.id).toLowerCase().startsWith(shortId),
+      );
+
+      if (!workspace) {
+        reportJoinWorkspaceError(joinNotFoundMessage);
+        return;
+      }
+
+      const { data: existingMember } = await supabase
+        .from("workspace_members")
+        .select("id")
+        .eq("workspace_id", workspace.id)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (existingMember) {
+        await supabase
+          .from("workspace_members")
+          .update({ status: "active", joined_at: new Date().toISOString() })
+          .eq("workspace_id", workspace.id)
+          .eq("user_id", userId);
+      } else {
+        const { error: joinError } = await supabase.from("workspace_members").insert({
+          workspace_id: workspace.id,
+          user_id: userId,
+          role: "member",
+          permission_level: "reviewer",
+          status: "active",
+        });
+        if (joinError) {
+          reportJoinWorkspaceError(joinError.message);
+          return;
+        }
+      }
+
+      setWorkspaceSwitchConfirm({
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        kind: "joined",
+      });
+      closeAddWorkspaceModal();
     } finally {
+      addWorkspaceSubmittingRef.current = false;
       setAddWorkspaceSubmitting(false);
     }
   }, [
     addWorkspaceHasValue,
-    addWorkspaceSubmitting,
     closeAddWorkspaceModal,
+    contributor?.name,
+    contributor?.roleName,
     createWorkspaceName,
+    email,
+    firstName,
     joinInviteLink,
-    router,
-    showToast,
+    lastName,
+    reportCreateWorkspaceError,
+    reportJoinWorkspaceError,
+    resolveAddWorkspaceAction,
+    roleName,
     supabase,
+    userAlreadyOwnsWorkspaceName,
     userId,
   ]);
+
+  const addWorkspaceSubmitLabel =
+    addWorkspaceActiveCard === "join" && joinInviteLink.trim()
+      ? "Join workspace"
+      : "Create workspace";
 
   const leaveWorkspace = useCallback(
     async (workspaceId: string) => {
@@ -1134,7 +1241,7 @@ export function ProfilePageClient({
               disabled={addWorkspaceSubmitting}
             />
             <Button
-              label="Go to workspace"
+              label={addWorkspaceSubmitLabel}
               variant="primary"
               size="sm"
               icon="trailing"
@@ -1174,82 +1281,50 @@ export function ProfilePageClient({
               Start fresh with your own projects and decisions.
             </p>
             <div style={{ marginTop: 16 }}>
-              {createWorkspacePreviewId ? (
-                <div style={{ marginBottom: 8 }}>
-                  <label
-                    htmlFor="create-workspace-name"
+              <label
+                htmlFor="create-workspace-name"
+                style={{
+                  display: "block",
+                  marginBottom: 6,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  color: "var(--text-primary, #2e1c1c)",
+                }}
+              >
+                Workspace Name
+              </label>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  height: 38,
+                  padding: "0 12px",
+                  borderRadius: 6,
+                  border: createWorkspaceErrorMessage
+                    ? "1px solid var(--sentiment-danger-border, #c62828)"
+                    : "1px solid var(--border-default, #e4ddd3)",
+                  background: "var(--neutral-0, #ffffff)",
+                  boxSizing: "border-box",
+                }}
+              >
+                {createWorkspacePreviewId ? (
+                  <span
                     style={{
-                      display: "block",
-                      marginBottom: 6,
+                      flexShrink: 0,
                       fontSize: 14,
-                      fontWeight: 500,
-                      color: "var(--text-primary, #2e1c1c)",
+                      color: "var(--text-disabled, #c9c0b4)",
                     }}
                   >
-                    Workspace Name
-                  </label>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      height: 38,
-                      padding: "0 12px",
-                      borderRadius: 6,
-                      border: "1px solid var(--border-default, #e4ddd3)",
-                      background: "var(--neutral-0, #ffffff)",
-                      boxSizing: "border-box",
-                    }}
-                  >
-                    <span
-                      style={{
-                        flexShrink: 0,
-                        fontSize: 14,
-                        color: "var(--text-disabled, #c9c0b4)",
-                      }}
-                    >
-                      {createWorkspacePreviewId}
-                    </span>
-                    <input
-                      id="create-workspace-name"
-                      type="text"
-                      value={createWorkspaceName}
-                      placeholder="i.e. Acme Inc"
-                      onFocus={() => setAddWorkspaceActiveCard("create")}
-                      onChange={(e) => {
-                        setAddWorkspaceActiveCard("create");
-                        setCreateWorkspaceName(e.target.value);
-                        setCreateWorkspaceErrorMessage(null);
-                      }}
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        border: "none",
-                        outline: "none",
-                        background: "transparent",
-                        fontSize: 14,
-                        fontFamily: "'Plus Jakarta Sans', sans-serif",
-                        color: "var(--text-primary, #2e1c1c)",
-                      }}
-                    />
-                  </div>
-                  {createWorkspaceErrorMessage ? (
-                    <p
-                      role="alert"
-                      style={{ margin: "6px 0 0", fontSize: 13, color: "#8b2020" }}
-                    >
-                      {createWorkspaceErrorMessage}
-                    </p>
-                  ) : null}
-                </div>
-              ) : (
-                <Input
-                  label="Workspace Name"
-                  size="md"
-                  placeholder="i.e. Acme Inc"
+                    {createWorkspacePreviewId}
+                  </span>
+                ) : null}
+                <input
+                  id="create-workspace-name"
+                  type="text"
+                  className={inputStyles.input}
                   value={createWorkspaceName}
-                  error={Boolean(createWorkspaceErrorMessage)}
-                  errorMessage={createWorkspaceErrorMessage ?? undefined}
+                  placeholder="i.e. Acme Inc"
                   onFocus={() => setAddWorkspaceActiveCard("create")}
                   onChange={(e) => {
                     setAddWorkspaceActiveCard("create");
@@ -1257,7 +1332,15 @@ export function ProfilePageClient({
                     setCreateWorkspaceErrorMessage(null);
                   }}
                 />
-              )}
+              </div>
+              {createWorkspaceErrorMessage ? (
+                <p
+                  role="alert"
+                  style={{ margin: "6px 0 0", fontSize: 13, color: "#8b2020" }}
+                >
+                  {createWorkspaceErrorMessage}
+                </p>
+              ) : null}
             </div>
           </div>
 
@@ -1307,6 +1390,15 @@ export function ProfilePageClient({
           </div>
         </div>
       </Modal>
+
+      <WorkspaceSwitchConfirmModal
+        open={workspaceSwitchConfirm != null}
+        workspaceId={workspaceSwitchConfirm?.workspaceId ?? ""}
+        workspaceName={workspaceSwitchConfirm?.workspaceName ?? ""}
+        kind={workspaceSwitchConfirm?.kind ?? "created"}
+        onStay={handleConfirmStayHere}
+        onError={(message) => setErrorToast(message)}
+      />
     </div>
   );
 }

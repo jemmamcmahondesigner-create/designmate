@@ -158,10 +158,14 @@ export function TeammatesSettingsPage({
   const [adminAccessError, setAdminAccessError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const router = useRouter();
-  const { permissionLevel, userId: currentUserId, loading: permissionLoading } =
-    useWorkspacePermission(activeWorkspaceId);
-  const canManageTeammates = canAddTeammates(permissionLevel);
-  const canEditPermission = canEditTeammatePermission(permissionLevel);
+  const {
+    workspacePermissionLevel,
+    reviewerType,
+    userId: currentUserId,
+    workspacePermissionLoading: permissionLoading,
+  } = useWorkspacePermission(activeWorkspaceId);
+  const canManageTeammates = canAddTeammates(workspacePermissionLevel);
+  const canEditPermission = canEditTeammatePermission(workspacePermissionLevel);
 
   const [addOpen, setAddOpen] = useState(false);
   const [addSubmitting, setAddSubmitting] = useState(false);
@@ -520,7 +524,7 @@ export function TeammatesSettingsPage({
         const showKebab = row.isPendingInvite
           ? canManageTeammates
           : !row.isPending &&
-            canShowTeammateKebabMenu(permissionLevel, {
+            canShowTeammateKebabMenu(workspacePermissionLevel, {
               rowUserId: row.userId ?? null,
               currentUserId,
             });
@@ -806,7 +810,7 @@ export function TeammatesSettingsPage({
             selectedRowId={selectedRowId ?? undefined}
             onRowClick={(row) => setSelectedRowId(row.id)}
             emptyState={
-              <span style={{ color: "var(--text/secondary, #6b5e55)" }}>
+              <span>
                 {noWorkspace
                   ? "No workspace found"
                   : "No teammates yet - add your first teammate to start collaborating."}

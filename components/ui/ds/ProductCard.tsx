@@ -4,8 +4,15 @@ import Link from 'next/link';
 import { StatusPill, type StatusPillStatus } from './StatusPill';
 import { Tag } from './Tag';
 import { Avatar } from './Avatar';
+import { Tooltip } from './Tooltip';
 import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
+import {
+  formatProjectReviewBreakdownTooltip,
+  type ProjectReviewStatusBreakdown,
+} from '@/lib/reviews/projectReviewStatusBreakdown';
 import styles from './ProductCard.module.css';
+
+const MAX_VISIBLE_TEAMMATES = 5;
 
 export interface ProductCardContributor {
   id: string;
@@ -20,7 +27,8 @@ export interface ProductCardProps {
   /** Visual tone for the status pill (defaults to approved) */
   statusVariant?: StatusPillStatus;
   reviewCount?: number;
-  decisionCount?: number;
+  /** Per-status counts for the review-count hover tooltip. */
+  reviewStatusBreakdown?: ProjectReviewStatusBreakdown;
   description?: string;
   /** Category / client tag shown bottom-left */
   tagLabel?: string;
@@ -37,7 +45,7 @@ export function ProductCard({
   statusLabel = 'Active',
   statusVariant = 'approved',
   reviewCount,
-  decisionCount,
+  reviewStatusBreakdown,
   description,
   tagLabel,
   contributors = [],
@@ -52,6 +60,10 @@ export function ProductCard({
     className ?? '',
   ].filter(Boolean).join(' ');
 
+  const visibleContributors = contributors.slice(0, MAX_VISIBLE_TEAMMATES);
+  const overflowCount = Math.max(0, contributors.length - MAX_VISIBLE_TEAMMATES);
+  const teammateTooltipLabel = contributors.map((c) => c.name).join('\n');
+
   const body = (
     <>
       <h3 className={styles.title}>{title}</h3>
@@ -63,12 +75,62 @@ export function ProductCard({
           size="sm"
           prominence="high"
         />
-        {reviewCount !== undefined && (
-          <span className={styles.count}>{reviewCount} {reviewCount === 1 ? 'review' : 'reviews'}</span>
-        )}
-        {decisionCount !== undefined && (
-          <span className={styles.count}>{decisionCount} {decisionCount === 1 ? 'decision' : 'decisions'}</span>
-        )}
+        <div className={styles.metaTrailing}>
+          {contributors.length > 0 ? (
+            <Tooltip
+              label={teammateTooltipLabel}
+              position="top"
+              maxWidth={320}
+            >
+              <span
+                className={styles.metaAvatarGroup}
+                aria-label={`${contributors.length} teammates`}
+              >
+                {visibleContributors.map((c, i) => (
+                  <span
+                    key={c.id || i}
+                    className={styles.metaAvatarWrap}
+                    style={{ zIndex: visibleContributors.length - i }}
+                  >
+                    <Avatar
+                      src={c.avatarSrc}
+                      name={c.name}
+                      contributorId={c.id}
+                      size="md"
+                      style={getAvatarInlineStyle(c.id)}
+                    />
+                  </span>
+                ))}
+                {overflowCount > 0 ? (
+                  <span
+                    className={styles.metaAvatarOverflow}
+                    style={{ zIndex: 0 }}
+                    aria-hidden
+                  >
+                    +{overflowCount}
+                  </span>
+                ) : null}
+              </span>
+            </Tooltip>
+          ) : null}
+          {reviewCount !== undefined ? (
+            reviewCount > 0 && reviewStatusBreakdown ? (
+              <Tooltip
+                label={formatProjectReviewBreakdownTooltip(reviewStatusBreakdown)}
+                position="top"
+                maxWidth={320}
+              >
+                <span className={styles.count}>
+                  {reviewCount} {reviewCount === 1 ? "review" : "reviews"}
+                </span>
+              </Tooltip>
+            ) : (
+              <span className={styles.count}>
+                {reviewCount} {reviewCount === 1 ? "review" : "reviews"}
+              </span>
+            )
+          ) : null}
+        </div>
       </div>
 
       {description && (
@@ -76,28 +138,9 @@ export function ProductCard({
       )}
 
       <div className={styles.footer}>
-        {tagLabel && (
-          <Tag label={tagLabel} variant="butter" size="sm" />
-        )}
-        {contributors.length > 0 && (
-          <div className={styles.avatarGroup}>
-            {contributors.slice(0, 4).map((c, i) => (
-              <div
-                key={c.id || i}
-                className={styles.avatarWrap}
-                style={{ zIndex: 4 - i }}
-              >
-                <Avatar
-                  src={c.avatarSrc}
-                  name={c.name}
-                  contributorId={c.id}
-                  size="md"
-                  style={getAvatarInlineStyle(c.id)}
-                />
-              </div>
-            ))}
-          </div>
-        )}
+        {tagLabel ? (
+          <Tag label={tagLabel} variant="mushroom" size="sm" />
+        ) : null}
       </div>
     </>
   );

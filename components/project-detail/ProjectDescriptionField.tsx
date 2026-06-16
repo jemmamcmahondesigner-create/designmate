@@ -47,6 +47,26 @@ export function ProjectDescriptionField({
 
   if (readOnly) {
     const text = initialValue?.trim() ?? "";
+    if (!text) {
+      return (
+        <div
+          style={{
+            backgroundColor: "#f3efe9",
+            border: "1px solid #e4ddd3",
+            borderRadius: 8,
+            height: 68,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <span style={{ fontSize: 14, fontWeight: 500, color: "#998c82" }}>
+            No project description added yet.
+          </span>
+        </div>
+      );
+    }
+
     return (
       <div
         style={{
@@ -57,16 +77,14 @@ export function ProjectDescriptionField({
           background: "var(--surface-card-recessed, #f3efe9)",
           fontSize: 13,
           lineHeight: 1.5,
-          color: text
-            ? "var(--text-primary, #2e1c1c)"
-            : "var(--text-tertiary, #998c82)",
+          color: "var(--text-secondary, #6b5e55)",
           fontFamily: "'Plus Jakarta Sans', sans-serif",
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
           userSelect: "text",
         }}
       >
-        {text || placeholder}
+        {text}
       </div>
     );
   }

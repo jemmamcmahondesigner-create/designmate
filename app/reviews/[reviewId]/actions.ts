@@ -7,6 +7,8 @@ import {
   notifyReviewNeedsAttention,
 } from "@/lib/notifications/reviews";
 import { logTimelineEventServer } from "@/lib/timeline/logEventServer";
+import { approvePendingAccessRequestsServer } from "@/lib/accessRequests/approvePendingAccessRequests";
+import { linkContributorToProject, unlinkContributorFromProject } from "@/lib/contributors/linkContributorToProject";
 import { changeRequestCompletedEmailHtml } from "@/lib/emails/change-request-completed-email";
 import { sendResendEmail } from "@/lib/emails/send-resend-email";
 import {
@@ -464,6 +466,13 @@ export async function assignReviewersAction(input: {
     }
   }
 
+  if (newlyAddedIds.length > 0) {
+    await approvePendingAccessRequestsServer(supabase, {
+      contributorIds: newlyAddedIds,
+      reviewId: input.reviewId,
+    });
+  }
+
   revalidatePath(`/reviews/${input.reviewId}`);
   return { error: null, reopened: shouldReopenReview, reviewersNotified };
 }
@@ -496,32 +505,24 @@ export async function createTeammateFromReviewAction(input: {
         : null;
   }
 
-  const { data: newContributor, error: insertError } = await supabase
-    .from("contributors")
-    .insert({
-      project_id: input.projectId,
-      workspace_id: workspaceId,
-      name,
-      email: input.email?.trim() ? input.email.trim() : null,
-      role: input.role?.trim() ? input.role.trim() : null,
-    })
-    .select("id, name")
-    .single();
+  const linkedContributor = await linkContributorToProject(supabase, {
+    projectId: input.projectId,
+    workspaceId,
+    name,
+    email: input.email?.trim() ? input.email.trim() : null,
+    role: input.role?.trim() ? input.role.trim() : null,
+  });
 
-  if (insertError) {
-    console.error("[create-reviewer-error]", insertError);
-    const schemaMessage = toSchemaCacheErrorMessage(insertError);
-    if (schemaMessage) return { error: schemaMessage };
-    return { error: insertError.message };
-  }
-
-  const contributorId = String(
-    (newContributor as Record<string, unknown>).id ?? ""
-  );
-  if (!contributorId) {
-    console.error("[create-reviewer-error]", "Missing contributor id after insert");
+  if (!linkedContributor) {
     return { error: "Contributor was not created." };
   }
+
+  const contributorId = linkedContributor.id;
+
+  await approvePendingAccessRequestsServer(supabase, {
+    contributorIds: [contributorId],
+    projectId: input.projectId,
+  });
 
   const assignResult = await assignReviewersAction({
     reviewId: input.reviewId,
@@ -532,7 +533,7 @@ export async function createTeammateFromReviewAction(input: {
 
   if (assignResult.error) {
     console.error("[create-reviewer-error]", assignResult.error);
-    await supabase.from("contributors").delete().eq("id", contributorId);
+    await unlinkContributorFromProject(supabase, contributorId);
     return { error: assignResult.error };
   }
 
@@ -1094,6 +1095,18 @@ export async function submitReviewerFeedbackAction(input: {
       });
     }
   } else if (!isApproveReview && !isAlignResubmit) {
+    const isCompareReview =
+      normalizedReviewType === "compare" || normalizedReviewType === "comparison";
+    let selectedArtifactNames: string[] = [];
+    if (isCompareReview && selectedArtifactIds.length > 0) {
+      const compareArtifactSources = parseReviewArtifactNameSources(
+        (review as { artifacts?: unknown }).artifacts,
+      );
+      selectedArtifactNames = labelsForArtifactKeys(
+        selectedArtifactIds,
+        compareArtifactSources,
+      );
+    }
     await logTimelineEventServer(supabase, {
       projectId,
       reviewId: input.reviewId,
@@ -1106,8 +1119,12 @@ export async function submitReviewerFeedbackAction(input: {
         activity_summary: approveActivitySummary?.summary ?? null,
         approved_artifact_names: approveActivitySummary?.approved_artifact_names ?? [],
         change_artifact_names: approveActivitySummary?.change_artifact_names ?? [],
-        feedback_kind: approveActivitySummary?.feedback_kind ?? null,
+        feedback_kind:
+          isCompareReview && selectedArtifactNames.length > 0
+            ? "preference"
+            : approveActivitySummary?.feedback_kind ?? null,
         selected_artifact_ids: selectedArtifactIds,
+        selected_artifact_names: selectedArtifactNames,
         feedback_status: "submitted",
         on_behalf_of_name: isOnBehalfSubmission ? targetReviewerName : null,
       },
@@ -2263,6 +2280,11 @@ type RemovedArtifactLogInput = {
   linkUrl?: string | null;
 };
 
+type AddedArtifactLogInput = {
+  title: string;
+  iterationLabel: string;
+};
+
 type ArtifactDescriptionEditLogInput = {
   id: string;
   changeType: "title" | "description" | "version";
@@ -2302,6 +2324,7 @@ export async function logEditReviewSaveEventsAction(input: {
   previousStatus: string;
   newStatus: string;
   removedArtifacts: RemovedArtifactLogInput[];
+  addedArtifacts?: AddedArtifactLogInput[];
   artifactDescriptionEdits?: ArtifactDescriptionEditLogInput[];
 }): Promise<{ success: boolean; error?: string }> {
   const reviewId = String(input.reviewId ?? "").trim();
@@ -2322,6 +2345,7 @@ export async function logEditReviewSaveEventsAction(input: {
   const gate = assertCanEditReview(contributor);
   if (!gate.ok) return { success: false, error: gate.error };
 
+  try {
   const createdAt = new Date().toISOString();
   const reviewTitle = String(input.newTitle ?? input.reviewTitle ?? "Review").trim() || "Review";
   const reviewType = String(input.reviewType ?? "").trim();
@@ -2334,11 +2358,13 @@ export async function logEditReviewSaveEventsAction(input: {
   const previousStatus = String(input.previousStatus ?? "").trim().toLowerCase();
   const newStatus = String(input.newStatus ?? "").trim().toLowerCase();
 
+  const actorName = String(contributor?.name ?? "").trim() || "A team member";
+
   const writeEvent = async (
     eventType: Parameters<typeof logTimelineEventServer>[1]["eventType"],
     payload: Record<string, unknown>,
   ) => {
-    await logTimelineEventServer(supabase, {
+    const result = await logTimelineEventServer(supabase, {
       projectId,
       reviewId,
       actorId: contributor?.id ?? null,
@@ -2347,13 +2373,16 @@ export async function logEditReviewSaveEventsAction(input: {
       payload: {
         review_id: reviewId,
         review_title: reviewTitle,
+        actor_name: actorName,
         ...payload,
       },
     });
+    if (!result.ok) {
+      throw new Error(result.error ?? `Could not record ${eventType} activity.`);
+    }
   };
 
   if (previousTitle !== newTitle) {
-    const actorName = String(contributor?.name ?? "").trim() || "A team member";
     await writeEvent("review_focus_edited", {
       edit_target: "Review title",
       tooltip_text: previousTitle || "Untitled",
@@ -2380,7 +2409,6 @@ export async function logEditReviewSaveEventsAction(input: {
   }
 
   if (previousStatus && newStatus && previousStatus !== newStatus) {
-    const actorName = String(contributor?.name ?? "").trim() || "A team member";
     if (newStatus === "paused") {
       await writeEvent("review_paused", {
         actor_name: actorName,
@@ -2426,16 +2454,20 @@ export async function logEditReviewSaveEventsAction(input: {
 
   for (const artifact of input.removedArtifacts) {
     const artifactTitle = String(artifact.title ?? "").trim() || "Artifact";
-    const linkUrl = artifact.linkUrl?.trim() || null;
     await writeEvent("artifact_deleted", {
-      artifact_id: artifact.id,
       artifact_title: artifactTitle,
-      artifact_url: linkUrl,
-      activity_summary: `removed artifact "${artifactTitle}" from ${reviewTitle}`,
     });
   }
 
-  const actorName = String(contributor?.name ?? "").trim() || "A team member";
+  for (const artifact of input.addedArtifacts ?? []) {
+    const artifactTitle = String(artifact.title ?? "").trim() || "Artifact";
+    const iterationLabel = String(artifact.iterationLabel ?? "").trim() || "v1";
+    await writeEvent("artifact_uploaded", {
+      artifact_names: [artifactTitle],
+      iteration_label: iterationLabel,
+    });
+  }
+
   for (const edit of input.artifactDescriptionEdits ?? []) {
     const artifactTitle = String(edit.artifactTitle ?? "").trim() || "Artifact";
     const payload: Record<string, unknown> = {
@@ -2455,6 +2487,11 @@ export async function logEditReviewSaveEventsAction(input: {
 
   revalidatePath(`/reviews/${reviewId}`);
   return { success: true };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Could not record activity log entries.";
+    return { success: false, error: message };
+  }
 }
 
 export async function deleteReviewAction(

@@ -1,5 +1,6 @@
 import { ClientsSettingsPage, type ClientRow } from "@/components/settings/ClientsSettingsPage";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import { getWorkspacePermissionLevelForCurrentUser } from "@/lib/workspace/settingsAccess";
 
 export const dynamic = "force-dynamic";
@@ -22,11 +23,23 @@ export default async function SettingsClientsPage() {
   const isReadOnly = permissionLevel === "reviewer";
 
   const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const activeWorkspaceId = getActiveWorkspaceIdFromUser(user);
 
-  const { data: clientRows, error: clientsError } = await supabase
+  let clientsQuery = supabase
     .from("clients")
     .select("id, name, industry, website, projects(count)")
     .order("name", { ascending: true });
+
+  if (activeWorkspaceId) {
+    clientsQuery = clientsQuery.eq("workspace_id", activeWorkspaceId);
+  } else {
+    clientsQuery = clientsQuery.eq("workspace_id", "00000000-0000-0000-0000-000000000000");
+  }
+
+  const { data: clientRows, error: clientsError } = await clientsQuery;
 
   if (clientsError) {
     console.error("Clients fetch error:", clientsError);
@@ -45,5 +58,11 @@ export default async function SettingsClientsPage() {
     };
   });
 
-  return <ClientsSettingsPage initialClients={initialClients} readOnly={isReadOnly} />;
+  return (
+    <ClientsSettingsPage
+      initialClients={initialClients}
+      readOnly={isReadOnly}
+      activeWorkspaceId={activeWorkspaceId}
+    />
+  );
 }

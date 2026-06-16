@@ -24,7 +24,11 @@ export function ShowAccordion({
   className,
   showLines = true,
 }: ShowAccordionProps) {
-  const rootClass = [styles.root, className ?? ''].filter(Boolean).join(' ');
+  const rootClass = [
+  styles.root,
+  !showLines ? styles.rootNoLines : '',
+  className ?? '',
+].filter(Boolean).join(' ');
 
   const leadingIconName =
     state === 'more' ? 'chevron-down' : state === 'less' ? 'chevron-up' : null;

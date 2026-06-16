@@ -426,6 +426,7 @@ export function OnboardingFlow({
           workspace_id: workspace.id,
           user_id: currentUserId,
           role: "member",
+          permission_level: "reviewer",
           status: "active",
         });
       }
@@ -474,6 +475,7 @@ export function OnboardingFlow({
         workspace_id: workspace.id,
         user_id: memberUserId,
         role: "admin",
+        permission_level: "admin",
         status: "active",
       });
 
@@ -558,6 +560,7 @@ export function OnboardingFlow({
       if (!skip && projectName.trim() && activeWorkspaceId) {
         const clientFields = await resolveProjectClientFields(supabase, {
           clientName: projectFor.trim() || null,
+          workspaceId: activeWorkspaceId,
         });
         await supabase.from("projects").insert({
           name: projectName.trim(),

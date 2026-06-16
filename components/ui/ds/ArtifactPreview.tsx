@@ -16,12 +16,14 @@ import {
 } from '@/lib/artifacts/artifactOpenTarget';
 import { Divider } from './Divider';
 import { Icon } from './Icon';
+import { IconSquareButton } from './IconSquareButton';
 import { Select } from './Select';
 import { Tag } from './Tag';
 import { Tooltip } from './Tooltip';
 import { Textarea } from './Textarea';
 import { TextareaAi } from './TextareaAi';
 import textareaStyles from './Textarea.module.css';
+import { LinkOgPreviewCard } from './LinkOgPreviewCard';
 import styles from './ArtifactPreview.module.css';
 
 export type ArtifactPreviewSize = 'large' | 'small';
@@ -65,6 +67,24 @@ function buildFigmaEmbedUrl(url: string): string {
   return `https://www.figma.com/embed?embed_host=designtrace&url=${encodeURIComponent(trimmed)}`;
 }
 
+function isLoomShareUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return /loom\.com$/i.test(u.hostname.replace(/^www\./, '')) && /\/share\//i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function buildLoomEmbedUrl(url: string): string {
+  return url.replace(/\/share\//i, '/embed/');
+}
+
+function isImagePreviewFileType(fileType?: ArtifactPreviewFileType): boolean {
+  const ft = String(fileType ?? '').toLowerCase();
+  return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ft);
+}
+
 function hostnameFromUrl(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '') || '';
@@ -95,27 +115,6 @@ function resolveVersionSelectValue(iteration: string, iterationOptions: string[]
   return byDisplay ?? normalized;
 }
 
-function ExternalLinkGlyph({ size = 16 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden
-    >
-      <path
-        d="M14 3h7v7M10 14 21 3M21 14v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 function isGoogleWorkspaceUrl(url: string): boolean {
   try {
     const u = new URL(url);
@@ -142,7 +141,23 @@ function buildGoogleEmbedUrl(url: string): string {
   }
 }
 
-function EmbedPreviewFallback() {
+function EmbedPreviewLoading() {
+  return (
+    <p
+      className="text-sm"
+      style={{
+        color: "var(--text-disabled, #998c82)",
+        margin: 0,
+        fontSize: 13,
+        fontWeight: 500,
+      }}
+    >
+      Loading
+    </p>
+  );
+}
+
+function EmbedPreviewUnavailable() {
   return (
     <>
       <Icon name="artifact" size={32} style={{ color: "var(--text-disabled, #998c82)" }} />
@@ -166,21 +181,25 @@ function EmbeddableIframe({
   title,
   size = 'large',
   compact = false,
+  constrainToParent = false,
 }: {
   src: string;
   title: string;
   size?: ArtifactPreviewSize;
   compact?: boolean;
+  constrainToParent?: boolean;
 }) {
   const [iframeLoaded, setIframeLoaded] = useState(false);
+  const [iframeFailed, setIframeFailed] = useState(false);
 
   useEffect(() => {
     setIframeLoaded(false);
+    setIframeFailed(false);
   }, [src]);
 
   const wrapClass = [
     styles.embedWrap,
-    size === 'large' && !compact ? styles.embedWrapLarge : '',
+    size === 'large' && !compact && !constrainToParent ? styles.embedWrapLarge : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -189,23 +208,33 @@ function EmbeddableIframe({
     return (
       <div className={wrapClass}>
         <div className={styles.embedFallback}>
-          <EmbedPreviewFallback />
+          <EmbedPreviewUnavailable />
         </div>
       </div>
     );
   }
 
+  const showLoading = !iframeLoaded && !iframeFailed;
+
   return (
     <div className={wrapClass}>
-      <div className={styles.embedFallback} aria-hidden={iframeLoaded}>
-        <EmbedPreviewFallback />
-      </div>
+      {showLoading ? (
+        <div className={styles.embedFallback} aria-live="polite">
+          <EmbedPreviewLoading />
+        </div>
+      ) : null}
+      {iframeFailed ? (
+        <div className={styles.embedFallback}>
+          <EmbedPreviewUnavailable />
+        </div>
+      ) : null}
       <iframe
         src={src}
         title={title}
         className={styles.embedIframe}
-        style={{ opacity: iframeLoaded ? 1 : 0 }}
+        style={{ opacity: iframeLoaded && !iframeFailed ? 1 : 0 }}
         onLoad={() => setIframeLoaded(true)}
+        onError={() => setIframeFailed(true)}
         allowFullScreen
         loading="lazy"
       />
@@ -219,6 +248,7 @@ function renderPreviewContent(
   fileType?: ArtifactPreviewFileType,
   size: ArtifactPreviewSize = 'large',
   compact = false,
+  constrainToParent = false,
 ): ReactNode {
   const ft = fileType ? String(fileType).toLowerCase() : '';
   if (
@@ -233,9 +263,22 @@ function renderPreviewContent(
         style={{
           width: '100%',
           height: '100%',
-          objectFit: 'cover',
+          objectFit: 'contain',
+          objectPosition: 'center',
           display: 'block',
         }}
+      />
+    );
+  }
+
+  if (linkUrl && isLoomShareUrl(linkUrl)) {
+    return (
+      <EmbeddableIframe
+        src={buildLoomEmbedUrl(linkUrl)}
+        title="Loom video preview"
+        size={size}
+        compact={compact}
+        constrainToParent={constrainToParent}
       />
     );
   }
@@ -248,6 +291,7 @@ function renderPreviewContent(
         title="Google document preview"
         size={size}
         compact={compact}
+        constrainToParent={constrainToParent}
       />
     );
   }
@@ -260,6 +304,7 @@ function renderPreviewContent(
         title="Figma preview"
         size={size}
         compact={compact}
+        constrainToParent={constrainToParent}
       />
     );
   }
@@ -271,6 +316,7 @@ function renderPreviewContent(
         title="PDF preview"
         size={size}
         compact={compact}
+        constrainToParent={constrainToParent}
       />
     );
   }
@@ -449,11 +495,13 @@ export function ArtifactPreview({
   /** Non-upload link artifact without embed: compact favicon card. */
   const rawLink = String(linkUrl ?? '').trim();
   const googleWorkspaceLink = rawLink ? isGoogleWorkspaceUrl(rawLink) : false;
+  const isLoomShare = rawLink ? isLoomShareUrl(rawLink) : false;
   const showGenericLinkCard =
     Boolean(rawLink) &&
     !imageUrl &&
     !isFigmaUrl(rawLink) &&
-    !googleWorkspaceLink;
+    !googleWorkspaceLink &&
+    !isLoomShare;
   const linkHostname = showGenericLinkCard ? hostnameFromUrl(rawLink) : '';
   const faviconSrc =
     showGenericLinkCard && linkHostname
@@ -470,12 +518,20 @@ export function ArtifactPreview({
 
   const resolvedPreviewNonLink = showGenericLinkCard
     ? null
-    : renderPreviewContent(imageUrl, linkUrl, fileType, size, compact);
+    : renderPreviewContent(
+        imageUrl,
+        linkUrl,
+        fileType,
+        size,
+        compact,
+        isArtifactHistory && isLarge,
+      );
   const hasArtifactFilePreviewSource = Boolean(String(imageUrl ?? '').trim());
   const isIframeEmbed = Boolean(
     rawLink &&
       (isFigmaEmbed ||
         googleWorkspaceLink ||
+        isLoomShare ||
         (resolvedPreviewNonLink != null &&
           !hasArtifactFilePreviewSource &&
           !showGenericLinkCard)),
@@ -569,7 +625,17 @@ export function ArtifactPreview({
     return displayVersionTagLabel(t);
   })();
 
-  const interactivePreviewClass = canOpenPreview ? styles.previewInteractive : '';
+  const isImagePreview =
+    Boolean(imageUrl) && isImagePreviewFileType(fileType);
+  const previewOpensOnMediaClick = canOpenPreview && !showGenericLinkCard;
+  const showOpenAction = openTarget != null;
+  const showTrashAction = isEditable && Boolean(onMinimise);
+  const interactivePreviewClass = [
+    previewOpensOnMediaClick ? styles.previewInteractive : '',
+    isImagePreview && previewOpensOnMediaClick ? styles.previewImageInteractive : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <div className={rootClass}>
@@ -585,7 +651,8 @@ export function ArtifactPreview({
         className={[
           styles.preview,
           isSmall ? styles.previewSmall : styles.previewLarge,
-          isLarge && compact ? styles.previewLargeCompact : '',
+          isLarge && compact && !showGenericLinkCard ? styles.previewLargeCompact : '',
+          isLarge && showGenericLinkCard ? styles.previewLargeLink : '',
           isArtifactHistory && isLarge ? styles.previewArtifactHistory : '',
         ]
           .filter(Boolean)
@@ -595,6 +662,7 @@ export function ArtifactPreview({
           className={[
             styles.previewImageWrap,
             isArtifactHistory && isLarge ? styles.previewImageWrapHistory : '',
+            showGenericLinkCard ? styles.previewImageWrapLink : '',
           ]
             .filter(Boolean)
             .join(' ')}
@@ -603,13 +671,20 @@ export function ArtifactPreview({
             className={[
               styles.previewImage,
               isArtifactHistory && isLarge ? styles.previewArtifactHistoryImage : '',
+              showGenericLinkCard ? styles.previewImageLink : '',
             ]
               .filter(Boolean)
               .join(' ')}
           >
             <div
-              className={[styles.previewMedia, interactivePreviewClass].filter(Boolean).join(' ')}
-              {...(canOpenPreview
+              className={[
+                styles.previewMedia,
+                showGenericLinkCard ? styles.previewMediaLink : '',
+                interactivePreviewClass,
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              {...(previewOpensOnMediaClick
                 ? {
                     role: 'button' as const,
                     tabIndex: 0,
@@ -628,30 +703,13 @@ export function ArtifactPreview({
                 : {})}
             >
               {showGenericLinkCard ? (
-                <a
-                  href={canOpenPreview ? undefined : rawLink}
-                  target={canOpenPreview ? undefined : '_blank'}
-                  rel={canOpenPreview ? undefined : 'noopener noreferrer'}
-                  className={styles.linkArtifactCard}
-                  onClick={canOpenPreview ? (e) => e.preventDefault() : undefined}
-                >
-                  {faviconSrc ? (
-                    <img
-                      src={faviconSrc}
-                      alt=""
-                      width={32}
-                      height={32}
-                      className={styles.linkArtifactFavicon}
-                      loading="lazy"
-                    />
-                  ) : null}
-                  {linkHostname ? (
-                    <span className={styles.linkArtifactDomain}>{linkHostname}</span>
-                  ) : null}
-                  <span className={styles.linkArtifactExternal} aria-hidden>
-                    <ExternalLinkGlyph size={16} />
-                  </span>
-                </a>
+                <LinkOgPreviewCard
+                  url={rawLink}
+                  hostname={linkHostname}
+                  fallbackFavicon={faviconSrc}
+                  canOpenPreview={canOpenPreview}
+                  onOpen={openPreview}
+                />
               ) : showHistoryPlaceholder ? (
                 <div className={styles.historyPreviewPlaceholder}>
                   <Icon name="upload" size={48} />
@@ -660,6 +718,46 @@ export function ArtifactPreview({
                 resolvedPreviewNonLink
               )}
             </div>
+
+            {showOpenAction || showTrashAction ? (
+              <div
+                className={styles.previewActionBar}
+                onClick={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                {showOpenAction ? (
+                  <IconSquareButton
+                    variant="default"
+                    icon="open-tab"
+                    label="Open artifact"
+                    onClick={() => openPreview()}
+                  />
+                ) : null}
+                {showTrashAction ? (
+                  removeDisabled && removeDisabledTooltip ? (
+                    <Tooltip label={removeDisabledTooltip} position="top">
+                      <span className="inline-flex">
+                        <IconSquareButton
+                          variant="default"
+                          icon="trash"
+                          label="Remove artifact"
+                          disabled
+                          onClick={() => undefined}
+                        />
+                      </span>
+                    </Tooltip>
+                  ) : (
+                    <IconSquareButton
+                      variant="default"
+                      icon="trash"
+                      label="Remove artifact"
+                      disabled={removeDisabled}
+                      onClick={() => onMinimise?.()}
+                    />
+                  )
+                ) : null}
+              </div>
+            ) : null}
 
             {/* Type tag — direct file uploads only (not iframe embeds). */}
             {showFileTypeTag && (
@@ -675,50 +773,13 @@ export function ArtifactPreview({
               </div>
             )}
 
-            {/* Trash button - editable mode only, top-right */}
-            {isEditable && onMinimise ? (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 10,
-                  right: 10,
-                  zIndex: 3,
-                }}
-              >
-                {removeDisabled && removeDisabledTooltip ? (
-                  <Tooltip label={removeDisabledTooltip} position="top">
-                    <span className="inline-flex">
-                      <button
-                        type="button"
-                        className={styles.iconBtn}
-                        disabled
-                        aria-label="Remove artifact"
-                      >
-                        <Icon name="trash" size={14} />
-                      </button>
-                    </span>
-                  </Tooltip>
-                ) : (
-                  <button
-                    type="button"
-                    className={styles.iconBtn}
-                    disabled={removeDisabled}
-                    onClick={() => onMinimise?.()}
-                    aria-label="Remove artifact"
-                  >
-                    <Icon name="trash" size={14} />
-                  </button>
-                )}
-              </div>
-            ) : null}
-
           </div>
           {historyFileBar}
         </div>
       </div>
 
       {/* ── File name bar — large default layout (not Artifact History; Figma iframe has no bar). ── */}
-      {isLarge && !isArtifactHistory && !isFigmaEmbed && (
+      {isLarge && !isArtifactHistory && !isFigmaEmbed && !showGenericLinkCard && !isLoomShare && (
         <>
           {onRegenerateDescription !== undefined &&
             showFigmaMeta &&

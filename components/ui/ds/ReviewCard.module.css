@@ -48,7 +48,7 @@ a:hover .root {
 /* ─── Title ─────────────────────────────────────────────────────────────────── */
 
 .title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.5;
   color: #2e1c1c;
@@ -69,7 +69,7 @@ a:hover .root {
 .meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   width: 100%;
 }
 
@@ -79,6 +79,22 @@ a:hover .root {
 }
 
 .breadcrumbRow {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Grows to absorb height so breadcrumbs sit above the footer row across cards. */
+.descriptionSlot {
+  flex: 1 1 auto;
+  min-height: calc(13px * 1.5 * 2);
+  min-width: 0;
+}
+
+.cardBottom {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   width: 100%;
   min-width: 0;
 }
@@ -95,15 +111,16 @@ a:hover .root {
 /* ─── Description ────────────────────────────────────────────────────────────── */
 
 .description {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 400;
   line-height: 1.5;
-  color: #2e1c1c;
+  letter-spacing: 0.2px;
+  color: var(--text-secondary, #6b5e55);
   width: 100%;
   margin: 0;
   text-align: left;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }

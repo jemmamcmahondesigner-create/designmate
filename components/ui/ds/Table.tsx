@@ -4,6 +4,7 @@ import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { IconSquareButton } from './IconSquareButton';
 import { Menu, MenuItem } from './Menu';
+import { TruncatedTooltip } from './TruncatedTooltip';
 import styles from './Table.module.css';
 
 export type TableCellType =
@@ -129,7 +130,7 @@ export function Table<T extends { id: string }>({
 
   if (rows.length === 0 && emptyState) {
     return (
-      <div className={wrapClass}>
+      <div className={[wrapClass, styles.wrapEmpty].filter(Boolean).join(' ')}>
         <div className={styles.empty}>{emptyState}</div>
       </div>
     );
@@ -208,7 +209,15 @@ export function Table<T extends { id: string }>({
                       className={styles.headerLabelWrap}
                       style={headerLabelWrapStyle}
                     >
-                      <span className={styles.headerLabel}>{column.label}</span>
+                      {column.label ? (
+                        <TruncatedTooltip
+                          label={column.label}
+                          className={styles.headerLabel}
+                          fullWidth
+                        >
+                          {column.label}
+                        </TruncatedTooltip>
+                      ) : null}
                     </div>
                     {showHeaderDivider ? (
                       <div className={styles.headerDividerOuter} aria-hidden>
@@ -324,6 +333,25 @@ export function Table<T extends { id: string }>({
   );
 }
 
+function plainTextCellValue(value: ReactNode): string | null {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  return null;
+}
+
+function renderPlainTextCell(
+  value: ReactNode,
+  className: string,
+): ReactNode {
+  const text = plainTextCellValue(value);
+  if (text == null) return <span className={className}>{value}</span>;
+  return (
+    <TruncatedTooltip label={text} className={className} fullWidth>
+      {text}
+    </TruncatedTooltip>
+  );
+}
+
 function renderCell<T extends { id: string }>(
   column: ColumnDef<T>,
   row: T,
@@ -334,7 +362,7 @@ function renderCell<T extends { id: string }>(
 
   switch (type) {
     case 'text':
-      return <span className={styles.cellText}>{raw}</span>;
+      return renderPlainTextCell(raw, styles.cellText);
     case 'text-bold': {
       const cls = [
         styles.cellTextBold,
@@ -342,7 +370,7 @@ function renderCell<T extends { id: string }>(
       ]
         .filter(Boolean)
         .join(' ');
-      return <span className={cls}>{raw}</span>;
+      return renderPlainTextCell(raw, cls);
     }
     case 'link':
       return <span className={styles.cellLink}>{raw}</span>;

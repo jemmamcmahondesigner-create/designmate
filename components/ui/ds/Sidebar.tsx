@@ -6,7 +6,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { useLayoutEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { Avatar } from './Avatar';
-import { getAvatarColour } from '@/lib/utils/avatarColour';
+import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
 import { Tooltip } from './Tooltip';
 import styles from './Sidebar.module.css';
 
@@ -34,7 +34,7 @@ export interface SidebarProps {
   /** Popover open state for aria-expanded on the footer button. */
   settingsMenuOpen?: boolean;
   onUserAnchorChange?: (el: HTMLElement | null) => void;
-  /** Workspace name shown above Projects nav when rail is expanded. */
+  /** Workspace name shown above the profile row when rail is expanded. */
   workspaceLabel?: string | null;
   /** Shown in the white nav area above the footer divider; hidden when rail collapsed. */
   aboveFooterSlot?: ReactNode;
@@ -129,13 +129,10 @@ export function Sidebar({
     onRailWidthChange?.(isExpanded ? RAIL_EXPANDED : RAIL_COLLAPSED);
   }, [isExpanded, onRailWidthChange]);
 
-  const footerAvatarColourKey =
-    (user?.contributorId ?? user?.name ?? '').trim() || '?';
-  const footerAvatarPalette = getAvatarColour(footerAvatarColourKey);
-  const footerAvatarStyle = {
-    backgroundColor: footerAvatarPalette.bg,
-    color: footerAvatarPalette.text,
-  };
+  const footerAvatarColourKey = (user?.contributorId ?? '').trim();
+  const footerAvatarStyle = footerAvatarColourKey
+    ? getAvatarInlineStyle(footerAvatarColourKey, { ring: true })
+    : undefined;
 
   const rootClass = [
     styles.root,
@@ -274,32 +271,26 @@ export function Sidebar({
           paddingRight: isExpanded ? 4 : '4px',
         }}
       >
+        <div className={styles.mainNavTop}>
+          {wrapNavLink('projects', 'Projects', '/projects', 'nav-archive', projectsActive)}
+          {wrapNavLink('reviews', 'All Reviews', '/reviews', 'nav-reviews', reviewsActive)}
+          {aboveFooterSlot ? (
+            <div
+              style={{
+                display: isExpanded ? 'block' : 'none',
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '0 4px 0',
+              }}
+            >
+              {aboveFooterSlot}
+            </div>
+          ) : null}
+        </div>
+        <div className={styles.mainNavSpacer} aria-hidden="true" />
         {workspaceLabel?.trim() && isExpanded ? (
-          <div
-            style={{
-              paddingTop: 12,
-              paddingLeft: 16,
-              paddingBottom: 0,
-              paddingRight: 0,
-            }}
-          >
-            <span className={styles.sectionLabel} style={{ fontWeight: 600 }}>
-              {workspaceLabel.trim().toUpperCase()}
-            </span>
-          </div>
-        ) : null}
-        {wrapNavLink('projects', 'Projects', '/projects', 'nav-archive', projectsActive)}
-        {wrapNavLink('reviews', 'All Reviews', '/reviews', 'nav-reviews', reviewsActive)}
-        {aboveFooterSlot ? (
-          <div
-            style={{
-              display: isExpanded ? 'block' : 'none',
-              width: '100%',
-              boxSizing: 'border-box',
-              padding: '0 4px 0',
-            }}
-          >
-            {aboveFooterSlot}
+          <div className={styles.workspaceHeading}>
+            <span className={styles.sectionLabel}>{workspaceLabel.trim().toUpperCase()}</span>
           </div>
         ) : null}
       </div>

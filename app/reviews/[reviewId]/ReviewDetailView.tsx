@@ -49,6 +49,7 @@ import {
   Tag,
   Textarea,
   Tooltip,
+  TradeoffCard,
   type ArtifactDescriptionState,
 } from '@/components/ui/ds';
 import notificationBadgeStyles from '@/components/ui/ds/NotificationBadge.module.css';
@@ -61,7 +62,16 @@ import type {
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatDistanceToNowShort } from '@/lib/formatDistanceToNow';
 import { useClientRelativeTime } from '@/lib/hooks/useClientRelativeTime';
-import { normalizeWorkspacePermission } from '@/lib/workspace/permissions';
+import {
+  normalizeWorkspacePermission,
+} from '@/lib/workspace/permissions';
+import { useActiveWorkspacePermission } from '@/hooks/useWorkspacePermission';
+import { formatAccessRequestSentTooltip } from '@/lib/accessRequests/formatAccessRequestSentTooltip';
+import { loadReviewPendingAccessRequestSummary } from '@/lib/accessRequests/loadPendingAccessRequestSummaries';
+import { loadPendingAccessRequestClient } from '@/lib/accessRequests/loadPendingAccessRequest';
+import { submitAccessRequestClient } from '@/lib/accessRequests/submitAccessRequestClient';
+import { AccessRequestPendingPill } from '@/components/accessRequests/AccessRequestPendingPill';
+import { normalizeReviewStatusKey } from '@/lib/reviews/reviewStatusDisplay';
 import {
   canAddTradeoff,
   canEditReviewDetails,
@@ -120,11 +130,21 @@ import {
   resolveReviewStatusPill,
 } from '@/lib/reviews/reviewStatusDisplay';
 import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
+import { resolveArtifactPreviewFileType } from '@/lib/artifacts/resolveArtifactPreviewFileType';
 import { Warning } from 'phosphor-react';
 
 /** Toast after the remind API successfully emails pending reviewers. */
 const REMINDER_SUCCESS_TOAST =
   'Reminders sent — all pending reviewers have been notified.';
+
+/** Open reviewers may request review access only in these statuses. */
+const REQUEST_TO_REVIEW_VISIBLE_STATUSES = new Set([
+  'in-review',
+  'needs-changes',
+  'changes-needed',
+  'feedback-submitted',
+  'paused',
+]);
 
 //  Types 
 
@@ -145,6 +165,7 @@ export interface ReviewArtifact {
   imageUrl: string | null;
   /** Original link (Figma etc.) used to drive the embed iframe. */
   linkUrl: string | null;
+  mimeType?: string | null;
   /** Client-only AI description UX (not persisted). */
   descriptionAiState?: ArtifactDescriptionState;
   aiGenerated?: boolean;
@@ -163,6 +184,8 @@ export interface Tradeoff {
   relatedArtifactIds?: string[];
   /** Optional label from create-flow / AI jsonb (`artifactLabel`). */
   artifactLabel?: string;
+  /** Contributor who added this tradeoff on the review detail page. */
+  createdByContributorId?: string | null;
 }
 
 interface Reviewer {
@@ -394,9 +417,10 @@ const COLOURS = {
   pendingText: '#7a5500',
 } as const;
 
-const RHC_OPEN_WIDTH = 500;
+const RHC_OPEN_WIDTH = 'clamp(360px, 34vw, 440px)';
 const RHC_CLOSED_WIDTH = 48;
 const RHC_STORAGE_KEY = 'designtrace_rhc_open';
+const RHC_COMPACT_BREAKPOINT = '(min-width: 1024px)';
 
 // All top-level sections in the main scroll area (order matches layout).
 const NAV_SECTIONS: Array<{ id: string; label: string }> = [
@@ -891,6 +915,26 @@ function reviewDetailsAttributionLine(input: {
   return `${label} ${owner}${dateLabel ? `, ${dateLabel}` : ''}`;
 }
 
+function resolveTradeoffArtifactLabel(
+  tradeoff: Tradeoff,
+  artifacts: ReviewArtifact[],
+): string | undefined {
+  const explicit = (tradeoff.artifactLabel ?? '').trim();
+  if (explicit) return explicit;
+  const ids = [...(tradeoff.relatedArtifactIds ?? [])].filter(Boolean);
+  if (ids.length === 0) return undefined;
+  const names = ids
+    .map((id) => {
+      const artifact = artifacts.find((entry) => entry.id === id);
+      return (
+        (artifact?.title ?? artifact?.label ?? artifact?.originalFileName ?? '').trim() ||
+        id
+      );
+    })
+    .filter(Boolean);
+  return names.length > 0 ? names.join(' · ') : undefined;
+}
+
 function resolveTradeoffArtifactIds(
   tradeoff: Tradeoff,
   artifacts: ReviewArtifact[],
@@ -913,7 +957,18 @@ function serializeTradeoffsForReview(tradeoffs: Tradeoff[]) {
     severity: tradeoff.severity,
     relatedArtifactIds: [...(tradeoff.relatedArtifactIds ?? [])],
     artifactLabel: tradeoff.artifactLabel ?? null,
+    createdByContributorId: tradeoff.createdByContributorId ?? null,
   }));
+}
+
+function canEditTradeoff(
+  tradeoff: Tradeoff,
+  currentContributorId: string | null,
+  canEditCoreDetails: boolean,
+): boolean {
+  if (canEditCoreDetails) return true;
+  if (!currentContributorId || !tradeoff.createdByContributorId) return false;
+  return tradeoff.createdByContributorId === currentContributorId;
 }
 
 function isDefaultFilters(filters: MenuSectionsState) {
@@ -1119,6 +1174,7 @@ export function ReviewDetailView({
   const router = useRouter();
   const searchParams = useSearchParams();
   const { showToast } = useToast();
+  const { reviewerType } = useActiveWorkspacePermission();
   const showReviewersNotifiedToast = useCallback(() => {
     showToast({
       message: 'Reviewers notified',
@@ -1164,6 +1220,16 @@ export function ReviewDetailView({
     currentContributorId,
     requestedMode: mode,
   });
+  const reviewerContributorIds = useMemo(
+    () => assignedReviewers.map((reviewer) => reviewer.id),
+    [assignedReviewers],
+  );
+  const canEditReview = useMemo(
+    () =>
+      normalizeWorkspacePermission(workspacePermissionLevel ?? null) !== 'reviewer' ||
+      reviewerContributorIds.includes(currentContributorId ?? ''),
+    [currentContributorId, reviewerContributorIds, workspacePermissionLevel],
+  );
   const rawReviewType = reviewType.trim().toLowerCase();
   const normalizedReviewType =
     rawReviewType === 'comparison'
@@ -1219,6 +1285,23 @@ export function ReviewDetailView({
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deletingReview, setDeletingReview] = useState(false);
 
+  const [reviewAccessRequestSent, setReviewAccessRequestSent] = useState(false);
+  const [reviewAccessRequestRecipientName, setReviewAccessRequestRecipientName] =
+    useState<string | null>(null);
+  const [reviewAccessRequestSentAt, setReviewAccessRequestSentAt] = useState<
+    string | null
+  >(null);
+  const [reviewAccessRequestSubmitting, setReviewAccessRequestSubmitting] =
+    useState(false);
+  const [reviewRequesterContributorId, setReviewRequesterContributorId] = useState<
+    string | null
+  >(null);
+  const [reviewWorkspaceId, setReviewWorkspaceId] = useState<string | null>(null);
+  const [reviewPendingAccessRequestCount, setReviewPendingAccessRequestCount] =
+    useState(0);
+  const [reviewPendingAccessRequesterNames, setReviewPendingAccessRequesterNames] =
+    useState<string[]>([]);
+
   useEffect(() => {
     setLastReminderSentAt(lastReminderSentAtProp);
   }, [lastReminderSentAtProp]);
@@ -1244,6 +1327,176 @@ export function ReviewDetailView({
     const id = window.setInterval(evaluate, 60_000);
     return () => window.clearInterval(id);
   }, [lastReminderSentAt]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const { data: projectRow } = await supabase
+        .from('projects')
+        .select('workspace_id')
+        .eq('id', projectId)
+        .maybeSingle();
+      const resolvedWorkspaceId = String(
+        (projectRow as { workspace_id?: string | null } | null)?.workspace_id ?? '',
+      ).trim();
+      if (cancelled) return;
+      if (!resolvedWorkspaceId) {
+        setReviewWorkspaceId(null);
+        return;
+      }
+      setReviewWorkspaceId(resolvedWorkspaceId);
+
+      const { requesterContributorId: requesterId, pending } =
+        await loadPendingAccessRequestClient(supabase, {
+          workspaceId: resolvedWorkspaceId,
+          reviewId,
+        });
+      if (cancelled) return;
+      setReviewRequesterContributorId(requesterId);
+      if (pending) {
+        setReviewAccessRequestSent(true);
+        setReviewAccessRequestRecipientName(pending.recipientName);
+        setReviewAccessRequestSentAt(pending.createdAt);
+      }
+
+      const pendingSummary = await loadReviewPendingAccessRequestSummary(
+        supabase,
+        reviewId,
+      );
+      if (cancelled) return;
+      setReviewPendingAccessRequestCount(pendingSummary.count);
+      setReviewPendingAccessRequesterNames(pendingSummary.requesterNames);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, reviewId, supabase]);
+
+  const refreshReviewPendingAccessRequests = useCallback(async () => {
+    const pendingSummary = await loadReviewPendingAccessRequestSummary(
+      supabase,
+      reviewId,
+    );
+    setReviewPendingAccessRequestCount(pendingSummary.count);
+    setReviewPendingAccessRequesterNames(pendingSummary.requesterNames);
+  }, [reviewId, supabase]);
+
+  /**
+   * Open workspace reviewers without project membership may request review access.
+   * Stakeholder share-link viewers use `mode === 'view-only'` (?mode=view) and
+   * are excluded — they are not workspace members requesting teammate access.
+   */
+  const showReviewRequestAccess = useMemo(() => {
+    if (mode === 'view-only') return false;
+    if (normalizeWorkspacePermission(workspacePermissionLevel ?? null) !== 'reviewer') {
+      return false;
+    }
+    if (reviewerType !== 'open') return false;
+    const reviewerContributorIds = assignedReviewers.map((reviewer) => reviewer.id);
+    const isAssignedToThisReview =
+      currentContributorId != null &&
+      reviewerContributorIds.includes(currentContributorId);
+    if (isAssignedToThisReview) return false;
+    const normalizedReviewStatus = normalizeReviewStatusKey(rawStatus);
+    if (!REQUEST_TO_REVIEW_VISIBLE_STATUSES.has(normalizedReviewStatus)) {
+      return false;
+    }
+    if (
+      assignedReviewers.some(
+        (reviewer) =>
+          reviewer.id === currentContributorId ||
+          reviewer.id === reviewRequesterContributorId,
+      )
+    ) {
+      return false;
+    }
+    return true;
+  }, [
+    assignedReviewers,
+    currentContributorId,
+    mode,
+    rawStatus,
+    reviewRequesterContributorId,
+    reviewerType,
+    workspacePermissionLevel,
+  ]);
+
+  const handleReviewRequestAccess = useCallback(async () => {
+    if (
+      reviewAccessRequestSent ||
+      reviewAccessRequestSubmitting ||
+      !reviewWorkspaceId ||
+      !reviewRequesterContributorId
+    ) {
+      return;
+    }
+
+    setReviewAccessRequestSubmitting(true);
+    const result = await submitAccessRequestClient({
+      supabase,
+      projectId,
+      workspaceId: reviewWorkspaceId,
+      requestedByContributorId: reviewRequesterContributorId,
+      reviewId,
+    });
+    setReviewAccessRequestSubmitting(false);
+
+    if (!result.success) return;
+
+    showToast({ message: 'Access request sent' });
+    setReviewAccessRequestSent(true);
+    setReviewAccessRequestRecipientName(result.recipientName);
+    setReviewAccessRequestSentAt(new Date().toISOString());
+  }, [
+    projectId,
+    reviewAccessRequestSent,
+    reviewAccessRequestSubmitting,
+    reviewId,
+    reviewRequesterContributorId,
+    reviewWorkspaceId,
+    showToast,
+    supabase,
+  ]);
+
+  const reviewHeaderPrimaryAction = useMemo(() => {
+    if (!showReviewRequestAccess) {
+      return <span />;
+    }
+
+    if (reviewAccessRequestSent) {
+      const tooltipLabel = formatAccessRequestSentTooltip(
+        reviewAccessRequestRecipientName,
+        reviewAccessRequestSentAt,
+      );
+      return (
+        <Tooltip label={tooltipLabel} position="bottom">
+          <span style={{ display: 'inline-flex' }}>
+            <Button variant="accent" size="sm" label="Request Sent" disabled />
+          </span>
+        </Tooltip>
+      );
+    }
+
+    return (
+      <Button
+        variant="accent"
+        size="sm"
+        label="Request to Review"
+        disabled={reviewAccessRequestSubmitting || !reviewRequesterContributorId}
+        onClick={() => void handleReviewRequestAccess()}
+      />
+    );
+  }, [
+    handleReviewRequestAccess,
+    reviewAccessRequestRecipientName,
+    reviewAccessRequestSent,
+    reviewAccessRequestSentAt,
+    reviewAccessRequestSubmitting,
+    reviewRequesterContributorId,
+    showReviewRequestAccess,
+  ]);
 
   const handleSendReminder = useCallback(async (): Promise<boolean> => {
     if (sendingReminder) return false;
@@ -1418,6 +1671,8 @@ export function ReviewDetailView({
   const tradeoffMenuRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const headerStatusRef = useRef<HTMLDivElement | null>(null);
   const pageKebabSectionRef = useRef<HTMLDivElement | null>(null);
+  const pageHeaderRef = useRef<HTMLDivElement | null>(null);
+  const [pageHeaderHeight, setPageHeaderHeight] = useState(48);
   const [changeRequestReplies, setChangeRequestReplies] = useState<Record<string, string>>({});
   const [tabIndex, setTabIndex] = useState(activeTabIndex);
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
@@ -1908,14 +2163,28 @@ export function ReviewDetailView({
   }, [reviewerModalOpen, newReviewerEmail, supabase]);
 
   //  RHC persisted state 
-  const [rhcOpen, setRhcOpen] = useState<boolean>(true);
+  const [rhcOpen, setRhcOpen] = useState(false);
   const [rhcHydrated, setRhcHydrated] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const stored = window.localStorage.getItem(RHC_STORAGE_KEY);
-    if (stored !== null) setRhcOpen(stored === 'true');
+    if (stored !== null) {
+      setRhcOpen(stored === 'true');
+    } else {
+      setRhcOpen(window.matchMedia(RHC_COMPACT_BREAKPOINT).matches);
+    }
     setRhcHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    const node = pageHeaderRef.current;
+    if (!node) return;
+    const syncHeight = () => setPageHeaderHeight(node.offsetHeight);
+    syncHeight();
+    const observer = new ResizeObserver(syncHeight);
+    observer.observe(node);
+    return () => observer.disconnect();
   }, []);
 
   const toggleRhc = () => {
@@ -2183,7 +2452,6 @@ export function ReviewDetailView({
     if (!currentContributorId) return null;
     return contributors.find((c) => c.id === currentContributorId)?.name ?? null;
   }, [contributors, currentContributorId]);
-  const decisionAlertTimestamp = useClientRelativeTime(decisionData.madeAt ?? null);
   const isReviewCreator = Boolean(
     reviewCreatorAuthUserId &&
       currentAuthUserId &&
@@ -2279,6 +2547,7 @@ export function ReviewDetailView({
     onSuccess();
     resetPendingReviewerAddState();
     setReopenReviewModalOpen(false);
+    void refreshReviewPendingAccessRequests();
     if (reviewersNotified) {
       showReviewersNotifiedToast();
     } else {
@@ -2908,12 +3177,12 @@ export function ReviewDetailView({
       const target = resolveArtifactOpenTarget({
         linkUrl: match.linkUrl,
         imageUrl: match.imageUrl,
-        fileType:
-          match.type === 'Figma'
-            ? 'figma'
-            : match.type === 'PDF'
-              ? 'pdf'
-              : 'jpeg',
+        fileType: resolveArtifactPreviewFileType({
+          type: match.type,
+          linkUrl: match.linkUrl,
+          originalFileName: match.originalFileName,
+          mimeType: match.mimeType,
+        }),
       });
       return artifactChipHref(target);
     },
@@ -3024,11 +3293,12 @@ export function ReviewDetailView({
       description: artifact.description,
       originalFileName: artifact.originalFileName,
       mimeType:
-        artifact.type === 'PDF'
+        artifact.mimeType ??
+        (artifact.type === 'PDF'
           ? 'application/pdf'
           : artifact.type === 'Image'
             ? 'image/jpeg'
-            : 'application/figma',
+            : 'application/figma'),
       ai_generated: artifact.aiGenerated ?? false,
     }));
     const { error } = await supabase
@@ -3077,6 +3347,7 @@ export function ReviewDetailView({
           tooltip_text: event.tooltipText,
         },
       });
+      bumpActivityLog();
     }
     showToast('Changes saved');
     router.refresh();
@@ -3234,52 +3505,54 @@ export function ReviewDetailView({
       <div
         className="flex h-screen min-h-0 flex-1 flex-col overflow-hidden min-w-0"
       >
-        <PageHeader
-          variant="breadcrumb-tabs"
-          breadcrumbSegments={[
-            { label: 'Projects', href: '/projects' },
-            {
-              label: projectName,
-              href: `/projects/${projectId}`,
-            },
-            { label: title },
-          ]}
-          pageTitle={title}
-          statusSlot={pageHeaderStatusSlot}
-          showStatus
-          tabs={tabs}
-          activeTab={uiTabIndex}
-          onTabChange={(index) => {
-            const internalIndex = showDecisionLog
-              ? index === 2
-                ? 2
+        <div ref={pageHeaderRef} className="shrink-0">
+          <PageHeader
+            variant="breadcrumb-tabs"
+            breadcrumbSegments={[
+              { label: 'Projects', href: '/projects' },
+              {
+                label: projectName,
+                href: `/projects/${projectId}`,
+              },
+              { label: title },
+            ]}
+            pageTitle={title}
+            statusSlot={pageHeaderStatusSlot}
+            showStatus
+            tabs={tabs}
+            activeTab={uiTabIndex}
+            onTabChange={(index) => {
+              const internalIndex = showDecisionLog
+                ? index === 2
+                  ? 2
+                  : index === 1
+                    ? 1
+                    : 0
                 : index === 1
-                  ? 1
-                  : 0
-              : index === 1
-                ? 2
-                : 0;
-            setTabIndex(internalIndex);
-            const params = new URLSearchParams(searchParams.toString());
-            if (internalIndex === 2) params.set('tab', 'activity');
-            else if (internalIndex === 1 && showDecisionLog) params.set('tab', 'decision');
-            else params.delete('tab');
-            const qs = params.toString();
-            router.replace(qs ? `/reviews/${reviewId}?${qs}` : `/reviews/${reviewId}`);
-          }}
-          primaryActionSlot={<span />}
-          onKebab={
-            showReviewKebabMenu
-              ? () => {
-                  setReviewMenu((m) => (m === 'header' ? null : 'header'));
-                  setHeaderLifecycleMenuOpen(false);
-                }
-              : undefined
-          }
-          kebabMenu={reviewOptionsMenu ?? undefined}
-          kebabMenuExpanded={showReviewKebabMenu && reviewMenu === 'header'}
-          kebabSectionRef={pageKebabSectionRef}
-        />
+                  ? 2
+                  : 0;
+              setTabIndex(internalIndex);
+              const params = new URLSearchParams(searchParams.toString());
+              if (internalIndex === 2) params.set('tab', 'activity');
+              else if (internalIndex === 1 && showDecisionLog) params.set('tab', 'decision');
+              else params.delete('tab');
+              const qs = params.toString();
+              router.replace(qs ? `/reviews/${reviewId}?${qs}` : `/reviews/${reviewId}`);
+            }}
+            primaryActionSlot={reviewHeaderPrimaryAction}
+            onKebab={
+              showReviewKebabMenu
+                ? () => {
+                    setReviewMenu((m) => (m === 'header' ? null : 'header'));
+                    setHeaderLifecycleMenuOpen(false);
+                  }
+                : undefined
+            }
+            kebabMenu={reviewOptionsMenu ?? undefined}
+            kebabMenuExpanded={showReviewKebabMenu && reviewMenu === 'header'}
+            kebabSectionRef={pageKebabSectionRef}
+          />
+        </div>
 
         {tabIndex === 2 ? (
           <main className="flex flex-1 overflow-hidden min-h-0" style={{ backgroundColor: COLOURS.pageBg }}>
@@ -3303,6 +3576,7 @@ export function ReviewDetailView({
             <RightColumn
               open={rhcOpen}
               hydrated={rhcHydrated}
+              headerOffset={pageHeaderHeight}
               onToggle={toggleRhc}
               feedback={feedbackThreads}
               filteredCards={filteredCards}
@@ -3328,7 +3602,7 @@ export function ReviewDetailView({
               totalCardCount={totalCardCount}
               totalReviewerCount={totalReviewerCount}
               approveFeedbackSubmissionCount={approveFeedbackSubmissionCount}
-            approveUniqueReviewerCount={approveUniqueReviewerCount}
+              approveUniqueReviewerCount={approveUniqueReviewerCount}
               changeRequestCount={changeRequests.length}
               changeRequests={changeRequests}
               approveRhcReviewerEntries={approveRhcReviewerEntries}
@@ -3982,7 +4256,7 @@ export function ReviewDetailView({
                   sentiment="success"
                   prominence="high"
                   title={directionApprovedBannerTitle}
-                  actionLabel="View full decision"
+                  actionLabel="View Decision Log"
                   onAction={openDecisionLogTab}
                   dismissible={false}
                   className="w-full"
@@ -4008,9 +4282,7 @@ export function ReviewDetailView({
                         ? 'Rejected'
                         : 'Changes Needed'
                   }
-                  authorName={decisionAttributionName}
-                  timestamp={decisionAlertTimestamp || undefined}
-                  actionLabel="View full decision"
+                  actionLabel="View Decision Log"
                   onAction={openDecisionLogTab}
                   dismissible={false}
                   className="w-full"
@@ -4040,7 +4312,7 @@ export function ReviewDetailView({
                     <SectionHeading>Review Details</SectionHeading>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
-                    {canEditCoreDetails && !hasFeedbackSubmitted ? (
+                    {canEditCoreDetails && canEditReview && !hasFeedbackSubmitted ? (
                       <button
                         type="button"
                         onClick={() => setShowEditTypeModal(true)}
@@ -4097,7 +4369,7 @@ export function ReviewDetailView({
                     )}
                   </div>
                 </div>
-                {coreInteractionMode === 'edit' && !reviewFieldsReadOnly ? (
+                {coreInteractionMode === 'edit' && !reviewFieldsReadOnly && canEditReview ? (
                   <>
                     <div>
                       <Textarea
@@ -4126,7 +4398,7 @@ export function ReviewDetailView({
                     <p
                       style={{
                         margin: 0,
-                        fontSize: 13,
+                        fontSize: 14,
                         color: '#2e1c1c',
                         lineHeight: 1.5,
                         letterSpacing: '0.26px',
@@ -4175,13 +4447,12 @@ export function ReviewDetailView({
                   <div key={artifact.id} id={`review-artifact-${artifact.id}`} className="scroll-mt-6">
                   <ArtifactPreview
                     size="large"
-                    fileType={
-                      artifact.type === 'Figma'
-                        ? 'figma'
-                        : artifact.type === 'PDF'
-                          ? 'pdf'
-                          : 'jpeg'
-                    }
+                    fileType={resolveArtifactPreviewFileType({
+                      type: artifact.type,
+                      linkUrl: artifact.linkUrl,
+                      originalFileName: artifact.originalFileName,
+                      mimeType: artifact.mimeType,
+                    })}
                     mode="readonly"
                     enableOpenInteraction
                     showDetails
@@ -4239,6 +4510,7 @@ export function ReviewDetailView({
                     canGenerateAiDescription={
                       coreInteractionMode === 'edit' &&
                       !reviewFieldsReadOnly &&
+                      canEditReview &&
                       !artifactAiUnavailableById[artifact.id] &&
                       artifact.description.trim().length > 0 &&
                       Boolean(
@@ -4249,7 +4521,7 @@ export function ReviewDetailView({
                       )
                     }
                     onRegenerateDescription={
-                      coreInteractionMode === 'edit' && !reviewFieldsReadOnly
+                      coreInteractionMode === 'edit' && !reviewFieldsReadOnly && canEditReview
                         ? () => void runReviewArtifactDescriptionGeneration(artifact.id)
                         : undefined
                     }
@@ -4272,12 +4544,16 @@ export function ReviewDetailView({
                     Problem statements related to this review.
                   </p>
                 </div>
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1">
                   {problems.map((p) => (
                     <ProblemRow
                       key={p.id}
                       problem={p}
-                      mode={reviewFieldsReadOnly ? 'view-only' : coreInteractionMode}
+                      mode={
+                        reviewFieldsReadOnly || !canEditReview
+                          ? 'view-only'
+                          : coreInteractionMode
+                      }
                       open={openKebabId === p.id}
                       onToggleMenu={() =>
                         setOpenKebabId((current) => (current === p.id ? null : p.id))
@@ -4328,6 +4604,7 @@ export function ReviewDetailView({
                 )}
 
                 {coreInteractionMode === 'edit' &&
+                  canEditReview &&
                   !compareDirectionApprovedLocked &&
                   !compareReviewFullyLocked &&
                   !reviewFieldsReadOnly && (
@@ -4455,17 +4732,19 @@ export function ReviewDetailView({
               </section>
 
               <section id="tradeoffs" className="flex flex-col gap-3 scroll-mt-6">
-                <SectionHeading>Tradeoffs &amp; Risks</SectionHeading>
-                <p
-                  style={{
-                    fontSize: 13,
-                    color: '#6b5e55',
-                    fontWeight: 400,
-                    margin: 0,
-                  }}
-                >
-                  Understanding tradeoffs and their associated risks.
-                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <SectionHeading>Tradeoffs &amp; Risks</SectionHeading>
+                  <p
+                    style={{
+                      fontSize: 13,
+                      color: '#6b5e55',
+                      fontWeight: 400,
+                      margin: 0,
+                    }}
+                  >
+                    Understanding tradeoffs and their associated risks.
+                  </p>
+                </div>
 
                 {tradeoffs.length === 0 && (
                   <div
@@ -4491,50 +4770,71 @@ export function ReviewDetailView({
 
                 {tradeoffs.length > 0 && (
                   <div className="flex flex-col gap-1">
-                    {tradeoffs.map((t) => (
-                      <TradeoffCard
-                        key={t.id}
-                        tradeoff={t}
-                        mode={reviewFieldsReadOnly ? 'view-only' : coreInteractionMode}
-                        artifacts={artifacts}
-                        open={openTradeoffMenuId === t.id}
-                        menuRef={(node) => {
-                          tradeoffMenuRefs.current[t.id] = node;
-                        }}
-                        onToggleMenu={() =>
-                          setOpenTradeoffMenuId((current) => (current === t.id ? null : t.id))
-                        }
-                        onEdit={() => {
-                          setEditingTradeoff(t);
-                          setNewTradeoffText(t.label);
-                          setNewTradeoffSeverity(t.severity);
-                          setTradeoffSelectedArtifactIds(
-                            resolveTradeoffArtifactIds(t, artifacts),
-                          );
-                          setTradeoffArtifactPickerValue('');
-                          setTradeoffModalOpen(true);
-                          setOpenTradeoffMenuId(null);
-                        }}
-                        onDelete={async () => {
-                          const nextTradeoffs = tradeoffs.filter((tradeoff) => tradeoff.id !== t.id);
-                          setTradeoffs(nextTradeoffs);
-                          const { error } = await supabase
-                            .from('reviews')
-                            .update({ tradeoffs: serializeTradeoffsForReview(nextTradeoffs) })
-                            .eq('id', reviewId);
-                          if (!error) {
-                            showToast('Changes saved');
-                            router.refresh();
+                    {tradeoffs.map((t) => {
+                      const canEditThisTradeoff = canEditTradeoff(
+                        t,
+                        currentContributorId,
+                        canEditCoreDetails,
+                      );
+                      const tradeoffEditable =
+                        canEditThisTradeoff &&
+                        canEditReview &&
+                        !reviewFieldsReadOnly &&
+                        coreInteractionMode === 'edit';
+                      return (
+                        <TradeoffCard
+                          key={t.id}
+                          label={t.label}
+                          severity={t.severity}
+                          artifactLabel={resolveTradeoffArtifactLabel(t, artifacts)}
+                          layout="inline"
+                          interactive={tradeoffEditable}
+                          showKebab={tradeoffEditable}
+                          kebabOpen={openTradeoffMenuId === t.id}
+                          menuRef={(node) => {
+                            tradeoffMenuRefs.current[t.id] = node;
+                          }}
+                          onKebabToggle={() =>
+                            setOpenTradeoffMenuId((current) =>
+                              current === t.id ? null : t.id,
+                            )
                           }
-                          setOpenTradeoffMenuId(null);
-                        }}
-                        onCloseMenu={() => setOpenTradeoffMenuId(null)}
-                      />
-                    ))}
+                          onEdit={() => {
+                            setEditingTradeoff(t);
+                            setNewTradeoffText(t.label);
+                            setNewTradeoffSeverity(t.severity);
+                            setTradeoffSelectedArtifactIds(
+                              resolveTradeoffArtifactIds(t, artifacts),
+                            );
+                            setTradeoffArtifactPickerValue('');
+                            setTradeoffModalOpen(true);
+                            setOpenTradeoffMenuId(null);
+                          }}
+                          onDelete={async () => {
+                            const nextTradeoffs = tradeoffs.filter(
+                              (tradeoff) => tradeoff.id !== t.id,
+                            );
+                            setTradeoffs(nextTradeoffs);
+                            const { error } = await supabase
+                              .from('reviews')
+                              .update({
+                                tradeoffs: serializeTradeoffsForReview(nextTradeoffs),
+                              })
+                              .eq('id', reviewId);
+                            if (!error) {
+                              showToast('Changes saved');
+                              router.refresh();
+                            }
+                            setOpenTradeoffMenuId(null);
+                          }}
+                          onKebabClose={() => setOpenTradeoffMenuId(null)}
+                        />
+                      );
+                    })}
                   </div>
                 )}
 
-                {canAddTradeoffs && !compareReviewFullyLocked && !reviewFieldsReadOnly && (
+                {canAddTradeoffs && canEditReview && !compareReviewFullyLocked && !reviewFieldsReadOnly && (
                   <Button
                     label="Add a tradeoff"
                     variant="ghost"
@@ -4551,7 +4851,15 @@ export function ReviewDetailView({
               </section>
 
               <section id="reviewers" className="flex flex-col gap-3 scroll-mt-6 pb-24">
-                <SectionHeading>Reviewers</SectionHeading>
+                <div className="flex flex-wrap items-center gap-2">
+                  <SectionHeading>Reviewers</SectionHeading>
+                  {canEditReviewMenu && reviewPendingAccessRequestCount > 0 ? (
+                    <AccessRequestPendingPill
+                      count={reviewPendingAccessRequestCount}
+                      requesterNames={reviewPendingAccessRequesterNames}
+                    />
+                  ) : null}
+                </div>
 
                 {reviewers.length === 0 && (
                   <div
@@ -4904,6 +5212,7 @@ export function ReviewDetailView({
           <RightColumn
             open={rhcOpen}
             hydrated={rhcHydrated}
+            headerOffset={pageHeaderHeight}
             onToggle={toggleRhc}
             feedback={feedbackThreads}
             filteredCards={filteredCards}
@@ -5154,7 +5463,8 @@ export function ReviewDetailView({
         reviewerContributorIds={assignedReviewers.map((reviewer) => reviewer.id)}
         artifactIdsWithFeedback={artifactIdsWithFeedback}
         onSaved={() => {
-          showToast('Changes saved');
+          setEditReviewDrawerOpen(false);
+          setActivityRefreshKey((key) => key + 1);
           router.refresh();
         }}
       />
@@ -5607,9 +5917,11 @@ export function ReviewDetailView({
                   if (!text) return;
                   const nextTradeoff: Tradeoff = {
                     id: editingTradeoff?.id ?? crypto.randomUUID(),
-                      label: text,
-                      severity: newTradeoffSeverity,
-                      relatedArtifactIds: [...tradeoffSelectedArtifactIds],
+                    label: text,
+                    severity: newTradeoffSeverity,
+                    relatedArtifactIds: [...tradeoffSelectedArtifactIds],
+                    createdByContributorId:
+                      editingTradeoff?.createdByContributorId ?? currentContributorId,
                   };
                   const nextTradeoffs = editingTradeoff
                     ? tradeoffs.map((tradeoff) =>
@@ -5846,7 +6158,7 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
     <h2
       style={{
         fontSize: 20,
-        fontWeight: 600,
+        fontWeight: 700,
         color: COLOURS.textHeading,
         letterSpacing: '-0.3px',
         margin: 0,
@@ -5945,7 +6257,7 @@ function ProblemRow({
       onMouseEnter={() => isEdit && setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        height: 40,
+        height: 42,
         paddingLeft: 12,
         paddingRight: 12,
         paddingTop: 4,
@@ -6008,179 +6320,6 @@ function ProblemRow({
           </Menu>
         </div>
       )}
-    </div>
-  );
-}
-
-function tradeoffDrawerSentimentStyle(severity: 'High' | 'Medium' | 'Low'): {
-  bg: string;
-  border: string;
-  pillBg: string;
-  pillFg: string;
-} {
-  if (severity === 'High') {
-    return {
-      bg: '#fceaea',
-      border: '#e07070',
-      pillBg: '#c94040',
-      pillFg: '#ffffff',
-    };
-  }
-  if (severity === 'Medium') {
-    return {
-      bg: '#fef8dc',
-      border: '#e5b025',
-      pillBg: '#e0b530',
-      pillFg: '#3d2800',
-    };
-  }
-  return {
-    bg: '#f3efe9',
-    border: '#e4ddd3',
-    pillBg: '#6b1e2e',
-    pillFg: '#ffffff',
-  };
-}
-
-//  Tradeoff sentiment card 
-
-function TradeoffCard({
-  tradeoff,
-  mode,
-  artifacts,
-  open,
-  onToggleMenu,
-  onCloseMenu,
-  onEdit,
-  onDelete,
-  menuRef,
-}: {
-  tradeoff: Tradeoff;
-  mode: ReviewMode;
-  artifacts: ReviewArtifact[];
-  open: boolean;
-  onToggleMenu?: () => void;
-  onCloseMenu?: () => void;
-  onEdit?: () => void;
-  onDelete?: () => void;
-  menuRef?: (node: HTMLDivElement | null) => void;
-}) {
-  const sentiment = tradeoffDrawerSentimentStyle(tradeoff.severity);
-  const kebabRef = useRef<HTMLDivElement | null>(null);
-  const hasActions = mode === 'edit' && Boolean(onToggleMenu && onEdit && onDelete && menuRef);
-
-  useEffect(() => {
-    menuRef?.(kebabRef.current);
-    return () => menuRef?.(null);
-  }, [menuRef]);
-
-  const relatedArtifactLine =
-    tradeoff.relatedArtifactIds && tradeoff.relatedArtifactIds.length > 0
-      ? tradeoff.relatedArtifactIds
-          .map((id) => {
-            const a = artifacts.find((x) => x.id === id);
-            return (
-              (a?.title ?? a?.label ?? a?.originalFileName ?? '').trim() || id
-            );
-          })
-          .filter(Boolean)
-          .join(' · ')
-      : '';
-
-  return (
-    <div
-      className="relative flex w-full items-center gap-3"
-      style={{
-        borderRadius: 6,
-        backgroundColor: sentiment.bg,
-        border: `1px solid ${sentiment.border}`,
-        paddingLeft: 12,
-        paddingRight: hasActions ? 52 : 12,
-        paddingTop: 4,
-        paddingBottom: 4,
-        minWidth: 0,
-        minHeight: 40,
-      }}
-    >
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5 text-left">
-        <Tooltip label={tradeoff.label} position="top" maxWidth={320} fullWidth>
-          <p className="m-0 truncate text-left text-[13px] leading-[18px] text-[#2e1c1c]">
-            {tradeoff.label}
-          </p>
-        </Tooltip>
-        {relatedArtifactLine ? (
-          <p className="m-0 truncate text-left text-[12px] font-normal leading-normal tracking-[0.24px] text-[#998c82]">
-            {relatedArtifactLine}
-          </p>
-        ) : null}
-      </div>
-
-      <div className="flex shrink-0 items-center gap-1.5">
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: 20,
-            padding: '0 8px',
-            borderRadius: 9999,
-            backgroundColor: sentiment.pillBg,
-            color: sentiment.pillFg,
-            fontSize: 11,
-            fontWeight: 600,
-            lineHeight: 1.5,
-            letterSpacing: 0.22,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {tradeoff.severity}
-        </span>
-        {tradeoff.artifactLabel ? (
-          <Tag label={tradeoff.artifactLabel} variant="neutral" size="sm" />
-        ) : null}
-      </div>
-
-      {hasActions ? (
-        <div
-          ref={kebabRef}
-          style={{
-            position: 'absolute',
-            right: 8,
-            top: '50%',
-            transform: 'translateY(-50%)',
-          }}
-        >
-          <button
-            type="button"
-            aria-label={`More options for ${tradeoff.label}`}
-            onClick={onToggleMenu}
-            className="inline-flex items-center justify-center shrink-0"
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 6,
-              color: '#6b5e55',
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            <Icon name="kebab" size={14} />
-          </button>
-          {open ? (
-            <Menu
-              open
-              onClose={() => onCloseMenu?.()}
-              anchorRef={kebabRef as RefObject<HTMLElement>}
-              align="right"
-              type="context-menu"
-            >
-              <MenuItem label="Edit" icon="edit" onClick={() => onEdit?.()} />
-              <MenuItem label="Delete" icon="trash" destructive onClick={() => onDelete?.()} />
-            </Menu>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -6472,6 +6611,16 @@ function deriveFeedbackStage(
   return 2;
 }
 
+function ChangeRequestArtifactTag({ label }: { label: string }) {
+  return (
+    <Tooltip label="Changes have been requested." position="top">
+      <span className="inline-flex">
+        <Tag label={label} variant="brand" size="sm" />
+      </span>
+    </Tooltip>
+  );
+}
+
 function ChangeRequestReplyComposer({
   value,
   onChange,
@@ -6501,27 +6650,14 @@ function ChangeRequestReplyComposer({
         onChange={(e) => onChange(e.target.value.slice(0, 140))}
         onKeyDown={handleKeyDown}
       />
-      <button
+      <Button
         type="button"
-        style={{
-          height: 32,
-          padding: '0 12px',
-          border: '1px solid #e4ddd3',
-          borderRadius: 6,
-          fontSize: 13,
-          fontWeight: 500,
-          color: '#2e1c1c',
-          background: '#ffffff',
-          opacity: value.trim() ? 1 : 0.6,
-          cursor: value.trim() ? 'pointer' : 'not-allowed',
-        }}
+        variant="secondary"
+        size="sm"
+        label="Send"
         disabled={!value.trim()}
-        onClick={() => {
-          onSend();
-        }}
-      >
-        Send
-      </button>
+        onClick={onSend}
+      />
     </div>
   );
 }
@@ -6542,6 +6678,7 @@ function FeedbackThreadCommentCard({
   thread,
   threadReplies,
   cardCategory,
+  reviewType,
   currentContributorId,
   canCurrentUserMakeDecision,
   contributorsById,
@@ -6555,6 +6692,7 @@ function FeedbackThreadCommentCard({
   thread: FeedbackThread;
   threadReplies: CardReplyRow[];
   cardCategory: 'feedback' | 'notification';
+  reviewType: string;
   currentContributorId: string | null;
   canCurrentUserMakeDecision: boolean;
   contributorsById: Map<string, ContributorOption>;
@@ -6587,6 +6725,12 @@ function FeedbackThreadCommentCard({
   }, [threadReplies]);
 
   const type = getCommentType(thread, threadReplies.length > 0);
+  const conceptOptions = resolveThreadConceptOptions(thread, artifacts);
+  const reviewTypeNorm = normStatus(reviewType);
+  const isCompareReview =
+    reviewTypeNorm === 'compare' || reviewTypeNorm === 'comparison';
+  const optionTagVariant =
+    isCompareReview && conceptOptions.length > 0 ? 'aqua' : 'brand';
   const replies = threadReplies.map((reply) => {
     const authorName =
       reply.reply_by_name ??
@@ -6618,7 +6762,8 @@ function FeedbackThreadCommentCard({
       authorAvatarSrc={thread.authorAvatarSrc}
       timestamp={timestamp || undefined}
       body={thread.text}
-      options={resolveThreadConceptOptions(thread, artifacts)}
+      options={conceptOptions}
+      optionTagVariant={optionTagVariant}
       replies={replies}
       onReply={
         !disableReplies && thread.status === 'submitted'
@@ -6644,6 +6789,7 @@ function FeedbackThreadCommentCard({
 function RightColumn({
   open,
   hydrated,
+  headerOffset,
   onToggle,
   feedback,
   filteredCards,
@@ -6709,6 +6855,8 @@ function RightColumn({
 }: {
   open: boolean;
   hydrated: boolean;
+  /** Viewport offset for compact fixed overlay — matches measured PageHeader height. */
+  headerOffset: number;
   onToggle: () => void;
   feedback: FeedbackThread[];
   filteredCards: Array<
@@ -6805,7 +6953,7 @@ function RightColumn({
   isReviewPaused?: boolean;
   isReviewDraft?: boolean;
 }) {
-  const width = open ? 'clamp(360px, 34vw, 440px)' : RHC_CLOSED_WIDTH;
+  const width = open ? RHC_OPEN_WIDTH : RHC_CLOSED_WIDTH;
   const decisionMade = decision !== null;
   const rawRt = reviewType.trim().toLowerCase();
   const normalizedReviewType =
@@ -6841,6 +6989,7 @@ function RightColumn({
   const [rhcReviewerPopoverOpen, setRhcReviewerPopoverOpen] = useState(false);
   const [rhcSelectedReviewerIds, setRhcSelectedReviewerIds] = useState<string[]>([]);
   const [rhcSavingReviewers, setRhcSavingReviewers] = useState(false);
+  const [isCompactViewport, setIsCompactViewport] = useState(false);
   const rhcScrollRef = useRef<HTMLDivElement | null>(null);
   const rhcAddReviewersAnchorRef = useRef<HTMLDivElement | null>(null);
   const rhcAddReviewersPopoverRef = useRef<HTMLDivElement | null>(null);
@@ -6860,6 +7009,15 @@ function RightColumn({
       : undefined;
   const [reminderJustSent, setReminderJustSent] = useState(false);
   const filterAnchorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia(RHC_COMPACT_BREAKPOINT);
+    const sync = () => setIsCompactViewport(!mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
 
   useEffect(() => {
     if (!rhcReviewerPopoverOpen) return;
@@ -6969,10 +7127,16 @@ function RightColumn({
     !isReviewPaused;
   const effectiveHasTagsAndCtaGroup =
     hasFiltersRow || effectiveHasSubmitFeedbackCta || effectiveHasDecisionCta;
+  const isCompactOverlay = isCompactViewport && open;
+  const collapsedBadgeCount =
+    normalizedReviewType === 'approve'
+      ? approveFeedbackSubmissionCount
+      : totalCardCount;
+  const showCollapsedBadge = stage !== 1 && collapsedBadgeCount > 0;
 
   return (
     <aside
-      className="hidden lg:flex shrink-0 min-h-0 flex-col h-full overflow-hidden"
+      className="flex shrink-0 min-h-0 flex-col h-full overflow-hidden"
       style={{
         width,
         minWidth: open ? 360 : RHC_CLOSED_WIDTH,
@@ -6980,6 +7144,17 @@ function RightColumn({
         backgroundColor: COLOURS.surfaceCard,
         borderLeft: `1px solid ${COLOURS.borderDefault}`,
         transition: hydrated ? 'width 200ms ease-in-out' : 'none',
+        ...(isCompactOverlay
+          ? {
+              position: 'fixed',
+              right: 0,
+              top: headerOffset,
+              bottom: 0,
+              zIndex: 50,
+              height: 'auto',
+              boxShadow: '0 0 24px rgba(41, 33, 28, 0.12)',
+            }
+          : {}),
       }}
       aria-label="Feedback"
       data-review-id={reviewId}
@@ -7003,7 +7178,7 @@ function RightColumn({
                   <h2
                     style={{
                       fontSize: 20,
-                      fontWeight: 600,
+                      fontWeight: 700,
                       color: COLOURS.textHeading,
                       margin: 0,
                     }}
@@ -7159,7 +7334,10 @@ function RightColumn({
                       icon="leading"
                       iconOnly
                       iconName="filter"
-                      style={filterButtonStyle}
+                      style={{
+                        ...headerIconOnlyButtonStyle,
+                        ...filterButtonStyle,
+                      }}
                       aria-expanded={showFilterMenu}
                       aria-haspopup="menu"
                       onClick={() => setShowFilterMenu(!showFilterMenu)}
@@ -7565,18 +7743,16 @@ function RightColumn({
                   />
                 </div>
                           {request.changes_needed ? (
-                            <p style={{ margin: 0, fontSize: 14, color: '#2e1c1c' }}>
+                            <p style={{ margin: 0, fontSize: 13, color: '#2e1c1c' }}>
                               {request.changes_needed}
                             </p>
                           ) : null}
                           {changeArtifactLabels.length > 0 ? (
                             <div className="flex flex-wrap gap-2">
                               {changeArtifactLabels.map((label) => (
-                                <Tag
+                                <ChangeRequestArtifactTag
                                   key={`${request.id}-${label}`}
                                   label={label}
-                                  variant="brand"
-                                  size="sm"
                                 />
                               ))}
               </div>
@@ -7586,10 +7762,7 @@ function RightColumn({
                               key={reply.id}
                               className="flex gap-[10px] items-start rounded-[4px] bg-[#f3efe9] p-3"
                             >
-                              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                                <p className="break-words text-[14px] text-[#2e1c1c]">
-                                  {reply.reply_text}
-                                </p>
+                              <div className="flex min-w-0 flex-1 flex-col gap-2">
                                 <div className="flex items-center gap-2 text-[12px] text-[#998c82]">
                                   <span>
                                     {reply.reply_by_name ??
@@ -7601,8 +7774,11 @@ function RightColumn({
                                   </span>
                                   <span> </span>
                                   <RelativeTimeText iso={reply.created_at} />
-              </div>
-              </div>
+                                </div>
+                                <p className="break-words text-[13px] text-[#2e1c1c] m-0">
+                                  {reply.reply_text}
+                                </p>
+                              </div>
           </div>
                           ))}
                           {!isReviewPaused ? (
@@ -7706,18 +7882,16 @@ function RightColumn({
                                   />
                                 </div>
                                 {request.changes_needed ? (
-                                  <p style={{ margin: 0, fontSize: 14, color: '#2e1c1c' }}>
+                                  <p style={{ margin: 0, fontSize: 13, color: '#2e1c1c' }}>
                                     {request.changes_needed}
                                   </p>
                                 ) : null}
                                 {changeArtifactLabels.length > 0 ? (
                                   <div className="flex flex-wrap gap-2">
                                     {changeArtifactLabels.map((label) => (
-                                      <Tag
+                                      <ChangeRequestArtifactTag
                                         key={`${request.id}-${label}`}
                                         label={label}
-                                        variant="brand"
-                                        size="sm"
                                       />
                                     ))}
                                   </div>
@@ -7727,10 +7901,7 @@ function RightColumn({
                                     key={reply.id}
                                     className="flex gap-[10px] items-start rounded-[4px] bg-[#f3efe9] p-3"
                                   >
-                                    <div className="flex min-w-0 flex-1 flex-col gap-1">
-                                      <p className="break-words text-[14px] text-[#2e1c1c]">
-                                        {reply.reply_text}
-                                      </p>
+                                    <div className="flex min-w-0 flex-1 flex-col gap-2">
                                       <div className="flex items-center gap-2 text-[12px] text-[#998c82]">
                                         <span>
                                           {reply.reply_by_name ??
@@ -7743,6 +7914,9 @@ function RightColumn({
                                         <span> </span>
                                         <RelativeTimeText iso={reply.created_at} />
                                       </div>
+                                      <p className="break-words text-[13px] text-[#2e1c1c] m-0">
+                                        {reply.reply_text}
+                                      </p>
                                     </div>
                                   </div>
                                 ))}
@@ -7870,18 +8044,16 @@ function RightColumn({
                                   />
                                 </div>
                                 {request.changes_needed ? (
-                                  <p style={{ margin: 0, fontSize: 14, color: '#2e1c1c' }}>
+                                  <p style={{ margin: 0, fontSize: 13, color: '#2e1c1c' }}>
                                     {request.changes_needed}
                                   </p>
                                 ) : null}
                                 {changeArtifactLabels.length > 0 ? (
                                   <div className="flex flex-wrap gap-2">
                                     {changeArtifactLabels.map((label) => (
-                                      <Tag
+                                      <ChangeRequestArtifactTag
                                         key={`${request.id}-${label}`}
                                         label={label}
-                                        variant="brand"
-                                        size="sm"
                                       />
                                     ))}
                                   </div>
@@ -7891,10 +8063,7 @@ function RightColumn({
                                     key={reply.id}
                                     className="flex gap-[10px] items-start rounded-[4px] bg-[#f3efe9] p-3"
                                   >
-                                    <div className="flex min-w-0 flex-1 flex-col gap-1">
-                                      <p className="break-words text-[14px] text-[#2e1c1c]">
-                                        {reply.reply_text}
-                                      </p>
+                                    <div className="flex min-w-0 flex-1 flex-col gap-2">
                                       <div className="flex items-center gap-2 text-[12px] text-[#998c82]">
                                         <span>
                                           {reply.reply_by_name ??
@@ -7907,6 +8076,9 @@ function RightColumn({
                                         <span> </span>
                                         <RelativeTimeText iso={reply.created_at} />
                                       </div>
+                                      <p className="break-words text-[13px] text-[#2e1c1c] m-0">
+                                        {reply.reply_text}
+                                      </p>
                                     </div>
                                   </div>
                                 ))}
@@ -8063,6 +8235,7 @@ function RightColumn({
                       key={thread.id}
                       thread={thread}
                       threadReplies={threadReplies}
+                      reviewType={reviewType}
                       cardCategory={
                         card.cardType === 'notification' ? 'notification' : 'feedback'
                       }
@@ -8130,7 +8303,7 @@ function RightColumn({
                       <p
                         style={{
                           margin: 0,
-                          fontSize: 14,
+                          fontSize: 13,
                           color: '#2e1c1c',
                           whiteSpace: 'normal',
                           wordBreak: 'break-word',
@@ -8143,11 +8316,9 @@ function RightColumn({
                     {changeArtifactLabels.length > 0 ? (
                       <div className="flex flex-wrap gap-2">
                         {changeArtifactLabels.map((label) => (
-                          <Tag
+                          <ChangeRequestArtifactTag
                             key={`${request.id}-${label}`}
                             label={label}
-                            variant="brand"
-                            size="sm"
                           />
                         ))}
                       </div>
@@ -8158,8 +8329,7 @@ function RightColumn({
                         key={reply.id}
                         className="flex gap-[10px] items-start rounded-[4px] bg-[#f3efe9] p-3"
                       >
-                        <div className="flex min-w-0 flex-1 flex-col gap-1">
-                          <p className="break-words text-[14px] text-[#2e1c1c]">{reply.reply_text}</p>
+                        <div className="flex min-w-0 flex-1 flex-col gap-2">
                           <div className="flex items-center gap-2 text-[12px] text-[#998c82]">
                             <span>
                               {reply.reply_by_name ??
@@ -8172,6 +8342,9 @@ function RightColumn({
                             <span> </span>
                             <RelativeTimeText iso={reply.created_at} />
                           </div>
+                          <p className="break-words text-[13px] text-[#2e1c1c] m-0">
+                            {reply.reply_text}
+                          </p>
                         </div>
                       </div>
                     ))}
@@ -8208,8 +8381,16 @@ function RightColumn({
             icon="leading"
             iconOnly
             iconName="open-drawer"
+            style={headerIconOnlyButtonStyle}
             onClick={onToggle}
           />
+          {showCollapsedBadge ? (
+            <NotificationBadge
+              variant="number"
+              sentiment="brand"
+              count={collapsedBadgeCount}
+            />
+          ) : null}
         </div>
       )}
     </aside>

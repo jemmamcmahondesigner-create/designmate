@@ -1,5 +1,7 @@
 export type WorkspacePermissionLevel = "admin" | "editor" | "reviewer";
 
+export type ReviewerType = "open" | "assigned";
+
 export type ContentPermissionLevel = "editor" | "reviewer";
 
 /** Splits stored permission into content role + Admin flag for UI. */
@@ -32,6 +34,31 @@ export function normalizeWorkspacePermission(
   const normalized = String(value ?? "reviewer").toLowerCase();
   if (normalized === "admin" || normalized === "editor") return normalized;
   return "reviewer";
+}
+
+/** workspace_members.reviewer_type — meaningful only when permission_level is reviewer. */
+export function normalizeReviewerType(value: unknown): ReviewerType {
+  const normalized = String(value ?? "open").trim().toLowerCase();
+  return normalized === "assigned" ? "assigned" : "open";
+}
+
+export function reviewerTypeForMember(
+  permissionLevel: WorkspacePermissionLevel,
+  reviewerTypeRaw: unknown,
+): ReviewerType | null {
+  if (permissionLevel !== "reviewer") return null;
+  return normalizeReviewerType(reviewerTypeRaw);
+}
+
+/** Assigned reviewers are scoped to explicit project/review membership. */
+export function isAssignedReviewerScope(
+  permissionLevel: WorkspacePermissionLevel | string | null,
+  reviewerType: ReviewerType | null,
+): boolean {
+  return (
+    normalizeWorkspacePermission(permissionLevel) === "reviewer" &&
+    (reviewerType ?? "open") === "assigned"
+  );
 }
 
 /** Maps invite / API role strings to contributors.permission_level */

@@ -14,6 +14,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { DiscardChangesModal } from "@/components/DiscardChangesModal";
+import { ArtifactCountIndicator } from "@/components/artifacts/ArtifactCountIndicator";
 import modalStyles from "@/components/ui/ds/Modal.module.css";
 import { useToast } from "@/components/Toast";
 import {
@@ -35,7 +36,8 @@ import {
   Tag,
   Textarea,
   TextareaAi,
-  Tooltip
+  Tooltip,
+  TradeoffCard,
 } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
@@ -47,6 +49,7 @@ import {
   type ContentPermissionLevel,
 } from "@/lib/workspace/permissions";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
+import { linkContributorToProject } from "@/lib/contributors/linkContributorToProject";
 import type {
   ArtifactDraftForSubmit,
   SubmitReviewInput
@@ -63,6 +66,7 @@ import type { ArtifactPreviewFileType } from "@/components/ui/ds/ArtifactPreview
 import type { ProjectProblem } from "@/types/project";
 import type { ReviewType } from "@/types/review";
 import type { User } from "@/types/user";
+import { getAvatarInlineStyle } from "@/lib/utils/avatarColour";
 
 export type { ReviewType } from "@/types/review";
 
@@ -274,25 +278,6 @@ function artifactTypeLabelForApi(
     return "File";
   }
   return "File";
-}
-
-type TradeoffSentimentStyle = {
-  bg: string;
-  border: string;
-  pillBg: string;
-  pillFg: string;
-};
-
-function tradeoffSentimentStyle(
-  severity: "High" | "Medium" | "Low",
-): TradeoffSentimentStyle {
-  if (severity === "High") {
-    return { bg: "#fceaea", border: "#e07070", pillBg: "#c94040", pillFg: "#ffffff" };
-  }
-  if (severity === "Medium") {
-    return { bg: "#fef8dc", border: "#e5b025", pillBg: "#e0b530", pillFg: "#3d2800" };
-  }
-  return { bg: "#f3efe9", border: "#e4ddd3", pillBg: "#6b1e2e", pillFg: "#ffffff" };
 }
 
 const clamp3TextStyle: CSSProperties = {
@@ -956,7 +941,9 @@ export function CreateReviewDrawer({
         .select("id, name, email, role")
         .order("created_at", { ascending: true });
       if (activeWorkspaceId) {
-        baseQuery = baseQuery.eq("workspace_id", activeWorkspaceId);
+        baseQuery = baseQuery
+          .eq("workspace_id", activeWorkspaceId)
+          .or("project_id.is.null,user_id.not.is.null");
       }
       const { data } =
         q.length > 0
@@ -1948,18 +1935,28 @@ export function CreateReviewDrawer({
           {currentStep === 1 ? (
             <>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <p
+                <div
                   style={{
-                    fontSize: 13,
-                    fontWeight: 500,
-                    lineHeight: 1.5,
-                    letterSpacing: "0.26px",
-                    color: "#2e1c1c",
-                    margin: 0
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
                   }}
                 >
-                  Artifacts*
-                </p>
+                  <p
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 500,
+                      lineHeight: 1.5,
+                      letterSpacing: "0.26px",
+                      color: "#2e1c1c",
+                      margin: 0,
+                    }}
+                  >
+                    Artifacts*
+                  </p>
+                  <ArtifactCountIndicator count={artifacts.length} />
+                </div>
                 <div
                   className="flex flex-wrap"
                   style={{ gap: 8 }}
@@ -2263,6 +2260,7 @@ export function CreateReviewDrawer({
                             label={u.name}
                             avatarSrc={u.avatarUrl ?? undefined}
                             avatarName={u.name}
+                            avatarContributorId={u.id}
                             checkbox
                             active={reviewerExclude.has(u.id)}
                             onClick={() => {
@@ -2288,6 +2286,7 @@ export function CreateReviewDrawer({
                           label={u.name}
                           avatarSrc={u.avatarUrl ?? undefined}
                           avatarName={u.name}
+                          avatarContributorId={u.id}
                           checkbox
                           active={reviewerExclude.has(u.id)}
                           onClick={() => {
@@ -2345,6 +2344,7 @@ export function CreateReviewDrawer({
                             contributorId={user.id}
                             size="md"
                             prominence="high"
+                            style={getAvatarInlineStyle(user.id, { ring: true })}
                           />
                           <span
                             style={{
@@ -2573,109 +2573,24 @@ export function CreateReviewDrawer({
                     style={{
                       display: "flex",
                       flexDirection: "column",
-                      gap: 4,
+                      gap: 8,
                       marginTop: 4,
                     }}
                   >
-                    {aiTradeoffs.map((t, idx) => {
-                      const sentiment = tradeoffSentimentStyle(t.severity);
-                      const text = t.description || "(empty tradeoff)";
-                      return (
-                        <div
-                          key={idx}
-                          style={{
-                            display: "flex",
-                            flexDirection: "row",
-                            alignItems: "flex-start",
-                            gap: 8,
-                            minHeight: 32,
-                            height: "auto",
-                            paddingTop: 6,
-                            paddingBottom: 6,
-                            paddingLeft: 12,
-                            paddingRight: 12,
-                            borderRadius: 4,
-                            border: `1px solid ${sentiment.border}`,
-                            backgroundColor: sentiment.bg,
-                          }}
-                        >
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <Step3ClampText
-                              text={text}
-                              textStyle={{
-                                fontSize: 13,
-                                fontWeight: 500,
-                                color: "#2e1c1c",
-                                letterSpacing: "0.13px",
-                                lineHeight: 1.5,
-                              }}
-                            />
-                            <div
-                              style={{
-                                display: "flex",
-                                flexDirection: "row",
-                                gap: 6,
-                                marginTop: 4,
-                                alignItems: "center",
-                                flexWrap: "wrap",
-                              }}
-                            >
-                              {t.severity ? (
-                                <span
-                                  style={{
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    height: 20,
-                                    padding: "0 8px",
-                                    borderRadius: 9999,
-                                    backgroundColor: sentiment.pillBg,
-                                    color: sentiment.pillFg,
-                                    fontSize: 11,
-                                    fontWeight: 600,
-                                    lineHeight: 1.5,
-                                    letterSpacing: "0.22px",
-                                    flexShrink: 0,
-                                  }}
-                                >
-                                  {t.severity}
-                                </span>
-                              ) : null}
-                              {t.artifactLabel ? (
-                                <Tag
-                                  label={t.artifactLabel}
-                                  variant="neutral"
-                                  size="sm"
-                                />
-                              ) : null}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setAiTradeoffs((prev) =>
-                                prev.filter((_, i) => i !== idx)
-                              )
-                            }
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              background: "none",
-                              border: "none",
-                              padding: 0,
-                              cursor: "pointer",
-                              color: "#998c82",
-                              flexShrink: 0,
-                              alignSelf: "flex-start",
-                            }}
-                            aria-label="Remove tradeoff"
-                          >
-                            <Icon name="close" size={14} />
-                          </button>
-                        </div>
-                      );
-                    })}
+                    {aiTradeoffs.map((t, idx) => (
+                      <TradeoffCard
+                        key={idx}
+                        label={t.description || "(empty tradeoff)"}
+                        severity={t.severity}
+                        artifactLabel={t.artifactLabel || undefined}
+                        layout="stacked"
+                        interactive
+                        clampLines={3}
+                        onRemove={() =>
+                          setAiTradeoffs((prev) => prev.filter((_, i) => i !== idx))
+                        }
+                      />
+                    ))}
                   </div>
                 )}
                 <div className="flex flex-wrap" style={{ gap: 8 }}>
@@ -2868,22 +2783,103 @@ export function CreateReviewDrawer({
                 showToast(inviteToastMessage(inviteResult, name, email));
               }
 
-              const { data, error } = await supabase
-                .from("contributors")
-                .insert({
-                  project_id:
-                    includeTeammateInProject && effectiveProjectId.trim()
-                      ? effectiveProjectId.trim()
-                      : null,
-                  workspace_id: includeTeammateInProject ? activeWorkspaceId : null,
-                  name,
-                  email: email || null,
-                  role: newTeammateRole.trim() || "Stakeholder",
-                  permission_level: storedPermissionLevel,
-                  is_paid: isPaidPermissionLevel(storedPermissionLevel),
-                })
-                .select("id, name, email, role")
-                .single();
+              const { data, error } = await (async () => {
+                if (activeWorkspaceId) {
+                  const normalizedEmail = email.trim().toLowerCase();
+                  let contributorId: string | null = null;
+
+                  if (normalizedEmail) {
+                    const { data: existing } = await supabase
+                      .from("contributors")
+                      .select("id")
+                      .eq("workspace_id", activeWorkspaceId)
+                      .ilike("email", normalizedEmail)
+                      .is("project_id", null)
+                      .maybeSingle();
+                    contributorId = String(
+                      (existing as { id?: string } | null)?.id ?? "",
+                    ).trim() || null;
+                  }
+
+                  if (!contributorId) {
+                    const { data: newRow, error: insertError } = await supabase
+                      .from("contributors")
+                      .insert({
+                        workspace_id: activeWorkspaceId,
+                        project_id: null,
+                        name,
+                        email: email || null,
+                        role: newTeammateRole.trim() || "Stakeholder",
+                        permission_level: storedPermissionLevel,
+                        is_paid: isPaidPermissionLevel(storedPermissionLevel),
+                      })
+                      .select("id, name, email, role")
+                      .single();
+                    if (insertError || !newRow) {
+                      return { data: null, error: insertError };
+                    }
+                    contributorId = String(
+                      (newRow as { id?: string }).id ?? "",
+                    ).trim();
+                  }
+
+                  if (
+                    includeTeammateInProject &&
+                    effectiveProjectId.trim() &&
+                    contributorId
+                  ) {
+                    const linked = await linkContributorToProject(supabase, {
+                      projectId: effectiveProjectId.trim(),
+                      workspaceId: activeWorkspaceId,
+                      contributorId,
+                      name,
+                      email: email || null,
+                      role: newTeammateRole.trim() || "Stakeholder",
+                      permissionLevel: storedPermissionLevel,
+                      isPaid: isPaidPermissionLevel(storedPermissionLevel),
+                    });
+                    if (linked) {
+                      return {
+                        data: {
+                          id: linked.id,
+                          name: linked.name,
+                          email: linked.email,
+                          role: linked.role,
+                        },
+                        error: null,
+                      };
+                    }
+                  }
+
+                  if (contributorId) {
+                    const { data: row, error: fetchError } = await supabase
+                      .from("contributors")
+                      .select("id, name, email, role")
+                      .eq("id", contributorId)
+                      .maybeSingle();
+                    return { data: row, error: fetchError };
+                  }
+
+                  return { data: null, error: null };
+                }
+
+                return supabase
+                  .from("contributors")
+                  .insert({
+                    project_id:
+                      includeTeammateInProject && effectiveProjectId.trim()
+                        ? effectiveProjectId.trim()
+                        : null,
+                    workspace_id: null,
+                    name,
+                    email: email || null,
+                    role: newTeammateRole.trim() || "Stakeholder",
+                    permission_level: storedPermissionLevel,
+                    is_paid: isPaidPermissionLevel(storedPermissionLevel),
+                  })
+                  .select("id, name, email, role")
+                  .single();
+              })();
               setIsCreatingTeammate(false);
               if (error) {
                 console.error("[create-teammate]", error);

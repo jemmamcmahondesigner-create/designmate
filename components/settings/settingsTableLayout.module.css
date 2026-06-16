@@ -1,25 +1,37 @@
 .tableShell {
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  min-height: 500px;
   border-width: 1px;
   border-style: solid;
   border-color: var(--border-default, #e4ddd3);
   border-radius: var(--radius-lg, 8px);
   overflow: hidden;
+  background: var(--surface-page, #faf8f6);
 }
 
 .tableScroll {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   overflow-x: auto;
   overflow-y: hidden;
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  min-height: 0;
 }
 
 .tableScrollInner {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   width: 100%;
+  min-height: 0;
 }
 
 /* Settings tables with fixed column layout — fill viewport, scroll only when needed */
@@ -29,19 +41,23 @@
 }
 
 .tableBorderless {
+  flex: 1 1 auto;
   border: none !important;
   border-radius: 0 !important;
   overflow: visible !important;
   width: max-content;
   min-width: 100%;
+  min-height: 100%;
 }
 
 .tableBorderlessFit {
+  flex: 1 1 auto;
   border: none !important;
   border-radius: 0 !important;
   overflow: hidden;
   width: 100%;
   min-width: 0;
+  min-height: 100%;
 }
 
 .pageContent {

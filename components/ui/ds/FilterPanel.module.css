@@ -1,9 +1,9 @@
 .panel {
   display: flex;
   flex-direction: column;
-  width: 229px;
+  width: 240px;
   min-width: 240px;
-  background: #f5f1ed;
+  background: #ffffff;
   border: 1px solid #e4ddd3;
   border-radius: 8px;
   box-shadow:
@@ -15,21 +15,22 @@
 .body {
   display: flex;
   flex-direction: column;
-  background: #f5f1ed;
+  background: #ffffff;
 }
 
 .headingWrap {
   display: flex;
   align-items: flex-end;
-  padding: 12px 12px 4px;
+  padding: 4px 12px 0;
   background: transparent;
 }
 
 .heading {
   font-size: 10px;
   font-weight: 600;
+  line-height: 1.5;
   color: #998c82;
-  letter-spacing: 1.5px;
+  letter-spacing: 1px;
   text-transform: uppercase;
 }
 
@@ -41,7 +42,10 @@
 .row {
   display: flex;
   align-items: center;
-  padding: 9px 12px;
+  box-sizing: border-box;
+  height: 40px;
+  max-height: 40px;
+  padding: 0 12px;
   gap: 8px;
   background: transparent;
   transition: background-color 120ms ease;
@@ -50,7 +54,10 @@
 .rowReviewer {
   display: flex;
   align-items: center;
-  padding: 9px 12px;
+  box-sizing: border-box;
+  height: 40px;
+  max-height: 40px;
+  padding: 0 12px;
   gap: 8px;
   background: transparent;
   transition: background-color 120ms ease;
@@ -59,10 +66,6 @@
 .row:hover,
 .rowReviewer:hover {
   background: rgba(107, 30, 46, 0.05);
-}
-
-.rowAll {
-  margin-bottom: 4px;
 }
 
 .reviewerChip {
@@ -95,6 +98,18 @@
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  background: #f5f1ed;
+  background: #ffffff;
   border-top: 1px solid #ede8e0;
+}
+
+.footerActions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.footerPrimary {
+  margin-right: auto;
 }

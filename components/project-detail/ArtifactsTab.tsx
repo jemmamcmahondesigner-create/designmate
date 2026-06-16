@@ -20,13 +20,16 @@ import {
   MenuItem,
   StatusPill,
   Table,
+  Tooltip,
+  TruncatedTooltip,
   type ArtifactPreviewFileType,
   type ColumnDef,
   type StatusPillColor,
-  type StatusPillStatus,
 } from "@/components/ui/ds";
 import { formatDistanceToNow } from "@/lib/formatDistanceToNow";
+import { resolveReviewStatusPill } from "@/lib/reviews/reviewStatusDisplay";
 import artifactStyles from "@/components/project-detail/ArtifactsTab.module.css";
+import panelEmptyStateStyles from "@/components/project-detail/projectPanelEmptyState.module.css";
 import type {
   ProjectArtifactHistoryVersion,
   ProjectArtifactOverviewRow,
@@ -44,35 +47,35 @@ const TEXT_PRIMARY = "var(--text-primary, #2e1c1c)";
 
 type ArtifactTableRow = ProjectArtifactOverviewRow & { id: string };
 
-function mapReviewStatusPill(status: string | null | undefined): {
-  label: string;
-  status?: StatusPillStatus;
-  color?: StatusPillColor;
-  appearance?: "filled" | "outline";
-  prominence?: "default" | "high";
-} {
-  const s = String(status ?? "").trim().toLowerCase();
-  if (s === "complete" || s === "approved") {
-    return { label: "Complete", color: "green", appearance: "filled" };
+function renderReviewStatusPill(row: ArtifactTableRow) {
+  const pill = resolveReviewStatusPill({
+    status: row.reviewStatus ?? "",
+    reviewType: row.reviewType,
+  });
+  const prominence = pill.color === "brand" ? ("high" as const) : ("default" as const);
+  const statusPill = (
+    <StatusPill
+      label={pill.label}
+      color={pill.color}
+      appearance="filled"
+      prominence={prominence}
+      size="sm"
+    />
+  );
+
+  if (pill.tooltip) {
+    return (
+      <Tooltip label={pill.tooltip} position="top">
+        <span className="inline-flex max-w-full min-w-0">{statusPill}</span>
+      </Tooltip>
+    );
   }
-  if (s === "changes-needed" || s === "needs-changes") {
-    return {
-      label: "Changes Needed",
-      color: "brand",
-      appearance: "filled",
-      prominence: "high",
-    };
-  }
-  if (s === "feedback-submitted") {
-    return { label: "Feedback Submitted", color: "blue", appearance: "filled" };
-  }
-  if (s === "in-review") {
-    return { label: "In Review", status: "in-review" };
-  }
-  return {
-    label: status ? status.replace(/-/g, " ") : "—",
-    status: "draft",
-  };
+
+  return (
+    <TruncatedTooltip label={pill.label} inlineFlex maxWidth={320}>
+      {statusPill}
+    </TruncatedTooltip>
+  );
 }
 
 function mapReviewTypePill(rt: string | null | undefined): {
@@ -91,6 +94,11 @@ function mapReviewTypePill(rt: string | null | undefined): {
     label: rt ? rt.charAt(0).toUpperCase() + rt.slice(1) : "—",
     color: "mushroom",
   };
+}
+
+function isCompareReviewType(rt: string | null | undefined): boolean {
+  const raw = String(rt ?? "").trim().toLowerCase();
+  return raw === "compare" || raw === "comparison";
 }
 
 function toPreviewFileType(
@@ -163,16 +171,38 @@ function VersionArtifactPanel({
                 —
               </span>
             ) : (
-              v.reviewerPeople.map((p) => (
-                <Avatar
-                  key={p.id}
-                  name={p.name}
-                  contributorId={p.id}
-                  src={p.avatarUrl ?? undefined}
-                  size="md"
-                  className={artifactStyles.avatarGroupItem}
-                />
-              ))
+              v.reviewerPeople.map((p, index) => {
+                const isDecisionMaker =
+                  isCompareReviewType(v.reviewType) && index === 0;
+
+                if (!isDecisionMaker) {
+                  return (
+                    <Avatar
+                      key={p.id}
+                      name={p.name}
+                      contributorId={p.id}
+                      src={p.avatarUrl ?? undefined}
+                      size="md"
+                      className={artifactStyles.avatarGroupItem}
+                    />
+                  );
+                }
+
+                return (
+                  <span
+                    key={p.id}
+                    className={artifactStyles.decisionMakerAvatarRing}
+                  >
+                    <Avatar
+                      name={p.name}
+                      contributorId={p.id}
+                      src={p.avatarUrl ?? undefined}
+                      size="md"
+                      className={artifactStyles.avatarGroupItem}
+                    />
+                  </span>
+                );
+              })
             )}
           </div>
         }
@@ -201,6 +231,7 @@ function VersionArtifactPanel({
       />
       <DetailRow
         label="Decision"
+        labelAlign="top"
         value={
           v.decisionSummary ? (
             <span
@@ -346,14 +377,20 @@ function VersionHistoryAccordion({
 function DetailRow({
   label,
   value,
+  labelAlign = "center",
 }: {
   label: string;
   value: ReactNode;
+  labelAlign?: "center" | "top";
 }) {
+  const rowAlign = labelAlign === "top" ? "items-start" : "items-center";
+  const labelAlignClass =
+    labelAlign === "top" ? "items-start pt-[2px]" : "items-center";
+
   return (
-    <div className="flex items-center gap-[10px]">
+    <div className={`flex gap-[10px] ${rowAlign}`}>
       <span
-        className="flex w-[100px] shrink-0 items-center text-[10px] font-semibold uppercase leading-snug"
+        className={`flex w-[100px] shrink-0 text-[10px] font-semibold uppercase leading-snug ${labelAlignClass}`}
         style={{
           color: TEXT_SECONDARY,
           letterSpacing: "1px",
@@ -361,7 +398,11 @@ function DetailRow({
       >
         {label}
       </span>
-      <div className="flex min-w-0 flex-1 items-center text-[13px] font-normal leading-snug">
+      <div
+        className={`flex min-w-0 flex-1 text-[13px] font-normal leading-snug ${
+          labelAlign === "top" ? "items-start" : "items-center"
+        }`}
+      >
         {value}
       </div>
     </div>
@@ -391,7 +432,7 @@ export function ArtifactsTab({
       {
         key: "version",
         label: "Version",
-        width: 72,
+        width: 96,
         align: "right",
         cellType: "custom",
         render: (row, { selected }) => (
@@ -411,41 +452,27 @@ export function ArtifactsTab({
         label: "Title",
         width: "flex",
         cellType: "text-bold",
-        render: (row) => (
-          <span className="line-clamp-2">{row.artifactName}</span>
-        ),
+        render: (row) => row.artifactName,
       },
       {
         key: "status",
         label: "Status",
-        width: "flex",
-        cellType: "custom",
-        render: (row) => {
-          const pill = mapReviewStatusPill(row.reviewStatus);
-          return pill.color ? (
-            <StatusPill
-              label={pill.label}
-              color={pill.color}
-              appearance={pill.appearance ?? "filled"}
-              prominence={pill.prominence ?? "default"}
-              size="sm"
-            />
-          ) : (
-            <StatusPill label={pill.label} status={pill.status} size="sm" />
-          );
-        },
+        width: 196,
+        cellType: "status",
+        render: (row) => renderReviewStatusPill(row),
       },
       {
         key: "reviewType",
         label: "Review Type",
-        width: "flex",
+        width: 128,
         cellType: "text",
         render: (row) => row.reviewType ?? "—",
       },
       {
         key: "feedback",
         label: "Feedback",
-        width: "flex",
+        width: 104,
+        align: "center",
         cellType: "custom",
         render: (row) => (
           <span
@@ -560,10 +587,17 @@ export function ArtifactsTab({
             >
               <h4
                 id="artifact-drawer-title"
-                className="m-0 min-w-0 flex-1 truncate text-[18px] font-semibold leading-snug"
+                className="m-0 min-w-0 flex-1 text-[18px] font-semibold leading-snug"
                 style={{ color: TEXT_HEADING }}
               >
-                {selectedName || "Artifact"}
+                <TruncatedTooltip
+                  label={selectedName || "Artifact"}
+                  className="block truncate"
+                  fullWidth
+                  maxWidth={320}
+                >
+                  {selectedName || "Artifact"}
+                </TruncatedTooltip>
               </h4>
               <IconSquareButton
                 variant="ghost"
@@ -600,52 +634,46 @@ export function ArtifactsTab({
       >
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pr-0">
           <div
-            className="mb-6 flex min-w-0 flex-wrap items-baseline"
+            className={`${panelEmptyStateStyles.sectionHeaderZone} flex min-w-0 flex-wrap ${
+              overview.length === 0 ? "items-center" : "items-baseline"
+            }`}
             style={{ gap: 24 }}
           >
             <h3
-              className="m-0 text-[20px] font-bold leading-tight"
-              style={{ color: TEXT_HEADING }}
+              className="m-0 text-[20px] font-bold leading-[1.3] text-[#6b1e2e]"
+              style={{ letterSpacing: "-0.3px" }}
             >
               Current Artifacts
             </h3>
-            <p
-              className="m-0 text-[14px] font-normal leading-relaxed"
-              style={{ color: TEXT_SECONDARY }}
-            >
-              The latest version of each artifact in this project.
-            </p>
+            {overview.length > 0 ? (
+              <p
+                className="m-0 text-[14px] font-normal leading-relaxed"
+                style={{ color: TEXT_SECONDARY }}
+              >
+                The latest version of each artifact in this project.
+              </p>
+            ) : null}
           </div>
 
           {overview.length === 0 ? (
             <div
-              className="flex w-full max-h-[400px] flex-1 flex-col items-center justify-center rounded-lg border border-solid px-6 py-12 text-center"
-              style={{
-                borderRadius: "var(--radius/lg, 8px)",
-                borderColor: BORDER,
-                backgroundColor: "var(--surface/card/recessed, #f3efe9)",
-                maxHeight: 400,
-              }}
+              className={`${panelEmptyStateStyles.root} ${panelEmptyStateStyles.surfaceWhite}`}
             >
-              <p
-                className="m-0 max-w-md text-[14px] font-medium leading-[1.5]"
-                style={{ color: TEXT_TERTIARY }}
-              >
+              <p className={panelEmptyStateStyles.copy}>
                 Artifacts will appear here as you add versioned artifacts to reviews.
               </p>
-              <div className="mt-4">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  label="Review"
-                  icon="leading"
-                  iconName="plus"
-                  onClick={onNewReview}
-                />
-              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                label="Review"
+                icon="leading"
+                iconName="plus"
+                onClick={onNewReview}
+              />
             </div>
           ) : (
             <Table<ArtifactTableRow>
+              className={artifactStyles.artifactsTable}
               columns={artifactColumns}
               rows={artifactRows}
               selectedRowId={selectedId ?? undefined}

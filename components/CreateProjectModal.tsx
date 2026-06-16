@@ -5,22 +5,80 @@ import { useRouter } from "next/navigation";
 import { DiscardChangesModal } from "@/components/DiscardChangesModal";
 import { Alert, Button, Input, Modal, Select, Textarea, Tooltip } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { ProjectClientFields } from "@/lib/projects/resolveProjectClientFields";
 import { resolveProjectClientFields } from "@/lib/projects/resolveProjectClientFields";
 import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
 
 type ClientOption = { id: string; name: string };
 
+const CLIENT_CREATE_PREFIX = "__create__:";
+
 export type CreateProjectModalProps = {
   open: boolean;
   onClose: () => void;
 };
 
+function decodeCreatableClientValue(
+  value: string,
+): { kind: "existing"; id: string } | { kind: "new"; name: string } | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith(CLIENT_CREATE_PREFIX)) {
+    const name = decodeURIComponent(trimmed.slice(CLIENT_CREATE_PREFIX.length)).trim();
+    return name ? { kind: "new", name } : null;
+  }
+  return { kind: "existing", id: trimmed };
+}
+
+async function resolveClientForProject(
+  supabase: ReturnType<typeof createSupabaseBrowserClient>,
+  activeWorkspaceId: string,
+  clientValue: string,
+  clientOptions: ClientOption[],
+): Promise<ProjectClientFields> {
+  const parsed = decodeCreatableClientValue(clientValue);
+  if (!parsed) return { client: null, client_id: null };
+
+  if (parsed.kind === "existing") {
+    return resolveProjectClientFields(supabase, {
+      clientId: parsed.id,
+      workspaceId: activeWorkspaceId,
+    });
+  }
+
+  const existing = clientOptions.find(
+    (option) => option.name.trim().toLowerCase() === parsed.name.toLowerCase(),
+  );
+  if (existing) {
+    return resolveProjectClientFields(supabase, {
+      clientId: existing.id,
+      workspaceId: activeWorkspaceId,
+    });
+  }
+
+  const { data: newClient, error } = await supabase
+    .from("clients")
+    .insert({ name: parsed.name, workspace_id: activeWorkspaceId })
+    .select("id, name")
+    .single();
+
+  if (error || !newClient) {
+    throw new Error(error?.message || "Could not create group.");
+  }
+
+  const row = newClient as Record<string, unknown>;
+  return {
+    client: String(row.name ?? parsed.name).trim() || parsed.name,
+    client_id: String(row.id ?? "").trim() || null,
+  };
+}
+
 export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
   const router = useRouter();
   const descId = useId();
   const [name, setName] = useState("");
-  const [clientId, setClientId] = useState("");
+  const [clientValue, setClientValue] = useState("");
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -30,7 +88,7 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
 
   const resetForm = useCallback(() => {
     setName("");
-    setClientId("");
+    setClientValue("");
     setDescription("");
     setError(null);
     setSubmitAttempted(false);
@@ -39,27 +97,36 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
   useEffect(() => {
     if (!open) return;
     const supabase = createSupabaseBrowserClient();
-    void supabase
-      .from("clients")
-      .select("id, name")
-      .order("name", { ascending: true })
-      .then(({ data, error: clientsError }) => {
-        if (clientsError) {
-          console.error("CreateProjectModal clients fetch error:", clientsError);
-          return;
-        }
-        const mapped =
-          data
-            ?.map((row) => {
-              const o = row as Record<string, unknown>;
-              const id = String(o.id ?? "").trim();
-              const label = String(o.name ?? "").trim();
-              if (!id || !label) return null;
-              return { id, name: label };
-            })
-            .filter((row): row is ClientOption => row != null) ?? [];
-        setClientOptions(mapped);
-      });
+    void (async () => {
+      const activeWorkspaceId = await getActiveWorkspaceId(supabase);
+      if (!activeWorkspaceId) {
+        setClientOptions([]);
+        return;
+      }
+
+      const { data, error: clientsError } = await supabase
+        .from("clients")
+        .select("id, name")
+        .eq("workspace_id", activeWorkspaceId)
+        .order("name", { ascending: true });
+
+      if (clientsError) {
+        console.error("CreateProjectModal clients fetch error:", clientsError);
+        return;
+      }
+
+      const mapped =
+        data
+          ?.map((row) => {
+            const o = row as Record<string, unknown>;
+            const id = String(o.id ?? "").trim();
+            const label = String(o.name ?? "").trim();
+            if (!id || !label) return null;
+            return { id, name: label };
+          })
+          .filter((row): row is ClientOption => row != null) ?? [];
+      setClientOptions(mapped);
+    })();
   }, [open]);
 
   useEffect(() => {
@@ -70,8 +137,8 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
   }, [open, resetForm]);
 
   const isDirty = useMemo(
-    () => name.trim() !== "" || clientId.trim() !== "" || description.trim() !== "",
-    [name, clientId, description],
+    () => name.trim() !== "" || clientValue.trim() !== "" || description.trim() !== "",
+    [name, clientValue, description],
   );
 
   function requestClose() {
@@ -98,9 +165,19 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
       return;
     }
 
-    const clientFields = await resolveProjectClientFields(supabase, {
-      clientId: clientId || null,
-    });
+    let clientFields: ProjectClientFields;
+    try {
+      clientFields = await resolveClientForProject(
+        supabase,
+        activeWorkspaceId,
+        clientValue,
+        clientOptions,
+      );
+    } catch (clientError) {
+      setError(clientError instanceof Error ? clientError.message : "Could not resolve group.");
+      setSubmitting(false);
+      return;
+    }
 
     const { data: createdProject, error: insertError } = await supabase
       .from("projects")
@@ -232,11 +309,17 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
           <Select
             label="Who is the project for?"
             options={clientOptions.map((opt) => ({ value: opt.id, label: opt.name }))}
-            value={clientId || undefined}
-            onChange={(v) => setClientId(v)}
-            placeholder="Select a group"
+            value={clientValue || undefined}
+            onChange={(value) => setClientValue(value)}
+            placeholder="Type or select a group"
             size="sm"
-            portaled={true}
+            searchable
+            creatable
+            creatableOptionLabel={(typed) => `Use "${typed}"`}
+            onCreatableSelect={(typed) =>
+              `${CLIENT_CREATE_PREFIX}${encodeURIComponent(typed.trim())}`
+            }
+            portaled
           />
 
           <Textarea

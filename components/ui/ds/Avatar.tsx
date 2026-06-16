@@ -56,7 +56,7 @@ export function Avatar({
 
   if (src) {
     return (
-      <span className={rootClass}>
+      <span className={rootClass} style={style}>
         <img
           src={src}
           alt={alt ?? name ?? 'Avatar'}
@@ -67,8 +67,8 @@ export function Avatar({
   }
 
   const initials = name ? getDisplayNameInitials(name) : '?';
-  const colourKey = (contributorId ?? name ?? '').trim() || initials;
-  const palette = getAvatarColour(colourKey);
+  const colourKey = (contributorId ?? '').trim();
+  const palette = colourKey ? getAvatarColour(colourKey) : null;
 
   return (
     <span
@@ -76,8 +76,9 @@ export function Avatar({
       aria-label={name ?? 'Avatar'}
       role="img"
       style={{
-        backgroundColor: palette.bg,
-        color: palette.text,
+        ...(palette
+          ? { backgroundColor: palette.bg, color: palette.text }
+          : undefined),
         ...style,
       }}
     >

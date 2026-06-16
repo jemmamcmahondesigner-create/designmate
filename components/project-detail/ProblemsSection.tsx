@@ -5,14 +5,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { Button, Icon, Menu, MenuItem, Modal, Textarea, Tooltip } from "@/components/ui/ds";
+import { Button, Icon, Menu, MenuItem, Modal, Textarea, Tooltip, TruncatedTooltip } from "@/components/ui/ds";
 import { useToast } from "@/components/Toast";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
 import type { ProjectProblem } from "@/types/project";
 
 const sectionHeadingClass =
-  "text-[20px] font-semibold leading-[1.3] text-[#6b1e2e]";
+  "text-[20px] font-bold leading-[1.3] text-[#6b1e2e]";
 
 const sectionHeadingStyle = { letterSpacing: "-0.3px" as const };
 
@@ -126,7 +126,7 @@ export function ProblemsSection({
         </p>
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1">
         {problems.map((problem) => {
           const showHover = hoveredRowId === problem.id;
           return (
@@ -135,7 +135,7 @@ export function ProblemsSection({
               onMouseEnter={() => setHoveredRowId(problem.id)}
               onMouseLeave={() => setHoveredRowId((prev) => (prev === problem.id ? null : prev))}
               style={{
-                height: 40,
+                height: 42,
                 paddingLeft: 12,
                 paddingRight: 12,
                 paddingTop: 4,
@@ -148,21 +148,26 @@ export function ProblemsSection({
                 gap: 8,
               }}
             >
-              <span
+              <div
                 style={{
+                  flex: 1,
+                  minWidth: 0,
                   fontSize: 13,
                   fontWeight: 500,
                   color: showHover ? "#6b1e2e" : "#6b5e55",
                   lineHeight: 1.5,
-                  flex: 1,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  letterSpacing: "0.2px",
                 }}
               >
-                {problem.description}
-              </span>
-              {showHover && (
+                <TruncatedTooltip
+                  label={problem.description}
+                  fullWidth
+                  maxWidth={320}
+                >
+                  {problem.description}
+                </TruncatedTooltip>
+              </div>
+              {showHover && !hideAddActions && (
                 <div
                   ref={(node) => {
                     menuRefs.current[problem.id] = node;

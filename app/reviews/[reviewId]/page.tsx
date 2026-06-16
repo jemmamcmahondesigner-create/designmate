@@ -68,12 +68,16 @@ function parseReviewTradeoffsFromRow(raw: unknown): Tradeoff[] {
       else if (s === 'low') severity = 'Low';
       else if (s === 'medium') severity = 'Medium';
     }
+    const createdByContributorIdRaw = String(
+      o.createdByContributorId ?? '',
+    ).trim();
     out.push({
       id: String(o.id ?? `tradeoff-loaded-${i}`),
       label,
       severity,
       relatedArtifactIds: rel.length > 0 ? rel : undefined,
       artifactLabel: artifactLabelRaw || undefined,
+      createdByContributorId: createdByContributorIdRaw || undefined,
     });
   });
   return out;
@@ -144,6 +148,7 @@ function mapArtifacts(raw: unknown): ReviewArtifact[] {
       description: a.description ?? '',
       imageUrl: kind === 'file' ? (a.url ?? null) : null,
       linkUrl: kind === 'link' ? (a.url ?? null) : null,
+      mimeType: mimeType || null,
       aiGenerated,
     };
   });

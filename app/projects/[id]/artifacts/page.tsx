@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { ProjectDetailView } from "@/components/project-detail/ProjectDetailView";
+import { resolveClientDisplayName } from "@/lib/projects/resolveClientDisplayName";
 import { fetchProjectReviewsForCards } from "@/lib/reviews/fetchProjectReviews";
+import { getAssignedReviewerContributorId } from "@/lib/workspace/resolveWorkspaceMembership";
 import { loadProjectArtifactsTab } from "@/lib/projects/loadProjectArtifactsTab";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type {
@@ -82,7 +84,7 @@ export default async function ProjectArtifactsPage({
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("projects")
-    .select("id, name, client, client_id, description, status")
+    .select("id, name, client, client_id, description, status, clients ( id, name )")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -91,13 +93,10 @@ export default async function ProjectArtifactsPage({
   }
 
   const r = data as Record<string, unknown>;
-  const clientRaw = r.client;
-  const client =
-    clientRaw == null
-      ? null
-      : String(clientRaw).trim() === ""
-        ? null
-        : String(clientRaw).trim();
+  const client = resolveClientDisplayName(
+    r.client == null ? null : String(r.client),
+    r.clients,
+  );
   const clientIdRaw = r.client_id;
   const clientId =
     clientIdRaw == null || String(clientIdRaw).trim() === ""
@@ -141,7 +140,9 @@ export default async function ProjectArtifactsPage({
       .neq("id", params.id)
       .order("name", { ascending: true })
       .limit(5),
-    fetchProjectReviewsForCards(supabase, params.id),
+    fetchProjectReviewsForCards(supabase, params.id, {
+      assignedReviewerContributorId: await getAssignedReviewerContributorId(supabase),
+    }),
     loadProjectArtifactsTab(params.id)
   ]);
 

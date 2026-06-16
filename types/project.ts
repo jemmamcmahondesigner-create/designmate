@@ -7,7 +7,9 @@ export type Project = {
   description: string | null;
   status: ProjectStatus;
   created_at: string;
-  /** Project-scoped contributor names from `contributors` join (client-side search). */
+  /** Project teammates for cards and client-side search. */
+  contributors: ProjectContributor[];
+  /** @deprecated Derived from `contributors` — use for search indexing only. */
   contributor_names: string[];
 };
 

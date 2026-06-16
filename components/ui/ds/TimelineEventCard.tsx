@@ -31,6 +31,7 @@ export type TimelineEventCardProps = {
   onReviewClick?: (reviewId: string) => void;
   onArtifactClick?: (artifactId: string) => void;
   artifactIdByName?: Map<string, string>;
+  artifactLabelById?: Map<string, string>;
   artifactUrlByName?: Map<string, string>;
   isProjectTimeline?: boolean;
 };
@@ -154,7 +155,6 @@ function reviewTimelineStatusPill(statusRaw: string) {
         size="sm"
         appearance="filled"
         prominence="default"
-        labelTypography="body"
       />
     );
   }
@@ -167,7 +167,6 @@ function reviewTimelineStatusPill(statusRaw: string) {
       size="sm"
       appearance="filled"
       prominence="default"
-      labelTypography="body"
     />
   );
 }
@@ -261,7 +260,6 @@ function projectTimelineStatusPill(statusRaw: string) {
         size="sm"
         appearance="filled"
         prominence="high"
-        labelTypography="body"
       />
     );
   }
@@ -273,7 +271,6 @@ function projectTimelineStatusPill(statusRaw: string) {
         size="sm"
         appearance="filled"
         prominence="high"
-        labelTypography="body"
       />
     );
   }
@@ -285,7 +282,6 @@ function projectTimelineStatusPill(statusRaw: string) {
         size="sm"
         appearance="filled"
         prominence="high"
-        labelTypography="body"
       />
     );
   }
@@ -296,7 +292,6 @@ function projectTimelineStatusPill(statusRaw: string) {
       size="sm"
       appearance="filled"
       prominence="high"
-      labelTypography="body"
     />
   );
 }
@@ -397,6 +392,8 @@ const EVENT_SENTIMENT: Record<TimelineEventType, keyof typeof SENTIMENT> = {
   artifact_deleted: "delete",
   artifact_description_edited: "meta",
   project_updated: "meta",
+  access_requested: "meta",
+  access_granted: "meta",
 };
 
 function ReviewLink({
@@ -596,13 +593,57 @@ function EventRow({
   );
 }
 
-function feedbackProvidedPalette(payload: Record<string, any>): (typeof SENTIMENT)[keyof typeof SENTIMENT] {
+function feedbackSelectedArtifactIds(payload: Record<string, any>): string[] {
+  const fromArray = Array.isArray(payload.selected_artifact_ids)
+    ? payload.selected_artifact_ids.map((id) => String(id).trim()).filter(Boolean)
+    : [];
+  if (fromArray.length > 0) return fromArray;
+  return String(payload.selected_option ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function feedbackSelectedArtifactNames(
+  payload: Record<string, any>,
+  artifactLabelById?: Map<string, string>,
+): string[] {
+  const fromPayload = Array.isArray(payload.selected_artifact_names)
+    ? payload.selected_artifact_names.map((name) => String(name).trim()).filter(Boolean)
+    : [];
+  if (fromPayload.length > 0) return fromPayload;
+
+  const singleName = String(payload.artifact_name ?? "").trim();
+  if (singleName) return [singleName];
+
+  const ids = feedbackSelectedArtifactIds(payload);
+  if (ids.length === 0) return [];
+
+  return ids.map((id) => artifactLabelById?.get(id)?.trim() || id).filter(Boolean);
+}
+
+function isCompareReviewType(reviewType: string): boolean {
+  const normalized = reviewType.trim().toLowerCase();
+  return normalized === "compare" || normalized === "comparison";
+}
+
+function feedbackProvidedPalette(
+  payload: Record<string, any>,
+  artifactLabelById?: Map<string, string>,
+): (typeof SENTIMENT)[keyof typeof SENTIMENT] {
   const kind = String(payload.feedback_kind ?? "").trim().toLowerCase();
   if (kind === "changes") return SENTIMENT.attention;
   if (kind === "approval" || kind === "mixed") return SENTIMENT.approved;
+  if (kind === "preference") return SENTIMENT.info;
   const summary = String(payload.activity_summary ?? "").toLowerCase();
   if (summary.includes("requested changes")) return SENTIMENT.attention;
   if (summary.includes("approved")) return SENTIMENT.approved;
+  if (
+    isCompareReviewType(String(payload.review_type ?? "")) &&
+    feedbackSelectedArtifactNames(payload, artifactLabelById).length > 0
+  ) {
+    return SENTIMENT.info;
+  }
   return SENTIMENT.meta;
 }
 
@@ -617,6 +658,7 @@ export function TimelineEventCard({
   onReviewClick,
   onArtifactClick,
   artifactIdByName,
+  artifactLabelById,
   artifactUrlByName,
   isProjectTimeline = false
 }: TimelineEventCardProps) {
@@ -649,7 +691,7 @@ export function TimelineEventCard({
     isCompareReview && (isApprovedDirectionCard || isDirectionUpdate);
   const palette =
     normalizedEventType === "feedback_provided"
-      ? feedbackProvidedPalette(payload)
+      ? feedbackProvidedPalette(payload, artifactLabelById)
       : usesCompareApprovedDirectionPalette
         ? SENTIMENT.approved
         : isPreferredOptionCard
@@ -944,7 +986,56 @@ export function TimelineEventCard({
             const changeNames = Array.isArray(payload.change_artifact_names)
               ? payload.change_artifact_names.map((name) => String(name).trim()).filter(Boolean)
               : [];
+            const selectedArtifactIds = feedbackSelectedArtifactIds(payload);
+            const selectedArtifactNames = feedbackSelectedArtifactNames(
+              payload,
+              artifactLabelById,
+            );
+            const isComparePreferenceFeedback =
+              isCompareReviewType(reviewType) && selectedArtifactNames.length > 0;
             const hasStructuredNames = approvedNames.length > 0 || changeNames.length > 0;
+
+            if (isComparePreferenceFeedback && !hasStructuredNames) {
+              const selectedName = selectedArtifactNames[0];
+              const selectedId =
+                approvedArtifactId ||
+                selectedArtifactIds[0] ||
+                artifactIdByName?.get(selectedName) ||
+                "";
+              return (
+                <EventRow
+                  leading={actorLeading}
+                  timeLabel={t}
+                  timeTooltipLabel={timeTooltipLabel || undefined}
+                >
+                  <span className="min-w-0 truncate" style={textPrimary}>
+                    {actor}
+                  </span>
+                  <span className="shrink-0 whitespace-nowrap" style={textSecondary}>
+                    selected
+                  </span>
+                  <ArtifactLink
+                    text={selectedName}
+                    artifactId={selectedId}
+                    artifactUrl={artifactUrlByName?.get(selectedName)}
+                    onArtifactClick={onArtifactClick}
+                  />
+                  <span className="shrink-0 whitespace-nowrap" style={textSecondary}>
+                    as their preferred option
+                  </span>
+                  {onBehalfOfName ? (
+                    <>
+                      <span className="shrink-0 whitespace-nowrap" style={textSecondary}>
+                        on behalf of
+                      </span>
+                      <span className="shrink-0 whitespace-nowrap" style={textPrimary}>
+                        {onBehalfOfName}
+                      </span>
+                    </>
+                  ) : null}
+                </EventRow>
+              );
+            }
 
             if (hasStructuredNames) {
               return (
@@ -1695,6 +1786,24 @@ export function TimelineEventCard({
               </EventRow>
             );
           })()
+        ) : normalizedEventType === "access_requested" ? (
+          <EventRow
+            leading={actorLeading}
+            timeLabel={t}
+            timeTooltipLabel={timeTooltipLabel || undefined}
+          >
+            <span className="min-w-0 truncate" style={textPrimary}>
+              {actor}
+            </span>
+            <span className="shrink-0 whitespace-nowrap" style={textSecondary}>
+              requested access to this
+            </span>
+            <span className="shrink-0 whitespace-nowrap" style={textPrimary}>
+              {String(payload.target ?? "").trim().toLowerCase() === "review"
+                ? "review"
+                : "project"}
+            </span>
+          </EventRow>
         ) : normalizedEventType === "reviewers_notified" ? (
           <EventRow
             leading={actorLeading}

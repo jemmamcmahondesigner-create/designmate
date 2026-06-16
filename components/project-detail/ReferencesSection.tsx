@@ -19,7 +19,7 @@ interface ReferencesSectionProps {
 }
 
 const sectionHeadingClass =
-  "text-[20px] font-semibold leading-[1.3] text-[#6b1e2e]";
+  "text-[20px] font-bold leading-[1.3] text-[#6b1e2e]";
 
 const sectionHeadingStyle = { letterSpacing: "-0.3px" as const };
 
@@ -208,15 +208,13 @@ export function ReferencesSection({
             className="mt-3 flex w-full items-center justify-center border border-solid border-[#e4ddd3]"
             style={{
               borderRadius: 8,
-              height: 80,
+              height: 66,
               backgroundColor: "#f3efe9",
             }}
           >
             <p
-              className="m-0 px-4 text-center"
+              className="m-0 px-4 text-center text-[14px] font-medium leading-[1.5]"
               style={{
-                fontSize: 13,
-                fontWeight: 400,
                 color: "var(--text-tertiary, #998c82)",
               }}
             >

@@ -7,6 +7,7 @@ export type ReviewDbStatus =
   | "paused"
   | "complete"
   | "approved"
+  | "direction-approved"
   | "needs-changes"
   | "changes-needed"
   | "blocked";
@@ -22,6 +23,8 @@ export type ReviewCardData = {
   /** `reviews.require_decision_maker` */
   requireDecisionMaker?: boolean;
   ownerName: string;
+  /** Canonical contributors.id for review creator avatar colour. */
+  creatorId?: string;
   /** Relative / formatted date string for display */
   dateLabel: string;
   dateTooltipIso?: string | null;

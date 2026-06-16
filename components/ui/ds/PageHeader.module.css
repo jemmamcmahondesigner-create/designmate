@@ -210,11 +210,17 @@
   border: 1px solid #e4ddd3;
   border-radius: 6px;
   background: #ffffff;
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.searchField:hover {
+  border-color: #c9c0b4;
 }
 
 .searchField:focus-within {
-  border-color: #fff0a3;
-  border-width: 2px;
+  border-color: #6b1e2e;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(107, 30, 46, 0.12);
 }
 
 .searchIcon {
@@ -244,6 +250,12 @@
   line-height: 1.5;
   letter-spacing: 0.26px;
   color: #2e1c1c;
+}
+
+.searchInput:focus,
+.searchInput:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .searchInput::placeholder {

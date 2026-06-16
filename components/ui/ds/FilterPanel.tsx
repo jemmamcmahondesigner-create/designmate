@@ -17,6 +17,7 @@ export type FilterPanelCheckboxItem = {
   id: string;
   label: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (checked: boolean) => void;
 };
 
@@ -30,7 +31,8 @@ export type FilterPanelPersonItem = {
 
 export type FilterPanelGroup = {
   id: string;
-  heading: string;
+  /** Omit or leave empty to hide the section heading. */
+  heading?: string;
   allRow?: FilterPanelAllRow;
   items?: FilterPanelCheckboxItem[];
   people?: FilterPanelPersonItem[];
@@ -69,7 +71,7 @@ export function FilterPanel({
       <div className={styles.body}>
         {topAllRow ? (
           <div className={styles.rows}>
-            <div className={`${styles.row} ${styles.rowAll}`}>
+            <div className={styles.row}>
               <Checkbox
                 id={`${idPrefix}-${topAllRow.id}`}
                 label={topAllRow.label ?? 'All'}
@@ -83,12 +85,14 @@ export function FilterPanel({
 
         {groups.map((group) => (
           <div key={group.id}>
-            <div className={styles.headingWrap}>
-              <span className={styles.heading}>{group.heading}</span>
-            </div>
+            {group.heading?.trim() ? (
+              <div className={styles.headingWrap}>
+                <span className={styles.heading}>{group.heading}</span>
+              </div>
+            ) : null}
             <div className={styles.rows}>
               {group.allRow ? (
-                <div className={`${styles.row} ${styles.rowAll}`}>
+                <div className={styles.row}>
                   <Checkbox
                     id={`${idPrefix}-${group.allRow.id}`}
                     label={group.allRow.label ?? 'All'}
@@ -104,6 +108,7 @@ export function FilterPanel({
                     id={`${idPrefix}-${item.id}`}
                     label={item.label}
                     checked={item.checked}
+                    disabled={item.disabled}
                     onChange={item.onChange}
                   />
                 </div>
@@ -127,7 +132,16 @@ export function FilterPanel({
 
       <div className={styles.footer}>
         {footer ?? (
-          <>
+          <div className={styles.footerActions}>
+            <Button
+              label="Apply"
+              size="sm"
+              variant="primary"
+              className={styles.footerPrimary}
+              style={{ minWidth: 72 }}
+              disabled={applyDisabled}
+              onClick={onApply}
+            />
             <Button
               label="Reset"
               size="sm"
@@ -135,15 +149,7 @@ export function FilterPanel({
               disabled={resetDisabled}
               onClick={onReset}
             />
-            <Button
-              label="Apply"
-              size="sm"
-              variant="primary"
-              style={{ minWidth: 72 }}
-              disabled={applyDisabled}
-              onClick={onApply}
-            />
-          </>
+          </div>
         )}
       </div>
     </div>

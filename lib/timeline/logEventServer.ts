@@ -136,7 +136,10 @@ export async function logTimelineEventServer(
       insertError.message,
       input.eventType,
     );
+    return { ok: false as const, error: insertError.message };
   }
+
+  return { ok: true as const };
 
 }
 

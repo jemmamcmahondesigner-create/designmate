@@ -16,6 +16,7 @@ import { useCreateProjectModal } from "@/components/projects/CreateProjectModalP
 import { useActiveWorkspacePermission } from "@/hooks/useWorkspacePermission";
 import { canCreateReviews, CREATE_REVIEW_DENIED_TOOLTIP } from "@/lib/workspace/permissions";
 import type { Project, ProjectStatus, ProjectsByStatus } from "@/types/project";
+import type { ProjectReviewStatusBreakdown } from "@/lib/reviews/projectReviewStatusBreakdown";
 
 function projectStatusPresentation(status: ProjectStatus): {
   label: string;
@@ -37,12 +38,17 @@ type AccordionSectionProps = {
   title: string;
   projects: Project[];
   reviewCounts: Record<string, number>;
+  reviewBreakdowns: Record<string, ProjectReviewStatusBreakdown>;
   open: boolean;
   disabled: boolean;
   onToggle: () => void;
   emptyMessage?: ReactNode;
   showEmptyPanel?: boolean;
 };
+
+const TEXT_DISABLED = "var(--text-disabled, #c9c0b4)";
+const ICON_DISABLED = "var(--text-disabled, #c9c0b4)";
+const EMPTY_SECTION_TOOLTIP = "No projects currently exist.";
 
 function AccordionHeaderRow({
   title,
@@ -59,15 +65,17 @@ function AccordionHeaderRow({
 }) {
   let labelColor: string;
   let iconColor: string;
+  const displayOpen = disabled ? false : open;
   if (disabled) {
-    labelColor = iconColor = "#998c82";
-  } else if (open) {
+    labelColor = TEXT_DISABLED;
+    iconColor = ICON_DISABLED;
+  } else if (displayOpen) {
     labelColor = iconColor = "#6b1e2e";
   } else {
     labelColor = iconColor = "#6b5e55";
   }
 
-  const chevronEl = open ? (
+  const chevronEl = displayOpen ? (
     <ChevronUp size={12} weight="fill" color={iconColor} />
   ) : (
     <ChevronDown size={12} weight="fill" color={iconColor} />
@@ -86,30 +94,39 @@ function AccordionHeaderRow({
         {chevronEl}
       </span>
       <span
-        className="ml-2 shrink-0 text-[18px] font-semibold leading-[1.5]"
-        style={{ color: labelColor }}
+        className="ml-2 shrink-0 text-[18px] leading-[1.5]"
+        style={{ color: labelColor, fontWeight: 700 }}
       >
         {title}
       </span>
-      <span className="ml-3 inline-flex shrink-0 items-center self-center">
-        <NotificationBadge
-          count={count}
-          sentiment="brand"
-          prominence={open ? "high" : "low"}
-        />
-      </span>
+      {count > 0 ? (
+        <span className="ml-3 inline-flex shrink-0 items-center self-center">
+          <NotificationBadge
+            count={count}
+            sentiment={disabled ? "disabled" : "brand"}
+            prominence={disabled || !displayOpen ? "low" : "high"}
+          />
+        </span>
+      ) : null}
       {dividerEl}
     </>
   );
 
   if (isTrulyDisabled) {
     return (
-      <div
-        className="flex w-full cursor-default items-center"
-        aria-disabled="true"
+      <Tooltip
+        label={EMPTY_SECTION_TOOLTIP}
+        position="top"
+        fullWidth
+        className="min-w-0 flex-1"
       >
-        {rowInner}
-      </div>
+        <div
+          className="flex w-full cursor-default items-center"
+          aria-disabled="true"
+        >
+          {rowInner}
+        </div>
+      </Tooltip>
     );
   }
 
@@ -131,6 +148,7 @@ function AccordionSection({
   onToggle,
   projects,
   reviewCounts,
+  reviewBreakdowns,
   emptyMessage,
   showEmptyPanel = false
 }: AccordionSectionProps) {
@@ -140,7 +158,7 @@ function AccordionSection({
         <AccordionHeaderRow
           title={title}
           count={projects.length}
-          open={open}
+          open={disabled ? false : open}
           disabled={disabled}
           onToggle={onToggle}
         />
@@ -161,10 +179,14 @@ function AccordionSection({
                 statusLabel={meta.label}
                 statusVariant={meta.variant}
                 reviewCount={reviewCounts[p.id] ?? 0}
-                decisionCount={0}
+                reviewStatusBreakdown={reviewBreakdowns[p.id]}
                 description={p.description ?? undefined}
                 tagLabel={p.client ?? undefined}
-                contributors={[]}
+                contributors={p.contributors.map((c) => ({
+                  id: c.id,
+                  name: c.name,
+                  avatarSrc: c.avatarUrl ?? undefined,
+                }))}
                 href={`/projects/${p.id}`}
               />
             );
@@ -178,6 +200,7 @@ function AccordionSection({
 export type ProjectsViewProps = {
   grouped: ProjectsByStatus;
   reviewCounts: Record<string, number>;
+  reviewBreakdowns: Record<string, ProjectReviewStatusBreakdown>;
   searchPlaceholder: string;
   workspaceEmptyMessage?: string;
 };
@@ -185,14 +208,15 @@ export type ProjectsViewProps = {
 export function ProjectsView({
   grouped,
   reviewCounts,
+  reviewBreakdowns,
   searchPlaceholder,
   workspaceEmptyMessage,
 }: ProjectsViewProps) {
   const createProject = useCreateProjectModal();
   const { openNewReview } = useNewReviewDrawer();
   const [searchQuery, setSearchQuery] = useState("");
-  const { permissionLevel } = useActiveWorkspacePermission();
-  const canCreateReview = canCreateReviews(permissionLevel);
+  const { workspacePermissionLevel } = useActiveWorkspacePermission();
+  const canCreateReview = canCreateReviews(workspacePermissionLevel);
 
   const handleNewReview = () => {
     openNewReview({ mode: "global" });
@@ -343,6 +367,7 @@ export function ProjectsView({
               title="Active"
               projects={filteredGrouped.active}
               reviewCounts={reviewCounts}
+              reviewBreakdowns={reviewBreakdowns}
               open={activeOpen}
               disabled={false}
               onToggle={() => setActiveOpen((v) => !v)}
@@ -355,6 +380,7 @@ export function ProjectsView({
               title="Paused"
               projects={filteredGrouped.paused}
               reviewCounts={reviewCounts}
+              reviewBreakdowns={reviewBreakdowns}
               open={pausedOpen}
               disabled={pausedDisabled}
               onToggle={() => setPausedOpen((v) => !v)}
@@ -366,6 +392,7 @@ export function ProjectsView({
               title="Complete"
               projects={filteredGrouped.complete}
               reviewCounts={reviewCounts}
+              reviewBreakdowns={reviewBreakdowns}
               open={completeOpen}
               disabled={completeDisabled}
               onToggle={() => setCompleteOpen((v) => !v)}

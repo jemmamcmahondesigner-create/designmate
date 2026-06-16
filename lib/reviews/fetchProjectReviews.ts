@@ -3,10 +3,10 @@ import {
   resolveCanonicalContributorIds,
   type ResolvedContributor,
 } from "@/lib/contributors/resolveCanonicalContributorIds";
+import { parseReviewDbStatus, sortReviewCardsForProjectSidebar } from "@/lib/reviews/reviewStatusDisplay";
 import type {
   ReviewArtifactStored,
   ReviewCardData,
-  ReviewDbStatus,
   ReviewRow,
   ReviewType
 } from "@/types/review";
@@ -21,23 +21,6 @@ function parseReviewType(raw: string | null | undefined): ReviewType {
   const s = String(raw ?? "").toLowerCase();
   if (s === "critique" || s === "align" || s === "approve") return s;
   return "compare";
-}
-
-function parseStatus(raw: string | null | undefined): ReviewDbStatus {
-  const s = String(raw ?? "").trim().toLowerCase();
-  const allowed: ReviewDbStatus[] = [
-    "draft",
-    "in-review",
-    "feedback-submitted",
-    "paused",
-    "complete",
-    "approved",
-    "needs-changes",
-    "changes-needed",
-    "blocked",
-  ];
-  if (allowed.includes(s as ReviewDbStatus)) return s as ReviewDbStatus;
-  return "in-review";
 }
 
 function parseArtifacts(raw: unknown): ReviewArtifactStored[] {
@@ -115,14 +98,26 @@ export function buildReviewCardReviewers(
     .filter((item): item is { id: string; name: string } => item != null);
 }
 
+/** Map reviews.creator_id (auth user or legacy contributor ref) → canonical contributors.id. */
+export function resolveReviewCardCreatorId(
+  rawCreatorId: unknown,
+  resolutionByRawId: Map<string, ResolvedReviewCardReviewer>,
+): string | undefined {
+  const raw = String(rawCreatorId ?? "").trim();
+  if (!raw) return undefined;
+  return resolutionByRawId.get(raw)?.contributorId;
+}
+
 export async function fetchReviewCardMeta(
   supabase: SupabaseClient,
   {
     reviewIds,
     reviewerIds,
+    creatorIds = [],
   }: {
     reviewIds: string[];
     reviewerIds: string[];
+    creatorIds?: string[];
   },
 ): Promise<{
   reviewerNameById: Map<string, string>;
@@ -133,7 +128,7 @@ export async function fetchReviewCardMeta(
   const countsByReviewId = new Map<string, ReviewCardCounts>();
   const reviewerResolutionByRawId = await resolveCanonicalContributorIds(
     supabase,
-    reviewerIds,
+    [...new Set([...reviewerIds, ...creatorIds])],
   );
   for (const [rawId, match] of reviewerResolutionByRawId) {
     reviewerNameById.set(rawId, match.name);
@@ -192,23 +187,36 @@ export async function fetchReviewCardMeta(
 
 export async function fetchProjectReviewsForCards(
   supabase: SupabaseClient,
-  projectId: string
+  projectId: string,
+  options?: { assignedReviewerContributorId?: string | null },
 ): Promise<ReviewCardData[]> {
   const { data, error } = await supabase
     .from("reviews")
     .select(
-      "id, title, status, created_at, owner_display_name, review_focus, reviewer_contributor_ids, artifacts, review_type, decision_status, decision_comments, decision_selected_artifact_ids, decision_text, require_decision_maker, artifact_file_name, artifact_file_type, artifact_name, artifact_iteration, artifact_description, artifact_file_url"
+      "id, title, status, created_at, owner_display_name, creator_id, review_focus, reviewer_contributor_ids, artifacts, review_type, decision_status, decision_comments, decision_selected_artifact_ids, decision_text, require_decision_maker, artifact_file_name, artifact_file_type, artifact_name, artifact_iteration, artifact_description, artifact_file_url"
     )
     .eq("project_id", projectId)
     .order("created_at", { ascending: false });
 
   if (error || !data) return [];
 
-  const reviewIds = data
+  const assignedReviewerContributorId = options?.assignedReviewerContributorId?.trim();
+  const rows =
+    assignedReviewerContributorId
+      ? data.filter((row) => {
+          const ids = (row as Record<string, unknown>).reviewer_contributor_ids;
+          if (!Array.isArray(ids)) return false;
+          return ids.some(
+            (id) => String(id ?? "").trim() === assignedReviewerContributorId,
+          );
+        })
+      : data;
+
+  const reviewIds = rows
     .map((row) => String((row as Record<string, unknown>).id ?? ""))
     .filter(Boolean);
   const reviewerIds = [...new Set(
-    data.flatMap((row) =>
+    rows.flatMap((row) =>
       Array.isArray((row as Record<string, unknown>).reviewer_contributor_ids)
         ? ((row as Record<string, unknown>).reviewer_contributor_ids as unknown[])
             .map((id) => String(id).trim())
@@ -216,11 +224,18 @@ export async function fetchProjectReviewsForCards(
         : [],
     ),
   )];
+  const creatorIds = [...new Set(
+    rows
+      .map((row) => String((row as Record<string, unknown>).creator_id ?? "").trim())
+      .filter(Boolean),
+  )];
   const { reviewerResolutionByRawId, countsByReviewId } = await fetchReviewCardMeta(supabase, {
     reviewIds,
     reviewerIds,
+    creatorIds,
   });
-  return data.map((row) => {
+  return sortReviewCardsForProjectSidebar(
+    rows.map((row) => {
     const r = row as Record<string, unknown>;
     const artifacts = parseArtifacts(r.artifacts);
     const iterationLabel =
@@ -247,7 +262,7 @@ export async function fetchProjectReviewsForCards(
     return {
       id: String(r.id ?? ""),
       title: String(r.title ?? ""),
-      status: parseStatus(r.status as string | undefined),
+      status: parseReviewDbStatus(r.status as string | undefined),
       reviewType: parseReviewType(r.review_type as string | undefined),
       decisionStatus:
         r.decision_status == null || String(r.decision_status).trim() === ""
@@ -255,6 +270,7 @@ export async function fetchProjectReviewsForCards(
           : String(r.decision_status),
       requireDecisionMaker: Boolean(r.require_decision_maker),
       ownerName: String(r.owner_display_name ?? "Reviewer"),
+      creatorId: resolveReviewCardCreatorId(r.creator_id, reviewerResolutionByRawId),
       dateLabel,
       dateTooltipIso:
         r.created_at == null ? null : String(r.created_at),
@@ -278,7 +294,8 @@ export async function fetchProjectReviewsForCards(
         r.artifact_file_url == null ? null : String(r.artifact_file_url),
       ...(tags.length > 0 ? { tags } : {})
     } satisfies ReviewCardData;
-  });
+  }),
+  );
 }
 
 export function mapDbRowToReviewRow(row: Record<string, unknown>): ReviewRow {
@@ -309,7 +326,7 @@ export function mapDbRowToReviewRow(row: Record<string, unknown>): ReviewRow {
         : String(row.artifact_description),
     artifact_file_url:
       row.artifact_file_url == null ? null : String(row.artifact_file_url),
-    status: parseStatus(row.status as string | undefined),
+    status: parseReviewDbStatus(row.status as string | undefined),
     created_at: String(row.created_at ?? "")
   };
 }

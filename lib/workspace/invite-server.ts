@@ -136,6 +136,7 @@ export async function createWorkspaceInvite({
       workspace_id: workspaceId,
       user_id: existingUser.id,
       role: memberRole,
+      permission_level: permissionLevel,
       status: "active",
       invite_email: normalizedEmail,
     });

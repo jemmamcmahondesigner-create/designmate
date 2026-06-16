@@ -112,9 +112,10 @@
 /* ─── Body text ──────────────────────────────────────────────────────────────── */
 
 .body {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 400;
   line-height: 1.5;
+  letter-spacing: 0.26px;
   color: #2e1c1c;
   width: 100%;
   margin: 0;
@@ -164,9 +165,10 @@
 }
 
 .replyBody {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 400;
   line-height: 1.5;
+  letter-spacing: 0.26px;
   color: #2e1c1c;
   margin: 0;
   width: 100%;

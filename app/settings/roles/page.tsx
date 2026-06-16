@@ -1,5 +1,6 @@
 import { RolesSettingsPage, type RoleRow } from "@/components/settings/RolesSettingsPage";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import { getWorkspacePermissionLevelForCurrentUser } from "@/lib/workspace/settingsAccess";
 
 type ContributorRow = {
@@ -30,6 +31,10 @@ export default async function SettingsRolesPage() {
   const isReadOnly = permissionLevel === "reviewer";
 
   const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const activeWorkspaceId = getActiveWorkspaceIdFromUser(user);
 
   const { data: roleRows, error: rolesError } = await supabase
     .from("contributor_roles")
@@ -40,9 +45,17 @@ export default async function SettingsRolesPage() {
     console.error("Roles fetch error:", rolesError);
   }
 
-  const { data: contributorRows, error: contributorsError } = await supabase
+  let contributorsQuery = supabase
     .from("contributors")
     .select("id, name, role, role_id, deleted_at");
+
+  if (activeWorkspaceId) {
+    contributorsQuery = contributorsQuery.eq("workspace_id", activeWorkspaceId);
+  } else {
+    contributorsQuery = contributorsQuery.eq("workspace_id", "00000000-0000-0000-0000-000000000000");
+  }
+
+  const { data: contributorRows, error: contributorsError } = await contributorsQuery;
 
   if (contributorsError) {
     console.error("Roles contributors fetch error:", contributorsError);
@@ -69,5 +82,11 @@ export default async function SettingsRolesPage() {
     };
   });
 
-  return <RolesSettingsPage initialRoles={initialRoles} readOnly={isReadOnly} />;
+  return (
+    <RolesSettingsPage
+      initialRoles={initialRoles}
+      readOnly={isReadOnly}
+      activeWorkspaceId={activeWorkspaceId}
+    />
+  );
 }

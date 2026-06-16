@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ReviewCard, type ReviewStatus } from "@/components/ui/ds";
+import { parseReviewDbStatus } from "@/lib/reviews/reviewStatusDisplay";
 
 export type ReviewListItem = {
   id: string;
@@ -21,21 +22,7 @@ export type ReviewGroup = {
 };
 
 function normStatus(raw: string): ReviewStatus {
-  const s = String(raw ?? "")
-    .trim()
-    .toLowerCase();
-  const allowed: ReviewStatus[] = [
-    "draft",
-    "in-review",
-    "feedback-submitted",
-    "paused",
-    "complete",
-    "approved",
-    "needs-changes",
-    "changes-needed",
-    "blocked",
-  ];
-  return (allowed.includes(s as ReviewStatus) ? s : "in-review") as ReviewStatus;
+  return parseReviewDbStatus(raw) as ReviewStatus;
 }
 
 export function AllReviewsGrouped({

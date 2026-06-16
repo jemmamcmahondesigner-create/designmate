@@ -18,9 +18,11 @@ export type ClientRow = {
 export function ClientsSettingsPage({
   initialClients,
   readOnly = false,
+  activeWorkspaceId = null,
 }: {
   initialClients: ClientRow[];
   readOnly?: boolean;
+  activeWorkspaceId?: string | null;
 }) {
   const router = useRouter();
   const [clients, setClients] = useState(initialClients);
@@ -51,12 +53,14 @@ export function ClientsSettingsPage({
 
   const saveCreate = async () => {
     const name = createForm.name.trim();
-    if (!name) return;
+    if (!name || !activeWorkspaceId) return;
     setFormError(null);
     const supabase = createSupabaseBrowserClient();
     const industry = createForm.industry.trim() || null;
     const website = createForm.website.trim() || null;
-    const { error } = await supabase.from("clients").insert({ name, industry, website });
+    const { error } = await supabase
+      .from("clients")
+      .insert({ name, industry, website, workspace_id: activeWorkspaceId });
     if (error) {
       setFormError(error.message || "Could not create group.");
       return;
@@ -84,10 +88,14 @@ export function ClientsSettingsPage({
     const supabase = createSupabaseBrowserClient();
     const industry = editForm.industry.trim() || null;
     const website = editForm.website.trim() || null;
-    const { error } = await supabase
+    let updateQuery = supabase
       .from("clients")
       .update({ name, industry, website })
       .eq("id", editClient.id);
+    if (activeWorkspaceId) {
+      updateQuery = updateQuery.eq("workspace_id", activeWorkspaceId);
+    }
+    const { error } = await updateQuery;
     if (error) {
       setFormError(error.message || "Could not update group.");
       return;
@@ -99,7 +107,11 @@ export function ClientsSettingsPage({
   const confirmRemove = async () => {
     if (!removeClient) return;
     const supabase = createSupabaseBrowserClient();
-    const { error } = await supabase.from("clients").delete().eq("id", removeClient.id);
+    let deleteQuery = supabase.from("clients").delete().eq("id", removeClient.id);
+    if (activeWorkspaceId) {
+      deleteQuery = deleteQuery.eq("workspace_id", activeWorkspaceId);
+    }
+    const { error } = await deleteQuery;
     if (error) {
       setFormError(error.message || "Could not remove group.");
       setRemoveClient(null);
@@ -286,7 +298,7 @@ export function ClientsSettingsPage({
               columns={columns}
               rows={clients}
               emptyState={
-                <span style={{ color: "var(--text-secondary, #6b5e55)" }}>No groups yet — add your first group to start linking projects.</span>
+                <span>No groups yet — add your first group to start linking projects.</span>
               }
             />
           </div>
