@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Avatar, StatusPill, Tag, Tooltip, type StatusPillStatus } from "@/components/ui/ds";
-import { getAvatarInlineStyle } from "@/lib/utils/avatarColour";
+import { getAvatarInlineStyle, avatarColourKey } from "@/lib/utils/avatarColour";
 import type { Project, ProjectStatus } from "@/types/project";
 
 const MAX_VISIBLE_TEAMMATES = 5;
@@ -81,7 +81,13 @@ export function ProjectCard({
                   className="inline-flex items-center"
                   aria-label={`${project.contributors.length} teammates`}
                 >
-                  {visibleContributors.map((contributor, index) => (
+                  {visibleContributors.map((contributor, index) => {
+                    const colourKey = avatarColourKey(
+                      contributor.email,
+                      contributor.id,
+                      contributor.name,
+                    );
+                    return (
                     <span
                       key={contributor.id}
                       className="inline-flex rounded-full border border-solid border-white"
@@ -96,13 +102,14 @@ export function ProjectCard({
                     >
                       <Avatar
                         name={contributor.name}
-                        contributorId={contributor.id}
+                        contributorId={colourKey}
                         src={contributor.avatarUrl ?? undefined}
                         size="md"
-                        style={getAvatarInlineStyle(contributor.id)}
+                        style={getAvatarInlineStyle(colourKey)}
                       />
                     </span>
-                  ))}
+                    );
+                  })}
                   {overflowCount > 0 ? (
                     <span
                       className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-solid border-white text-[10px] font-semibold leading-none tracking-[0.2px]"

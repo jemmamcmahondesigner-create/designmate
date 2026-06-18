@@ -22,6 +22,7 @@ import {
   titleCaseRoleName,
 } from "@/lib/workspace/contributorRoles";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
+import { ensureWorkspaceMember } from "@/lib/workspace/ensureWorkspaceMember";
 import {
   mapInvitePermissionLevel,
   type WorkspacePermissionLevel,
@@ -346,7 +347,6 @@ export function OnboardingFlow({
         options?.workspaceId ??
         activeWorkspaceId ??
         getActiveWorkspaceIdFromUser(user) ??
-        (user?.user_metadata?.workspace_id as string | undefined) ??
         null;
 
       const trimmedName = name.trim();
@@ -408,27 +408,16 @@ export function OnboardingFlow({
 
       if (!workspace) return { ok: false as const };
 
-      const { data: existingMember } = await supabase
-        .from("workspace_members")
-        .select("id")
-        .eq("workspace_id", workspace.id)
-        .eq("user_id", currentUserId)
-        .maybeSingle();
+      const { error: memberError } = await ensureWorkspaceMember(supabase, {
+        workspace_id: workspace.id,
+        user_id: currentUserId,
+        role: "member",
+        permission_level: "reviewer",
+        status: "active",
+      });
 
-      if (existingMember) {
-        await supabase
-          .from("workspace_members")
-          .update({ status: "active", joined_at: new Date().toISOString() })
-          .eq("workspace_id", workspace.id)
-          .eq("user_id", currentUserId);
-      } else {
-        await supabase.from("workspace_members").insert({
-          workspace_id: workspace.id,
-          user_id: currentUserId,
-          role: "member",
-          permission_level: "reviewer",
-          status: "active",
-        });
+      if (memberError) {
+        return { ok: false as const };
       }
 
       await supabase.auth.updateUser({
@@ -471,7 +460,7 @@ export function OnboardingFlow({
     const memberUserId = user?.id;
 
     if (memberUserId) {
-      const { error: memberError } = await supabase.from("workspace_members").insert({
+      const { error: memberError } = await ensureWorkspaceMember(supabase, {
         workspace_id: workspace.id,
         user_id: memberUserId,
         role: "admin",
@@ -481,6 +470,22 @@ export function OnboardingFlow({
 
       if (memberError) {
         console.error("Failed to create workspace admin membership:", memberError);
+      } else {
+        const creatorDisplayName =
+          (user?.user_metadata?.display_name as string | undefined)?.trim() ||
+          (user?.user_metadata?.full_name as string | undefined)?.trim() ||
+          user?.email?.split("@")[0] ||
+          "User";
+
+        await ensureContributorProfile(supabase, {
+          userId: memberUserId,
+          email: user?.email ?? null,
+          displayName: creatorDisplayName,
+          role:
+            (user?.user_metadata?.role as string | undefined)?.trim() || null,
+          activeWorkspaceId: workspace.id,
+          permissionLevel: "admin",
+        });
       }
     }
 

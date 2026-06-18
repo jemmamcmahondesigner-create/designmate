@@ -178,6 +178,7 @@ export function NewReviewDrawerProvider({
           .from("problems")
           .select("id, description")
           .eq("project_id", globalProjectId)
+          .is("review_id", null)
           .order("created_at", { ascending: true }),
         contributorsQuery,
       ]);

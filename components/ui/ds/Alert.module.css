@@ -78,6 +78,9 @@
   line-height: 1.5;
   margin: 0;
   width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .titleDefault { color: #6b1e2e; }
@@ -107,6 +110,7 @@
   flex-wrap: wrap;
   gap: 4px;
   padding: 1.5px 0;
+  min-width: 0;
 }
 
 .body {
@@ -114,6 +118,9 @@
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: 0.24px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .bodyDefault { color: #6b5e55; }
@@ -144,7 +151,9 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  white-space: nowrap;
+  white-space: normal;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .detailsInverse { color: #ffffff; }
@@ -154,6 +163,8 @@
   font-weight: 500;
   line-height: normal;
   color: #6b5e55;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .detailsInverse .author { color: #ffffff; }
@@ -169,6 +180,8 @@
   line-height: 1.5;
   letter-spacing: 0.24px;
   color: #998c82;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .detailsInverse .dot,

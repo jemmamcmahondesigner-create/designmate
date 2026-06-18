@@ -8,7 +8,7 @@ import { StatusPill } from './StatusPill';
 import { Tag } from './Tag';
 import { Tooltip } from './Tooltip';
 import type { ReactNode } from 'react';
-import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
+import { getAvatarInlineStyle, avatarColourKey } from '@/lib/utils/avatarColour';
 import styles from './DecisionCard.module.css';
 
 // ─── DecisionCard ─────────────────────────────────────────────────────────────
@@ -47,6 +47,7 @@ export interface DecisionCardProps {
   owner: string;
   ownerAvatarSrc?: string;
   ownerContributorId?: string;
+  ownerContributorEmail?: string | null;
   timestamp: string;
   decisionText: string;
   artifactTags?: string[];
@@ -88,6 +89,7 @@ export function DecisionCard({
   owner,
   ownerAvatarSrc,
   ownerContributorId,
+  ownerContributorEmail,
   timestamp,
   decisionText,
   artifactTags = [],
@@ -141,7 +143,11 @@ export function DecisionCard({
   const textOk = decisionText.trim().length > 0;
   const tagsOk = footerTags.length > 0;
   const cardDisabled = completed || superseded;
-  const ownerColourKey = (ownerContributorId ?? owner).trim() || owner;
+  const ownerColourKey = avatarColourKey(
+    ownerContributorEmail,
+    ownerContributorId,
+    owner,
+  );
   const headerAvatarStyle = getAvatarInlineStyle(ownerColourKey, { ring: true });
   if (!hasChangeRequests && !textOk && !tagsOk) {
     return (

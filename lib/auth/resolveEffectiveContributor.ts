@@ -64,7 +64,10 @@ export async function resolveEffectiveContributor(
     query = query.eq("project_id", projectId);
   }
 
-  const { data } = await query.limit(1).maybeSingle();
+  const { data: rows } = await query
+    .order("created_at", { ascending: true })
+    .limit(1);
+  const data = rows?.[0] ?? null;
   if (!data) return null;
   const row = data as Record<string, unknown>;
   return {

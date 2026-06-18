@@ -39,6 +39,8 @@ export type TimelineEventRow = {
   payload: Record<string, unknown> | null;
   actor?: {
     id: string;
+    user_id?: string | null;
+    email?: string | null;
     name: string | null;
     avatar_url: string | null;
   } | null;

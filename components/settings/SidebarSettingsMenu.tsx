@@ -15,12 +15,13 @@ import type { WorkspacePermissionLevel } from "@/lib/workspace/permissions";
 import menuStyles from "@/components/ui/ds/Menu.module.css";
 import selectStyles from "@/components/ui/ds/Select.module.css";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { getAvatarInlineStyle } from "@/lib/utils/avatarColour";
+import { getAvatarInlineStyle, avatarColourKey } from "@/lib/utils/avatarColour";
 
 type SidebarSettingsMenuProps = {
   open: boolean;
   onClose: () => void;
   contributorId: string | null;
+  contributorEmail?: string | null;
   displayName: string;
   roleLabel: string;
   workspaceOptions: Array<{ value: string; label: string }>;
@@ -172,6 +173,7 @@ export function SidebarSettingsMenu({
   open,
   onClose,
   contributorId,
+  contributorEmail = null,
   displayName,
   roleLabel,
   workspaceOptions,
@@ -405,8 +407,11 @@ export function SidebarSettingsMenu({
             <Avatar
               name={displayName}
               size="lg"
-              contributorId={contributorId ?? undefined}
-              style={getAvatarInlineStyle((contributorId ?? "").trim() || "?", { ring: true })}
+              contributorId={avatarColourKey(contributorEmail, contributorId)}
+              style={getAvatarInlineStyle(
+                avatarColourKey(contributorEmail, contributorId),
+                { ring: true },
+              )}
             />
           </span>
         </div>

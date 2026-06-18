@@ -45,37 +45,24 @@ export async function ensureContributorProfile(
     is_paid: isPaid,
   };
 
-  const matchingIds = new Set<string>();
-
-  const { data: byUserId } = await supabase
+  const { data: workspaceProfiles } = await supabase
     .from("contributors")
     .select("id")
     .eq("workspace_id", activeWorkspaceId)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .is("project_id", null)
+    .order("created_at", { ascending: true })
+    .limit(1);
 
-  for (const row of byUserId ?? []) {
-    const id = String((row as { id?: string }).id ?? "").trim();
-    if (id) matchingIds.add(id);
-  }
+  const workspaceProfileId = String(
+    (workspaceProfiles?.[0] as { id?: string } | null)?.id ?? "",
+  ).trim();
 
-  if (emailValue) {
-    const { data: byEmail } = await supabase
-      .from("contributors")
-      .select("id")
-      .eq("workspace_id", activeWorkspaceId)
-      .ilike("email", emailValue);
-
-    for (const row of byEmail ?? []) {
-      const id = String((row as { id?: string }).id ?? "").trim();
-      if (id) matchingIds.add(id);
-    }
-  }
-
-  if (matchingIds.size > 0) {
+  if (workspaceProfileId) {
     const { error } = await supabase
       .from("contributors")
       .update(contributorUpdates)
-      .in("id", [...matchingIds]);
+      .eq("id", workspaceProfileId);
     return { error: error?.message ?? null };
   }
 

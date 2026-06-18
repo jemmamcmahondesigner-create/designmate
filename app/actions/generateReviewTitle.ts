@@ -1,6 +1,7 @@
 'use server';
 
 import Anthropic from '@anthropic-ai/sdk';
+import { getMajorVersion } from '@/lib/artifacts/versioning';
 
 const MODEL =
   process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5';
@@ -16,8 +17,8 @@ export type GenerateReviewTitleInput = {
   reviewType: 'Approval' | 'Comparison';
   /** Per-artifact context used to deterministically derive `suggestedReviewType`. */
   artifactContext?: {
-    /** `versionNumber` of the artifact draft (1 = first iteration). */
-    versionNumber: number;
+    /** Stored version label (e.g. `v1`, `v2.1`). */
+    versionNumber: string;
     /** True when this artifact is linked to an existing canonical artifact (i.e. has a related prior artifact). */
     hasRelatedArtifact: boolean;
   }[];
@@ -45,7 +46,7 @@ function deriveSuggestedReviewType(
   const count = context.length;
   if (count >= 2 && priorReviewsExist) return 'approve';
   if (count >= 2) return 'compare';
-  const anyV2Plus = context.some((a) => a.versionNumber >= 2);
+  const anyV2Plus = context.some((a) => getMajorVersion(a.versionNumber) >= 2);
   const anyRelated = context.some((a) => a.hasRelatedArtifact);
   if (anyV2Plus && anyRelated) return 'critique';
   if (!anyV2Plus && !anyRelated) return 'align';

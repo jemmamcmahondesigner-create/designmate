@@ -12,7 +12,6 @@ import {
 } from "@/lib/workspace/parseWorkspaceMember";
 import {
   isAssignedReviewerScope,
-  normalizeWorkspacePermission,
   type ReviewerType,
   type WorkspacePermissionLevel,
 } from "@/lib/workspace/permissions";
@@ -29,24 +28,31 @@ async function fetchWorkspaceMemberRow(
   workspaceId: string,
   userId: string,
 ): Promise<WorkspaceMemberPermissionRow | null> {
-  const { data: member, error } = await supabase
+  const { data: members, error } = await supabase
     .from("workspace_members")
     .select("permission_level, role, reviewer_type")
     .eq("workspace_id", workspaceId)
     .eq("user_id", userId)
-    .maybeSingle();
+    .eq("status", "active")
+    .order("joined_at", { ascending: true })
+    .limit(1);
 
-  if (error) {
-    const { data: memberByRole } = await supabase
-      .from("workspace_members")
-      .select("role, reviewer_type")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", userId)
-      .maybeSingle();
-    return (memberByRole as WorkspaceMemberPermissionRow | null) ?? null;
+  const member = (members?.[0] as WorkspaceMemberPermissionRow | null) ?? null;
+
+  if (!error) {
+    return member;
   }
 
-  return (member as WorkspaceMemberPermissionRow | null) ?? null;
+  const { data: membersByRole } = await supabase
+    .from("workspace_members")
+    .select("role, reviewer_type")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .order("joined_at", { ascending: true })
+    .limit(1);
+
+  return (membersByRole?.[0] as WorkspaceMemberPermissionRow | null) ?? null;
 }
 
 export async function resolveWorkspaceMembership(
@@ -58,14 +64,11 @@ export async function resolveWorkspaceMembership(
   if (impersonatedContributorId) {
     const { data: contributor } = await supabase
       .from("contributors")
-      .select("user_id, permission_level")
+      .select("user_id")
       .eq("id", impersonatedContributorId)
       .maybeSingle();
 
-    const row = contributor as {
-      user_id?: string | null;
-      permission_level?: string | null;
-    } | null;
+    const row = contributor as { user_id?: string | null } | null;
     const linkedUserId = row?.user_id?.trim() || null;
 
     if (linkedUserId) {
@@ -86,14 +89,9 @@ export async function resolveWorkspaceMembership(
       };
     }
 
-    const contributorPermission = row?.permission_level?.trim();
-    const workspacePermissionLevel = contributorPermission
-      ? normalizeWorkspacePermission(contributorPermission)
-      : null;
     return {
-      workspacePermissionLevel,
-      reviewerType:
-        workspacePermissionLevel === "reviewer" ? "open" : null,
+      workspacePermissionLevel: null,
+      reviewerType: null,
       userId: null,
       workspaceId,
     };

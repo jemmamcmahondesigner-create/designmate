@@ -1,24 +1,25 @@
 import "server-only";
 
+import { compareVersions, formatVersionLabel } from "@/lib/artifacts/versioning";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export type ProjectArtifactOverviewRow = {
   artifactId: string;
   artifactName: string;
   versionId: string;
-  versionNumber: number;
+  versionNumber: string;
   reviewId: string | null;
   reviewTitle: string | null;
   reviewStatus: string | null;
   reviewType: string | null;
+  reviewTypeKey: "compare" | "approve" | "align" | "critique" | null;
   feedbackCount: number;
-  feedbackNa: boolean;
 };
 
 export type ProjectArtifactHistoryVersion = {
   versionId: string;
   artifactId: string;
-  versionNumber: number;
+  versionNumber: string;
   /** ISO timestamp from `artifact_versions.created_at` for “Edited … ago”. */
   versionCreatedAt: string | null;
   reviewId: string | null;
@@ -32,7 +33,6 @@ export type ProjectArtifactHistoryVersion = {
   description: string | null;
   decisionSummary: string | null;
   feedbackCount: number;
-  feedbackNa: boolean;
   reviewerPeople: { id: string; name: string; avatarUrl: string | null }[];
 };
 
@@ -85,6 +85,17 @@ function normReviewType(rt: string | null | undefined): string {
   if (s === "alignment") return "Align";
   if (!s) return "—";
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function normReviewTypeKey(
+  rt: string | null | undefined
+): "compare" | "approve" | "align" | "critique" | null {
+  const s = String(rt ?? "").trim().toLowerCase();
+  if (s === "compare" || s === "comparison") return "compare";
+  if (s === "approve" || s === "approval") return "approve";
+  if (s === "align" || s === "alignment") return "align";
+  if (s === "critique") return "critique";
+  return null;
 }
 
 function decisionSummaryFromReview(r: ReviewJoin): string | null {
@@ -157,7 +168,7 @@ export async function loadProjectArtifactsTab(
   type VRow = {
     id: string;
     artifact_id: string;
-    version_number: number;
+    version_number: string;
     review_id: string | null;
     created_at: string | null;
     file_url: string | null;
@@ -176,7 +187,7 @@ export async function loadProjectArtifactsTab(
     return {
       id: String(r.id ?? ""),
       artifact_id: String(r.artifact_id ?? ""),
-      version_number: Number(r.version_number ?? 0),
+      version_number: formatVersionLabel(String(r.version_number ?? "v1")),
       review_id: r.review_id == null ? null : String(r.review_id),
       created_at:
         r.created_at == null || String(r.created_at).trim() === ""
@@ -198,22 +209,11 @@ export async function loadProjectArtifactsTab(
   const historyByArtifactId: Record<string, ProjectArtifactHistoryVersion[]> =
     {};
 
-  const latestByArtifact = new Map<string, VRow>();
-
-  for (const v of parsed) {
-    const aid = v.artifact_id;
-    const prev = latestByArtifact.get(aid);
-    if (!prev || v.version_number > prev.version_number) {
-      latestByArtifact.set(aid, v);
-    }
-  }
-
   for (const aid of artifactIds) {
     const list = parsed.filter((x) => x.artifact_id === aid);
-    list.sort((a, b) => b.version_number - a.version_number);
+    list.sort((a, b) => compareVersions(b.version_number, a.version_number));
     historyByArtifactId[aid] = list.map((v) => {
       const rt = v.reviews?.review_type ?? null;
-      const approveLike = String(rt ?? "").trim().toLowerCase() === "approve";
       return {
         versionId: v.id,
         artifactId: v.artifact_id,
@@ -230,7 +230,6 @@ export async function loadProjectArtifactsTab(
         description: v.description,
         decisionSummary: decisionSummaryFromReview(v.reviews),
         feedbackCount: 0,
-        feedbackNa: approveLike,
         reviewerPeople: [],
       };
     });
@@ -247,6 +246,7 @@ export async function loadProjectArtifactsTab(
     const { data: fbRows } = await supabase
       .from("reviewer_feedback")
       .select("review_id, reviewer_id")
+      .eq("status", "submitted")
       .in("review_id", allReviewIds);
 
     for (const row of fbRows ?? []) {
@@ -272,6 +272,7 @@ export async function loadProjectArtifactsTab(
     const { data: fbRows2 } = await supabase
       .from("reviewer_feedback")
       .select("review_id, reviewer_id")
+      .eq("status", "submitted")
       .in("review_id", allReviewIds);
 
     for (const row of fbRows2 ?? []) {
@@ -334,43 +335,52 @@ export async function loadProjectArtifactsTab(
           avatarUrl: c?.avatarUrl ?? null,
         };
       });
-      const approveLike =
-        String(entry.reviewType ?? "").trim().toLowerCase() === "approve";
       return {
         ...entry,
         feedbackCount: count,
-        feedbackNa: approveLike,
         reviewerPeople,
       };
     });
   }
 
-  const overview: ProjectArtifactOverviewRow[] = artifactsList
-    .filter((a) => latestByArtifact.has(a.id))
-    .map((a) => {
-    const latest = latestByArtifact.get(a.id);
-    const rid = latest?.review_id ?? null;
-    const count = rid ? feedbackCountByReview.get(rid) ?? 0 : 0;
-    const rt = latest?.reviews?.review_type ?? null;
-    const approveLike = String(rt ?? "").trim().toLowerCase() === "approve";
+  const reviewTypeOrder: Record<
+    NonNullable<ProjectArtifactOverviewRow["reviewTypeKey"]>,
+    number
+  > = {
+    compare: 0,
+    approve: 1,
+    align: 2,
+    critique: 3,
+  };
 
-    return {
-      artifactId: a.id,
-      artifactName: a.name,
-      versionId: latest?.id ?? "",
-      versionNumber: latest?.version_number ?? 0,
-      reviewId: rid,
-      reviewTitle: latest?.reviews?.title
-        ? String(latest.reviews.title)
-        : null,
-      reviewStatus: latest?.reviews?.status
-        ? String(latest.reviews.status)
-        : null,
-      reviewType: rt ? normReviewType(String(rt)) : null,
-      feedbackCount: count,
-      feedbackNa: approveLike,
-    };
-  });
+  const overview: ProjectArtifactOverviewRow[] = parsed
+    .map((v) => {
+      const rid = v.review_id ?? null;
+      const count = rid ? feedbackCountByReview.get(rid) ?? 0 : 0;
+      const rawType = v.reviews?.review_type ?? null;
+      const reviewTypeKey = normReviewTypeKey(rawType);
+      return {
+        artifactId: v.artifact_id,
+        artifactName: nameByArtifactId.get(v.artifact_id) ?? "Untitled artifact",
+        versionId: v.id,
+        versionNumber: v.version_number,
+        reviewId: rid,
+        reviewTitle: v.reviews?.title ? String(v.reviews.title) : null,
+        reviewStatus: v.reviews?.status ? String(v.reviews.status) : null,
+        reviewType: rawType ? normReviewType(String(rawType)) : null,
+        reviewTypeKey,
+        feedbackCount: count,
+      };
+    })
+    .filter((row) => row.reviewTypeKey !== null)
+    .sort((a, b) => {
+      const orderDiff =
+        reviewTypeOrder[a.reviewTypeKey!] - reviewTypeOrder[b.reviewTypeKey!];
+      if (orderDiff !== 0) return orderDiff;
+      const versionDiff = compareVersions(a.versionNumber, b.versionNumber);
+      if (versionDiff !== 0) return versionDiff;
+      return a.artifactName.localeCompare(b.artifactName);
+    });
 
   return { overview, historyByArtifactId };
 }

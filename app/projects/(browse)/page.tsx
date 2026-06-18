@@ -13,6 +13,7 @@ import {
   emptyProjectReviewStatusBreakdown,
   type ProjectReviewStatusBreakdown,
 } from "@/lib/reviews/projectReviewStatusBreakdown";
+import { canonicalizeProjectCardContributors } from "@/lib/contributors/loadProjectContributorsForDisplay";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +56,7 @@ export default async function ProjectsPage() {
       status,
       created_at,
       clients ( id, name ),
-      contributors ( id, name )
+      contributors ( id, name, user_id, email )
     `
     )
     .eq("workspace_id", activeWorkspaceId)
@@ -120,17 +121,28 @@ export default async function ProjectsPage() {
       contributors.push({
         id,
         name,
-        email: null,
+        email:
+          o.email == null || String(o.email).trim() === ""
+            ? null
+            : String(o.email),
         role: null,
+        userId:
+          o.user_id == null || String(o.user_id).trim() === ""
+            ? null
+            : String(o.user_id),
         avatarUrl: null,
       });
     }
     return contributors;
   }
 
-  const projects: Project[] = rows.map((row) => {
+  const projects: Project[] = await Promise.all(
+    rows.map(async (row) => {
     const r = row as Record<string, unknown>;
-    const contributors = contributorsFromRow(r);
+    const contributors = await canonicalizeProjectCardContributors(
+      supabase,
+      contributorsFromRow(r),
+    );
     const descRaw = r.description;
     const description =
       descRaw == null
@@ -153,7 +165,8 @@ export default async function ProjectsPage() {
       contributors,
       contributor_names: contributors.map((c) => c.name),
     };
-  });
+    }),
+  );
 
   const grouped: ProjectsByStatus = {
     active: projects.filter((p) => p.status === "active"),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Avatar,
@@ -26,6 +26,7 @@ import {
 import { sendWorkspaceInvite } from "@/lib/workspace/invite-client";
 import { inviteToastMessage } from "@/lib/workspace/invite-toast";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
+import { avatarColourKey, getAvatarInlineStyle } from "@/lib/utils/avatarColour";
 import { approvePendingAccessRequestsClient } from "@/lib/accessRequests/approvePendingAccessRequests";
 import {
   linkContributorToProject,
@@ -50,6 +51,10 @@ type ContributorsSectionProps = {
   pendingAccessRequesterNames?: string[];
   onPendingAccessRequestsChanged?: () => void;
 };
+
+function contributorAvatarKey(contributor: ProjectContributor): string {
+  return avatarColourKey(contributor.email, contributor.id, contributor.name);
+}
 
 function TeammateTag({
   contributor,
@@ -84,9 +89,10 @@ function TeammateTag({
       <Avatar
         name={contributor.name}
         src={contributor.avatarUrl ?? undefined}
-        contributorId={contributor.id}
+        contributorId={contributorAvatarKey(contributor)}
         size="md"
         prominence="high"
+        style={getAvatarInlineStyle(contributorAvatarKey(contributor))}
       />
       <span style={{ fontSize: 13, fontWeight: 500, color: "#6b5e55" }}>
         {contributor.name}
@@ -143,8 +149,7 @@ export function ContributorsSection({
   const canManageTeammates = canAddTeammates(workspacePermissionLevel);
   const [contributors, setContributors] =
     useState<ProjectContributor[]>(initialContributors);
-  const [allContributors, setAllContributors] =
-    useState<ProjectContributor[]>(initialContributors);
+  const [allContributors, setAllContributors] = useState<ProjectContributor[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedContributorIds, setSelectedContributorIds] = useState<string[]>(
@@ -161,39 +166,66 @@ export function ContributorsSection({
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    setContributors(initialContributors);
+  }, [initialContributors]);
+
+  const loadSearchableContributors = useCallback(async () => {
     const supabase = createSupabaseBrowserClient();
-    void (async () => {
-      const activeWorkspaceId = await getActiveWorkspaceId(supabase);
-      let query = supabase
-        .from("contributors")
-        .select("id, name, email, role")
-        .order("created_at", { ascending: true });
-      if (activeWorkspaceId) {
-        query = query
-          .eq("workspace_id", activeWorkspaceId)
-          .or("project_id.is.null,user_id.not.is.null");
-      }
-      const { data } = await query;
-        if (!Array.isArray(data)) return;
-        const mapped = data.map((row) => {
-          const item = row as Record<string, unknown>;
-          return {
-            id: String(item.id ?? ""),
-            name: String(item.name ?? ""),
-            email:
-              item.email == null || String(item.email).trim() === ""
-                ? null
-                : String(item.email),
-            role:
-              item.role == null || String(item.role).trim() === ""
-                ? null
-                : String(item.role),
-            avatarUrl: null,
-          } satisfies ProjectContributor;
-        });
-      setAllContributors(mapped);
-    })();
-  }, []);
+    const activeWorkspaceId = await getActiveWorkspaceId(supabase);
+    if (!activeWorkspaceId) {
+      setAllContributors([]);
+      return;
+    }
+
+    const alreadyAddedUserIds = new Set(
+      contributors
+        .map((contributor) => contributor.userId?.trim())
+        .filter((userId): userId is string => Boolean(userId)),
+    );
+
+    const params = new URLSearchParams({ workspaceId: activeWorkspaceId });
+    if (alreadyAddedUserIds.size > 0) {
+      params.set("excludeUserIds", Array.from(alreadyAddedUserIds).join(","));
+    }
+
+    const response = await fetch(
+      `/api/workspace/contributor-picker-options?${params.toString()}`,
+    );
+    if (!response.ok) {
+      setAllContributors([]);
+      return;
+    }
+
+    const payload = (await response.json()) as {
+      options?: Array<{
+        id: string;
+        name: string;
+        role: string;
+        userId: string;
+        email?: string | null;
+      }>;
+    };
+
+    setAllContributors(
+      (payload.options ?? []).map((option) => ({
+        id: option.id,
+        name: option.name,
+        email: option.email?.trim() ? option.email.trim() : null,
+        role: option.role.trim() ? option.role : null,
+        userId: option.userId,
+        avatarUrl: null,
+      })),
+    );
+  }, [contributors]);
+
+  useEffect(() => {
+    void loadSearchableContributors();
+  }, [loadSearchableContributors]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    void loadSearchableContributors();
+  }, [menuOpen, loadSearchableContributors]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -384,8 +416,13 @@ export function ContributorsSection({
                   </div>
                 )}
                 {availableContributors.map((contributor) => {
+                  const pickerAvatarKey = contributorAvatarKey(contributor);
                   const alreadyOnProject = contributors.some(
-                    (current) => current.id === contributor.id
+                    (current) =>
+                      (current.userId &&
+                        contributor.userId &&
+                        current.userId === contributor.userId) ||
+                      current.id === contributor.id,
                   );
                   return (
                     <label
@@ -415,7 +452,12 @@ export function ContributorsSection({
                           );
                         }}
                       />
-                      <Avatar name={contributor.name} contributorId={contributor.id} size="md" />
+                      <Avatar
+                        name={contributor.name}
+                        contributorId={pickerAvatarKey}
+                        size="md"
+                        style={getAvatarInlineStyle(pickerAvatarKey)}
+                      />
                       <span style={{ fontSize: 14, fontWeight: 500, color: "#2e1c1c", flex: 1 }}>
                         {contributor.name}
                       </span>
@@ -451,7 +493,13 @@ export function ContributorsSection({
 
                       for (const contributor of toAdd) {
                         if (
-                          contributors.some((existing) => existing.id === contributor.id)
+                          contributors.some(
+                            (existing) =>
+                              (existing.userId &&
+                                contributor.userId &&
+                                existing.userId === contributor.userId) ||
+                              existing.id === contributor.id,
+                          )
                         ) {
                           continue;
                         }
@@ -459,6 +507,7 @@ export function ContributorsSection({
                           projectId,
                           workspaceId: activeWorkspaceId,
                           contributorId: contributor.id,
+                          userId: contributor.userId,
                           name: contributor.name,
                           email: contributor.email,
                           role: contributor.role,
@@ -467,7 +516,14 @@ export function ContributorsSection({
                         });
                         if (!linked) continue;
                         approveContributorIds.push(linked.id);
-                        addedContributors.push(linked);
+                        addedContributors.push({
+                          id: linked.id,
+                          name: linked.name,
+                          email: linked.email,
+                          role: linked.role,
+                          userId: linked.userId ?? contributor.userId ?? null,
+                          avatarUrl: null,
+                        });
                       }
 
                       if (addedContributors.length === 0) {
@@ -618,7 +674,14 @@ export function ContributorsSection({
                 });
                 setIsSaving(false);
                 if (!linked) return;
-                const next = linked;
+                const next: ProjectContributor = {
+                  id: linked.id,
+                  name: linked.name,
+                  email: linked.email,
+                  role: linked.role,
+                  userId: linked.userId ?? null,
+                  avatarUrl: null,
+                };
                 setAllContributors((prev) => [...prev, next]);
                 setContributors((prev) => [...prev, next]);
                 await approvePendingAccessRequestsClient(supabase, {

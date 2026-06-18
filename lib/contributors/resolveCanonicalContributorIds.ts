@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export type ResolvedContributor = {
   contributorId: string;
   name: string;
+  userId: string | null;
+  email: string | null;
 };
 
 type ContributorRow = {
@@ -10,10 +12,19 @@ type ContributorRow = {
   name: string;
   user_id: string | null;
   workspace_id: string | null;
+  project_id?: string | null;
+  email?: string | null;
 };
 
 function pickCanonicalContributor(rows: ContributorRow[]): ContributorRow | null {
   if (rows.length === 0) return null;
+  const workspaceProfile = rows.find(
+    (row) =>
+      row.project_id == null &&
+      row.workspace_id != null &&
+      String(row.workspace_id).trim() !== "",
+  );
+  if (workspaceProfile) return workspaceProfile;
   return (
     rows.find((row) => row.workspace_id != null && String(row.workspace_id).trim() !== "") ??
     rows[0]
@@ -36,7 +47,7 @@ export async function resolveCanonicalContributorIds(
 
   const { data: byContributorId } = await supabase
     .from("contributors")
-    .select("id, name, user_id, workspace_id")
+    .select("id, name, email, user_id, workspace_id, project_id")
     .in("id", uniqueRaw);
   contributorRows.push(...((byContributorId ?? []) as ContributorRow[]));
 
@@ -46,7 +57,7 @@ export async function resolveCanonicalContributorIds(
   if (unmatchedAfterId.length > 0) {
     const { data: byUserId } = await supabase
       .from("contributors")
-      .select("id, name, user_id, workspace_id")
+      .select("id, name, email, user_id, workspace_id, project_id")
       .in("user_id", unmatchedAfterId);
     contributorRows.push(...((byUserId ?? []) as ContributorRow[]));
   }
@@ -75,7 +86,7 @@ export async function resolveCanonicalContributorIds(
     if (memberUserIds.size > 0) {
       const { data: byMemberUser } = await supabase
         .from("contributors")
-        .select("id, name, user_id, workspace_id")
+        .select("id, name, email, user_id, workspace_id, project_id")
         .in("user_id", [...memberUserIds]);
       contributorRows.push(...((byMemberUser ?? []) as ContributorRow[]));
     }
@@ -101,7 +112,7 @@ export async function resolveCanonicalContributorIds(
   if (linkedUserIds.size > 0) {
     const { data: allForUsers } = await supabase
       .from("contributors")
-      .select("id, name, user_id, workspace_id")
+      .select("id, name, email, user_id, workspace_id, project_id")
       .in("user_id", [...linkedUserIds]);
     for (const row of (allForUsers ?? []) as ContributorRow[]) {
       const id = row.id.trim();
@@ -137,6 +148,11 @@ export async function resolveCanonicalContributorIds(
     resolved.set(rawId, {
       contributorId: canonical.id.trim(),
       name: canonical.name.trim(),
+      userId: canonical.user_id?.trim() ?? null,
+      email:
+        canonical.email == null || String(canonical.email).trim() === ""
+          ? null
+          : String(canonical.email).trim(),
     });
   }
 

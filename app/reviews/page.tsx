@@ -7,6 +7,7 @@ import { formatDistanceToNow } from "@/lib/formatDistanceToNow";
 import {
   buildReviewCardReviewers,
   fetchReviewCardMeta,
+  resolveReviewCardCreator,
   resolveReviewCardCreatorId,
 } from "@/lib/reviews/fetchProjectReviews";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -180,6 +181,7 @@ export default async function AllReviewsPage() {
     reviewIds: sorted.map((review) => String(review.id ?? "").trim()).filter(Boolean),
     reviewerIds,
     creatorIds,
+    workspaceId: activeWorkspaceId,
   });
   for (const review of sorted) {
     const bucket = reviewTypeBucket(review.review_type);
@@ -213,6 +215,10 @@ export default async function AllReviewsPage() {
           ? null
           : String(review.owner_display_name).trim() || null,
       creator_id: resolveReviewCardCreatorId(review.creator_id, reviewerResolutionByRawId) ?? null,
+      creator_email:
+        resolveReviewCardCreator(review.creator_id, reviewerResolutionByRawId)?.email ?? null,
+      creator_user_id:
+        resolveReviewCardCreator(review.creator_id, reviewerResolutionByRawId)?.userId ?? null,
       feedback_count: countsByReviewId.get(String(review.id ?? "").trim())?.feedbackCount ?? 0,
       change_request_count:
         countsByReviewId.get(String(review.id ?? "").trim())?.changeRequestCount ?? 0,

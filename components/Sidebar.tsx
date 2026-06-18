@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import type { User } from "@supabase/supabase-js";
 import { Sidebar as DsSidebar } from "@/components/ui/ds";
 import { DevUserSwitcher } from "@/components/DevUserSwitcher";
 import { SidebarSettingsMenu } from "@/components/settings/SidebarSettingsMenu";
@@ -18,9 +17,9 @@ const DEV_STORAGE_KEY = "designtrace_dev_contributor_id";
 export function Sidebar() {
   const pathname = usePathname();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  const [authUser, setAuthUser] = useState<User | null>(null);
   const [displayName, setDisplayName] = useState("Auth user");
   const [contributorId, setContributorId] = useState<string | null>(null);
+  const [contributorEmail, setContributorEmail] = useState<string | null>(null);
   const [roleLabel, setRoleLabel] = useState<string | null>(null);
   const [workspaceLabel, setWorkspaceLabel] = useState<string | null>(null);
   const [workspaceOptions, setWorkspaceOptions] = useState<Array<{ value: string; label: string }>>([]);
@@ -41,7 +40,6 @@ export function Sidebar() {
       } = await supabase.auth.getUser();
 
       if (!isMounted.current) return;
-      setAuthUser(user ?? null);
 
       let nextName = user?.email?.split("@")[0] ?? "Auth user";
       let nextRole: string | null = null;
@@ -99,10 +97,12 @@ export function Sidebar() {
       const devContributorId = window.localStorage.getItem(DEV_STORAGE_KEY);
       let avatarContributorId: string | null = null;
 
+      let avatarContributorEmail: string | null = user?.email?.trim() || null;
+
       if (user?.id && activeWorkspaceId) {
         const { data: contributorRows } = await supabase
           .from("contributors")
-          .select("id, name, role")
+          .select("id, name, role, email")
           .eq("user_id", user.id)
           .eq("workspace_id", activeWorkspaceId)
           .limit(1);
@@ -111,6 +111,8 @@ export function Sidebar() {
         if (workspaceContributor && typeof workspaceContributor === "object" && "id" in workspaceContributor) {
           avatarContributorId =
             String((workspaceContributor as { id?: string }).id ?? "").trim() || null;
+          const rowEmail = String((workspaceContributor as { email?: string }).email ?? "").trim();
+          if (rowEmail) avatarContributorEmail = rowEmail;
         }
 
         if (!devContributorId && workspaceContributor) {
@@ -124,7 +126,7 @@ export function Sidebar() {
       if (devContributorId) {
         const { data } = await supabase
           .from("contributors")
-          .select("id, name, role")
+          .select("id, name, role, email")
           .eq("id", devContributorId)
           .maybeSingle();
 
@@ -132,13 +134,16 @@ export function Sidebar() {
         const role = data ? String((data as Record<string, unknown>).role ?? "") : "";
         if (name.trim()) nextName = name.trim();
         if (role.trim()) nextRole = role.trim();
+        const rowEmail = data ? String((data as Record<string, unknown>).email ?? "").trim() : "";
+        if (rowEmail) avatarContributorEmail = rowEmail;
       }
 
       if (!isMounted.current) return;
 
       setDisplayName(nextName);
       setRoleLabel(nextRole);
-      setContributorId(avatarContributorId);
+      setContributorId(devContributorId?.trim() || avatarContributorId);
+      setContributorEmail(avatarContributorEmail);
     };
 
     void loadProfile();
@@ -174,6 +179,7 @@ export function Sidebar() {
         user={{
           name: displayName,
           contributorId: contributorId ?? undefined,
+          contributorEmail: contributorEmail ?? undefined,
         }}
         workspaceLabel={workspaceLabel}
         userActive={footerHighlight}
@@ -186,6 +192,7 @@ export function Sidebar() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         contributorId={contributorId}
+        contributorEmail={contributorEmail}
         displayName={displayName}
         roleLabel={roleLabel ?? ""}
         workspaceOptions={workspaceOptions}

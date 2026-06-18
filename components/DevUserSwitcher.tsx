@@ -20,6 +20,42 @@ type ContributorOption = {
   role: string | null;
 };
 
+type ContributorRow = {
+  id: string;
+  name: string;
+  role: string | null;
+  user_id: string | null;
+  project_id: string | null;
+};
+
+function dedupeContributorsByUserId(
+  rows: ContributorRow[],
+): ContributorOption[] {
+  const deduped = new Map<string, ContributorRow>();
+
+  for (const contributor of rows) {
+    if (!contributor.user_id) continue;
+    const existing = deduped.get(contributor.user_id);
+    if (!existing) {
+      deduped.set(contributor.user_id, contributor);
+    } else if (
+      contributor.project_id === null &&
+      existing.project_id !== null
+    ) {
+      deduped.set(contributor.user_id, contributor);
+    }
+  }
+
+  return Array.from(deduped.values())
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      role: row.role,
+    }))
+    .filter((item) => item.id && item.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 type WorkspaceMembership = {
   workspaceId: string;
   workspaceName: string;
@@ -53,27 +89,43 @@ export function DevUserSwitcher() {
 
       const currentWorkspaceId = getActiveWorkspaceIdFromUser(user) ?? "";
 
-      const [{ data: contributorRows }, { data: membershipRows }] = await Promise.all([
-        supabase
-          .from("contributors")
-          .select("id, name, role")
-          .order("name", { ascending: true })
-          .limit(100),
-        supabase
-          .from("workspace_members")
-          .select("workspace_id, role, workspaces(id, name)")
-          .eq("user_id", user.id),
-      ]);
+      const contributorQuery = supabase
+        .from("contributors")
+        .select("id, name, role, user_id, project_id")
+        .order("name", { ascending: true });
 
-      const nextContributors = (contributorRows ?? []).map((row) => ({
-        id: String((row as Record<string, unknown>).id ?? ""),
-        name: String((row as Record<string, unknown>).name ?? ""),
-        role:
-          (row as Record<string, unknown>).role == null
-            ? null
-            : String((row as Record<string, unknown>).role),
-      }));
-      setOptions(nextContributors.filter((item) => item.id && item.name));
+      const [{ data: contributorRows }, { data: membershipRows }] =
+        await Promise.all([
+          currentWorkspaceId
+            ? contributorQuery.eq("workspace_id", currentWorkspaceId)
+            : contributorQuery.limit(100),
+          supabase
+            .from("workspace_members")
+            .select("workspace_id, role, workspaces(id, name)")
+            .eq("user_id", user.id),
+        ]);
+
+      const mappedRows = (contributorRows ?? []).map((row) => {
+        const item = row as Record<string, unknown>;
+        return {
+          id: String(item.id ?? ""),
+          name: String(item.name ?? ""),
+          role:
+            item.role == null || String(item.role).trim() === ""
+              ? null
+              : String(item.role),
+          user_id:
+            item.user_id == null || String(item.user_id).trim() === ""
+              ? null
+              : String(item.user_id),
+          project_id:
+            item.project_id == null || String(item.project_id).trim() === ""
+              ? null
+              : String(item.project_id),
+        } satisfies ContributorRow;
+      });
+
+      setOptions(dedupeContributorsByUserId(mappedRows));
 
       const mappedMemberships: WorkspaceMembership[] = (membershipRows ?? [])
         .map((row) => {

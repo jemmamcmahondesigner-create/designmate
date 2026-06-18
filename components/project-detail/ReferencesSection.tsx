@@ -9,8 +9,21 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Button, Icon } from "@/components/ui/ds";
+import { SourceFileViewer } from "@/components/project-detail/SourceFileViewer";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { ProjectReference } from "@/types/project";
+
+const REFERENCE_SELECT =
+  "id, project_id, label, url, file_name, storage_path, file_type, created_at";
+
+function deriveFileType(filename: string): string {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  if (["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext)) return "image";
+  if (ext === "pdf") return "pdf";
+  if (["xlsx", "xls", "csv"].includes(ext)) return "spreadsheet";
+  if (["doc", "docx", "txt"].includes(ext)) return "document";
+  return "other";
+}
 
 interface ReferencesSectionProps {
   projectId: string;
@@ -118,6 +131,7 @@ export function ReferencesSection({
     useState<ProjectReference[]>(initialReferences);
   const [isSaving, setIsSaving] = useState(false);
   const [undoToast, setUndoToast] = useState<{ key: number } | null>(null);
+  const [viewingRef, setViewingRef] = useState<ProjectReference | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const undoReferenceSnapshotRef = useRef<ProjectReference | null>(null);
@@ -137,9 +151,11 @@ export function ReferencesSection({
         project_id: projectId,
         label: snap.label,
         url: snap.url,
-        file_name: snap.file_name
+        file_name: snap.file_name,
+        storage_path: snap.storage_path,
+        file_type: snap.file_type,
       })
-      .select("id, project_id, label, url, file_name, created_at")
+      .select(REFERENCE_SELECT)
       .single();
 
     if (error || !data) return;
@@ -154,19 +170,41 @@ export function ReferencesSection({
     if (!file) return;
     setIsSaving(true);
     const supabase = createSupabaseBrowserClient();
-    const { data, error } = await supabase
+
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storagePath = `${projectId}/${crypto.randomUUID()}-${safeName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("project-references")
+      .upload(storagePath, file, { upsert: false });
+
+    if (uploadError) {
+      console.error("Upload failed:", uploadError.message);
+      setIsSaving(false);
+      return;
+    }
+
+    const { data: urlData } = supabase.storage
+      .from("project-references")
+      .getPublicUrl(storagePath);
+
+    const publicUrl = urlData.publicUrl;
+
+    const { data, error: dbError } = await supabase
       .from("project_references")
       .insert({
         project_id: projectId,
         label: file.name,
-        url: null,
-        file_name: file.name
+        url: publicUrl,
+        file_name: file.name,
+        storage_path: storagePath,
+        file_type: deriveFileType(file.name),
       })
-      .select("id, project_id, label, url, file_name, created_at")
+      .select(REFERENCE_SELECT)
       .single();
 
     setIsSaving(false);
-    if (!error && data) {
+    if (!dbError && data) {
       setReferences((prev) => [...prev, data as ProjectReference]);
     }
   }
@@ -177,6 +215,13 @@ export function ReferencesSection({
     setUndoToast({ key: Date.now() });
 
     const supabase = createSupabaseBrowserClient();
+
+    if (row.storage_path) {
+      await supabase.storage
+        .from("project-references")
+        .remove([row.storage_path]);
+    }
+
     const { error } = await supabase
       .from("project_references")
       .delete()
@@ -242,14 +287,14 @@ export function ReferencesSection({
         <div className="mt-3 flex flex-wrap" style={{ gap: 6 }}>
           {references.map((row) => {
             const title = referenceTitle(row);
+            const isFile = row.storage_path != null;
+            const isUrl = row.url != null && row.storage_path == null;
 
-            return (
-              <div
-                key={row.id}
-                className="group relative flex h-[28px] max-w-full min-w-0 items-center border border-solid border-[#e4ddd3] bg-[#f3efe9] transition-all duration-150 ease-in-out hover:border-[#e8d0d4] hover:bg-[#f5eaec]"
-                style={{ borderRadius: 4, paddingLeft: 8, paddingRight: 8, gap: 8 }}
-              >
-                <div className="relative z-0 flex min-w-0 flex-1 cursor-default items-center gap-2 overflow-hidden">
+            const chipContent = (
+              <>
+                <div
+                  className={`relative z-0 flex min-w-0 flex-1 items-center gap-2 overflow-hidden ${isFile ? "cursor-pointer" : isUrl ? "cursor-pointer" : "cursor-default"}`}
+                >
                   <span className="inline-flex shrink-0 text-[#6b5e55]">
                     <Icon name="link" size={16} />
                   </span>
@@ -277,6 +322,67 @@ export function ReferencesSection({
                     </span>
                   </button>
                 </div>
+              </>
+            );
+
+            const chipClassName =
+              "group relative flex h-[28px] max-w-full min-w-0 items-center border border-solid border-[#e4ddd3] bg-[#f3efe9] transition-all duration-150 ease-in-out hover:border-[#e8d0d4] hover:bg-[#f5eaec]";
+
+            if (isFile) {
+              return (
+                <div
+                  key={row.id}
+                  role="button"
+                  tabIndex={0}
+                  className={chipClassName}
+                  style={{
+                    borderRadius: 4,
+                    paddingLeft: 8,
+                    paddingRight: 8,
+                    gap: 8,
+                    cursor: "pointer",
+                  }}
+                  onClick={() => setViewingRef(row)}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter" || ev.key === " ") {
+                      ev.preventDefault();
+                      setViewingRef(row);
+                    }
+                  }}
+                >
+                  {chipContent}
+                </div>
+              );
+            }
+
+            if (isUrl) {
+              return (
+                <a
+                  key={row.id}
+                  href={row.url!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={chipClassName}
+                  style={{
+                    borderRadius: 4,
+                    paddingLeft: 8,
+                    paddingRight: 8,
+                    gap: 8,
+                    textDecoration: "none",
+                  }}
+                >
+                  {chipContent}
+                </a>
+              );
+            }
+
+            return (
+              <div
+                key={row.id}
+                className={chipClassName}
+                style={{ borderRadius: 4, paddingLeft: 8, paddingRight: 8, gap: 8 }}
+              >
+                {chipContent}
               </div>
             );
           })}
@@ -315,6 +421,13 @@ export function ReferencesSection({
           message="Source file removed"
           onUndo={undoRemoveReference}
           onDone={dismissUndoToast}
+        />
+      ) : null}
+
+      {viewingRef ? (
+        <SourceFileViewer
+          reference={viewingRef}
+          onClose={() => setViewingRef(null)}
         />
       ) : null}
     </section>

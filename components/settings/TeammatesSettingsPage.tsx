@@ -46,7 +46,8 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
 import { cancelWorkspaceInvite, sendWorkspaceInvite } from "@/lib/workspace/invite-client";
 import { inviteToastMessage } from "@/lib/workspace/invite-toast";
-import { getAvatarColour } from "@/lib/utils/avatarColour";
+import { getAvatarInlineStyle, avatarColourKey } from "@/lib/utils/avatarColour";
+import type { WorkspaceTeammate } from "@/lib/workspace/teammates";
 import {
   canAddTeammates,
   canEditTeammatePermission,
@@ -59,21 +60,7 @@ import {
   type ContentPermissionLevel,
 } from "@/lib/workspace/permissions";
 
-type Teammate = {
-  id: string;
-  name: string;
-  email: string | null;
-  roleId: string | null;
-  roleName: string | null;
-  permissionLevel: ContentPermissionLevel;
-  isAdmin: boolean;
-  isPaid: boolean;
-  isPending?: boolean;
-  isPendingInvite?: boolean;
-  inviteCode?: string;
-  memberId?: string;
-  userId?: string | null;
-};
+type Teammate = WorkspaceTeammate;
 
 const NAME_REQUIRED_MESSAGE = "Please enter the teammate's first and last name.";
 const CUSTOM_ROLE_PREFIX = "__custom__:";
@@ -355,7 +342,7 @@ export function TeammatesSettingsPage({
       width: "flex",
       cellType: "custom",
       render: (row) => {
-        const palette = getAvatarColour(row.id);
+        const avatarStyle = getAvatarInlineStyle(avatarColourKey(row.email, row.id));
         const displayName = row.name?.trim() || row.email || "";
         return (
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -364,8 +351,8 @@ export function TeammatesSettingsPage({
                 width: 28,
                 height: 28,
                 borderRadius: "50%",
-                backgroundColor: palette.bg,
-                color: palette.text,
+                backgroundColor: avatarStyle.backgroundColor,
+                color: avatarStyle.color,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -795,7 +782,14 @@ export function TeammatesSettingsPage({
             Teammates
           </h1>
           {canManageTeammates ? (
-            <Button label="+ Teammate" variant="primary" size="sm" onClick={openAdd} />
+            <Button
+              label="Teammate"
+              icon="leading"
+              iconName="plus"
+              variant="primary"
+              size="sm"
+              onClick={openAdd}
+            />
           ) : null}
         </div>
 
@@ -1283,6 +1277,7 @@ function mapTeammateRow(raw: Record<string, unknown>): Teammate {
     permissionLevel: contentPermissionLevel,
     isAdmin,
     isPaid: isPaidPermissionLevel(storedLevel),
+    isPending: false,
     userId: raw.user_id == null ? null : String(raw.user_id),
   };
 }

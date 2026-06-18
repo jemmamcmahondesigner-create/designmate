@@ -142,7 +142,8 @@ function ToastPortal({
         zIndex: 1000,
         opacity,
         transition,
-        width: "min(360px, calc(100vw - 48px))",
+        width: "fit-content",
+        maxWidth: "min(360px, calc(100vw - 48px))",
       }}
     >
       <Alert

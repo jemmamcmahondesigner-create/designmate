@@ -4,6 +4,26 @@
   overflow-x: auto;
 }
 
+.artifactsGroupedTable {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.artifactsGroupSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.artifactsGroupHeading {
+  padding: 8px 0;
+}
+
+.artifactsTableWithoutHeader :global(table thead) {
+  display: none;
+}
+
 /*
  * Title is the only flexible column — must NOT use width: 100% (that steals the
  * entire table in table-layout: fixed). Table .row td max-width: 0 enables ellipsis.
@@ -44,19 +64,19 @@
 }
 
 .artifactsTable [class*="cellPill"] {
-  max-width: 100%;
-  min-width: 0;
+  display: inline-flex;
+  width: max-content;
+  max-width: none;
 }
 
 .artifactsTable [class*="cellPill"] [class*="StatusPill_root"] {
-  max-width: 100%;
-  min-width: 0;
+  flex-shrink: 0;
+  max-width: none;
 }
 
 .artifactsTable [class*="cellPill"] [class*="StatusPill_label"] {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
+  overflow: visible;
+  text-overflow: unset;
 }
 
 .avatarGroup {

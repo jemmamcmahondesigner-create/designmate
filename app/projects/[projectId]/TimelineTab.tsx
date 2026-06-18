@@ -5,6 +5,7 @@ import { TimelineDateDivider, TimelineEventCard } from "@/components/ui/ds";
 import panelEmptyStateStyles from "@/components/project-detail/projectPanelEmptyState.module.css";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { enrichTimelineEventsWithActors } from "@/lib/timeline/enrichTimelineActors";
+import { enrichArtifactUploadedTimelineEvents } from "@/lib/timeline/artifactUploadedPayload";
 import {
   calendarDayGroupLabel,
   includeInProjectTimeline,
@@ -52,7 +53,12 @@ export function TimelineTab({ projectId }: TimelineTabProps) {
         };
       });
       const withActors = await enrichTimelineEventsWithActors(supabase, mapped);
-      setEvents(withActors);
+      const withArtifactUploads = await enrichArtifactUploadedTimelineEvents(
+        supabase,
+        withActors,
+      );
+      if (cancelled) return;
+      setEvents(withArtifactUploads);
     })();
     return () => {
       cancelled = true;
@@ -155,9 +161,11 @@ export function TimelineTab({ projectId }: TimelineTabProps) {
                         }
                         actorAvatarUrl={event.actor?.avatar_url ?? undefined}
                         actorContributorId={event.actor?.id ?? undefined}
+                        actorContributorEmail={event.actor?.email ?? undefined}
                         payload={(event.payload ?? {}) as Record<string, any>}
                         timestamp={event.created_at}
                         isProjectTimeline
+                        projectId={event.project_id ?? projectId}
                       />
                     </div>
                   );

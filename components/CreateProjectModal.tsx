@@ -9,6 +9,7 @@ import type { ProjectClientFields } from "@/lib/projects/resolveProjectClientFie
 import { resolveProjectClientFields } from "@/lib/projects/resolveProjectClientFields";
 import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
+import { linkContributorToProject } from "@/lib/contributors/linkContributorToProject";
 
 type ClientOption = { id: string; name: string };
 
@@ -179,6 +180,11 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
       return;
     }
 
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const authUserId = user?.id ?? null;
+
     const { data: createdProject, error: insertError } = await supabase
       .from("projects")
       .insert({
@@ -188,9 +194,67 @@ export function CreateProjectModal({ open, onClose }: CreateProjectModalProps) {
         description: description.trim() || null,
         status: "active",
         workspace_id: activeWorkspaceId,
+        created_by: authUserId,
       })
       .select("id, name")
       .single();
+
+    if (!insertError && createdProject && authUserId) {
+      const newProjectId = String(
+        (createdProject as Record<string, unknown>).id ?? "",
+      ).trim();
+
+      if (newProjectId) {
+        const { data: creatorContributor } = await supabase
+          .from("contributors")
+          .select("id, name, email, role, workspace_id")
+          .eq("user_id", authUserId)
+          .eq("workspace_id", activeWorkspaceId)
+          .is("project_id", null)
+          .maybeSingle();
+
+        const creatorRow =
+          creatorContributor ??
+          (
+            await supabase
+              .from("contributors")
+              .select("id, name, email, role, workspace_id")
+              .eq("user_id", authUserId)
+              .eq("workspace_id", activeWorkspaceId)
+              .limit(1)
+              .maybeSingle()
+          ).data;
+
+        if (creatorRow) {
+          const row = creatorRow as Record<string, unknown>;
+          const { data: existing } = await supabase
+            .from("contributors")
+            .select("id")
+            .eq("user_id", authUserId)
+            .eq("project_id", newProjectId)
+            .maybeSingle();
+
+          if (!existing) {
+            await linkContributorToProject(supabase, {
+              projectId: newProjectId,
+              workspaceId: activeWorkspaceId,
+              contributorId: String(row.id ?? ""),
+              name: String(row.name ?? ""),
+              email:
+                row.email == null || String(row.email).trim() === ""
+                  ? null
+                  : String(row.email),
+              role:
+                row.role == null || String(row.role).trim() === ""
+                  ? null
+                  : String(row.role),
+              permissionLevel: "admin",
+              isPaid: false,
+            });
+          }
+        }
+      }
+    }
 
     setSubmitting(false);
 

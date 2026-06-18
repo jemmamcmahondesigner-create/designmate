@@ -17,6 +17,15 @@ export function getAvatarColour(id: string) {
   return AVATAR_COLOURS[index];
 }
 
+/** Stable colour key — email is consistent across workspaces; contributor id is fallback. */
+export function avatarColourKey(
+  email?: string | null,
+  contributorId?: string | null,
+  fallback = "?",
+): string {
+  return (email ?? contributorId ?? fallback).trim() || fallback;
+}
+
 /** Inline avatar colours — background + paired initials text from the shared palette. */
 export function getAvatarInlineStyle(
   id: string,

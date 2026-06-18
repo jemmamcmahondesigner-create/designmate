@@ -156,6 +156,9 @@ const INTRO_UI_CSS = `
 }
 
 .intro-state-b-left-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   padding-left: 64px;
   padding-right: 64px;
@@ -167,7 +170,7 @@ const INTRO_UI_CSS = `
   width: 100%;
   max-width: none;
   min-width: 0;
-  text-align: left;
+  text-align: center;
   white-space: normal;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -226,15 +229,18 @@ const INTRO_UI_CSS = `
 
 .intro-state-b-overlay {
   position: absolute;
-  top: 50%;
-  left: 64px;
-  right: 64px;
-  transform: translateY(-50%);
+  inset: 0;
   z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin: 0;
+  padding-left: 64px;
+  padding-right: 64px;
+  box-sizing: border-box;
   opacity: 0;
   pointer-events: none;
-  text-align: left;
+  text-align: center;
   white-space: normal;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -328,22 +334,20 @@ function WelcomeHeading({ centered = false }: { centered?: boolean }) {
 function ImageOverlayText({ className }: { className?: string }) {
   return (
     <h1
-      className={`m-0 text-white ${className ?? ""}`}
+      className={`m-0 ${className ?? ""}`}
       style={{
         fontSize: 48,
-        fontWeight: 400,
+        fontWeight: 700,
         lineHeight: 1.15,
         letterSpacing: "-1.44px",
-        textShadow: "0 2px 12px rgba(0,0,0,0.4)",
+        color: "var(--text-heading, #6b1e2e)",
         whiteSpace: "normal",
         wordWrap: "break-word",
         overflowWrap: "break-word",
         flexShrink: 0,
       }}
     >
-      <span style={{ fontWeight: 400 }}>your </span>
-      <span style={{ fontWeight: 400, color: "#ebc5ed" }}>ai </span>
-      <span style={{ fontWeight: 700 }}>design memory</span>
+      your <span style={{ fontWeight: 300 }}>ai</span> design memory
     </h1>
   );
 }
@@ -533,7 +537,9 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
   const slide = SLIDES[slideIndex];
   const isLastSlide = slideIndex === SLIDE_COUNT - 1;
   const isTransitioning = transitionState !== "idle";
-  const buttonsOnDarkPanel = !slide.imageOnLeft;
+  // Burgundy primary/ghost on cream/yellow panels (slide 1 + slide 3); dark variants on image panels.
+  const buttonsOnDarkPanel =
+    slideIndex !== 0 && slideIndex !== 2 && !slide.imageOnLeft;
 
   useEffect(() => {
     if (reducedMotion) return;
@@ -681,8 +687,13 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       setTransitionState("wiping-in");
       setWipeAnchor(currentSlide.imageOnLeft ? "right" : "left");
       setWipeWidth("0%");
+      // Slide 0 → 1: swap layout before the wipe so the intro split unmounts cleanly.
       if (slideIndex === 0) {
         setSlideIndex(nextIndex);
+        // Clear stale "exiting" once we leave slide 1 (see handleNext guard comment).
+        if (nextIndex >= 1) {
+          setIntroPhase("content-ready");
+        }
       }
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setWipeWidth("100%"));
@@ -704,7 +715,11 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
       }, INTRO_EXIT_MS);
       return;
     }
-    if (introPhase === "exiting") {
+    // Slide 2+ Next was a no-op: leaving slide 1 sets introPhase to "exiting" but it was
+    // never cleared, so this guard blocked every later handleNext call (not a z-index issue —
+    // canvas/wipe overlays use pointer-events: none; footer buttons are z-50). Scope the
+    // guard to slide 1 only so double-clicks during the exit animation are still ignored.
+    if (slideIndex === 0 && introPhase === "exiting") {
       return;
     }
     goToSlide(slideIndex + 1);
@@ -942,7 +957,7 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
               <div className="intro-state-b">
                 <div className="intro-state-b-left">
                   <div className="intro-state-b-left-inner">
-                    <WelcomeHeading />
+                    <WelcomeHeading centered />
                   </div>
                 </div>
                 <div className="intro-state-b-right is-open-immediate">

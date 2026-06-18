@@ -19,6 +19,8 @@ import styles from './Input.module.css'
 export interface InputProps {
   /** Field label — always visible above the input */
   label: string
+  /** Hide the visual label while preserving accessible labeling. */
+  hideLabel?: boolean
   /** Marks the field as required — appends * to label */
   required?: boolean
   /** Input placeholder text */
@@ -51,6 +53,8 @@ export interface InputProps {
   onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void
   /** onKeyDown handler */
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
+  /** Allow the field to shrink below the default sm/md/lg min-width (narrow columns). */
+  compact?: boolean
   /** Additional class on the root wrapper — for layout positioning only */
   className?: string
   /** aria-describedby — auto-set from helperText/errorMessage, override if needed */
@@ -75,6 +79,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
   function Input(
     {
       label,
+      hideLabel = false,
       required = false,
       placeholder,
       value,
@@ -91,6 +96,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
       onBlur,
       onFocus,
       onKeyDown,
+      compact = false,
       className,
       'aria-describedby': ariaDescribedBy,
       name,
@@ -120,6 +126,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
     const fieldClass = [
       styles.field,
       styles[`size-${size}`],
+      compact ? styles.fieldCompact : '',
       trailingAction ? styles.fieldHasTrailingAction : '',
       type === 'password' ? styles.fieldPassword : '',
       error ? styles.fieldError : '',
@@ -131,7 +138,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
 
     return (
       <div className={`${styles.root} ${className ?? ''}`}>
-        <label htmlFor={inputId} className={styles.label}>
+        <label htmlFor={inputId} className={hideLabel ? styles.labelHidden : styles.label}>
           {label}
           {required && (
             <span className={styles.required} aria-hidden="true">

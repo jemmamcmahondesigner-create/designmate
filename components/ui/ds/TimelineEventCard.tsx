@@ -18,13 +18,16 @@ import {
   normalizeReviewStatusKey,
   STATUS_DISPLAY_LABELS,
 } from "@/lib/reviews/reviewStatusDisplay";
-import { getAvatarInlineStyle } from "@/lib/utils/avatarColour";
+import { getAvatarInlineStyle, avatarColourKey } from "@/lib/utils/avatarColour";
+import { formatVersionLabel, getMajorVersion } from "@/lib/artifacts/versioning";
+import { buildMajorVersionLabel } from "@/lib/timeline/artifactUploadedPayload";
 
 export type TimelineEventCardProps = {
   eventType: TimelineEventType;
   actorName?: string;
   actorAvatarUrl?: string;
   actorContributorId?: string;
+  actorContributorEmail?: string;
   payload: Record<string, any>;
   timestamp: string;
   changeRequestLabelById?: Map<string, string>;
@@ -34,20 +37,23 @@ export type TimelineEventCardProps = {
   artifactLabelById?: Map<string, string>;
   artifactUrlByName?: Map<string, string>;
   isProjectTimeline?: boolean;
+  projectId?: string | null;
 };
 
 function ActorLeading({
   name,
   avatarUrl,
   contributorId,
+  contributorEmail,
   prominence = "default",
 }: {
   name: string;
   avatarUrl?: string;
   contributorId?: string;
+  contributorEmail?: string;
   prominence?: "default" | "high";
 }) {
-  const colourKey = (contributorId ?? name).trim() || name.trim() || "?";
+  const colourKey = avatarColourKey(contributorEmail, contributorId, name);
   return (
     <Avatar
       size="sm"
@@ -647,11 +653,70 @@ function feedbackProvidedPalette(
   return SENTIMENT.meta;
 }
 
+type ArtifactUploadedLine = { name: string; version: string };
+type ArtifactUploadedRelated = { id: string; name: string; version: string };
+
+function resolveArtifactUploadedDisplay(payload: Record<string, unknown>): {
+  majorVersionLabel: string;
+  artifacts: ArtifactUploadedLine[];
+  relatedArtifact: ArtifactUploadedRelated | null;
+} {
+  const rawArtifacts = Array.isArray(payload.artifacts) ? payload.artifacts : [];
+  const enrichedLines: ArtifactUploadedLine[] = rawArtifacts
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const row = entry as Record<string, unknown>;
+      const name = String(row.name ?? "").trim();
+      const version = formatVersionLabel(String(row.version ?? ""));
+      if (!name) return null;
+      return { name, version };
+    })
+    .filter((line): line is ArtifactUploadedLine => line != null);
+
+  const legacyNames = Array.isArray(payload.artifact_names)
+    ? payload.artifact_names
+        .map((name) => String(name ?? "").trim())
+        .filter(Boolean)
+    : [];
+  const legacyIteration = formatVersionLabel(String(payload.iteration_label ?? "v1"));
+
+  const artifacts =
+    enrichedLines.length > 0
+      ? enrichedLines
+      : legacyNames.map((name) => ({
+          name,
+          version: legacyIteration,
+        }));
+
+  const majorVersionLabel =
+    typeof payload.major_version_label === "string" &&
+    payload.major_version_label.trim()
+      ? formatVersionLabel(payload.major_version_label)
+      : artifacts.length > 0
+        ? buildMajorVersionLabel(artifacts.map((line) => line.version))
+        : `v${getMajorVersion(legacyIteration)}`;
+
+  const rawRelated = payload.related_artifact;
+  let relatedArtifact: ArtifactUploadedRelated | null = null;
+  if (rawRelated && typeof rawRelated === "object") {
+    const related = rawRelated as Record<string, unknown>;
+    const id = String(related.id ?? "").trim();
+    const name = String(related.name ?? "").trim();
+    const version = formatVersionLabel(String(related.version ?? ""));
+    if (id && name) {
+      relatedArtifact = { id, name, version };
+    }
+  }
+
+  return { majorVersionLabel, artifacts, relatedArtifact };
+}
+
 export function TimelineEventCard({
   eventType,
   actorName,
   actorAvatarUrl,
   actorContributorId,
+  actorContributorEmail,
   payload,
   timestamp,
   changeRequestLabelById,
@@ -660,7 +725,8 @@ export function TimelineEventCard({
   artifactIdByName,
   artifactLabelById,
   artifactUrlByName,
-  isProjectTimeline = false
+  isProjectTimeline = false,
+  projectId = null,
 }: TimelineEventCardProps) {
   const normalizedEventType = String(eventType)
     .trim()
@@ -756,6 +822,7 @@ export function TimelineEventCard({
       name={actor}
       avatarUrl={actorAvatarUrl}
       contributorId={actorContributorId}
+      contributorEmail={actorContributorEmail}
       prominence={usesColouredCardBackground ? "high" : "default"}
     />
   );
@@ -814,14 +881,33 @@ export function TimelineEventCard({
             </span>
           </EventRow>
         ) : uploaded ? (
+          (() => {
+            const uploadDisplay = resolveArtifactUploadedDisplay(payload);
+            const relatedProjectId = String(
+              projectId ?? payload.project_id ?? "",
+            ).trim();
+            const relatedHref = relatedProjectId
+              ? `/projects/${encodeURIComponent(relatedProjectId)}/artifacts`
+              : null;
+            return (
           <div className="flex w-full min-w-0 max-w-full flex-nowrap gap-2">
             <span className="shrink-0" style={{ paddingTop: 1 }}>
               <Icon name="upload" size={16} style={{ color: "#998c82" }} />
             </span>
-            <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden gap-0.5">
               <span className="truncate text-[13px] font-medium" style={{ color: "#6b1e2e" }}>
-                {String(payload.iteration_label ?? "v1")}
+                {uploadDisplay.majorVersionLabel}
               </span>
+              {uploadDisplay.relatedArtifact && relatedHref ? (
+                <Link
+                  href={relatedHref}
+                  className="truncate text-[12px] font-medium hover:underline"
+                  style={{ color: "#998c82" }}
+                >
+                  Related to {uploadDisplay.relatedArtifact.name} ·{" "}
+                  {uploadDisplay.relatedArtifact.version}
+                </Link>
+              ) : null}
               {isProjectTimeline && reviewId ? (
                 <ReviewLink
                   text={reviewTitle}
@@ -829,13 +915,13 @@ export function TimelineEventCard({
                   onReviewClick={onReviewClick}
                 />
               ) : null}
-              {(Array.isArray(payload.artifact_names) ? payload.artifact_names : []).map((name, idx) => (
+              {uploadDisplay.artifacts.map((artifact, idx) => (
                 <span
-                  key={`${String(name)}-${idx}`}
+                  key={`${artifact.name}-${artifact.version}-${idx}`}
                   className="truncate text-[13px] font-medium"
                   style={{ color: "#6b5e55" }}
                 >
-                  {String(name)}
+                  {artifact.name} · {artifact.version}
                 </span>
               ))}
             </div>
@@ -851,6 +937,8 @@ export function TimelineEventCard({
               </span>
             )}
           </div>
+            );
+          })()
         ) : isDirectionUpdate ? (
           <EventRow
             leading={actorLeading}

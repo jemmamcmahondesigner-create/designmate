@@ -39,6 +39,29 @@
   white-space: normal;
 }
 
+/* Shrink-to-fit column — pair with ColumnDef width: 'hug' */
+.colHug {
+  width: 0;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.colHug .cellPill {
+  display: inline-flex;
+  width: max-content;
+  min-width: max-content;
+  max-width: none;
+  overflow: visible;
+}
+
+.colHug .cellPill > * {
+  flex-shrink: 0;
+  width: max-content;
+  min-width: max-content;
+  max-width: none;
+  overflow: visible;
+}
+
 .theadRow {
   background: var(--surface-app-header, #fff);
   height: 44px;

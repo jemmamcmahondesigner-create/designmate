@@ -40,7 +40,6 @@ import {
   Input,
   Menu,
   MenuItem,
-  MenuSectionHeading,
   Modal,
   NotificationBadge,
   PageHeader,
@@ -104,6 +103,8 @@ import { useToast } from '@/components/Toast';
 import { getActiveWorkspaceId } from '@/lib/workspace/activeWorkspace';
 import { sendWorkspaceInvite } from '@/lib/workspace/invite-client';
 import { inviteToastMessage } from '@/lib/workspace/invite-toast';
+import { AddReviewerDropdown } from './AddReviewerDropdown';
+import { useWorkspaceReviewerPickerOptions } from './useWorkspaceReviewerPickerOptions';
 import { SubmitFeedbackDrawer } from './SubmitFeedbackDrawer';
 import { ActivityTab } from './ActivityTab';
 import { EditReviewDrawer } from './EditReviewDrawer';
@@ -129,7 +130,7 @@ import {
   reopenReviewStatusForType,
   resolveReviewStatusPill,
 } from '@/lib/reviews/reviewStatusDisplay';
-import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
+import { getAvatarInlineStyle, avatarColourKey } from '@/lib/utils/avatarColour';
 import { resolveArtifactPreviewFileType } from '@/lib/artifacts/resolveArtifactPreviewFileType';
 import { Warning } from 'phosphor-react';
 
@@ -192,6 +193,7 @@ interface Reviewer {
   id: string;
   name: string;
   role: string;
+  email?: string | null;
   variant: 'lilac' | 'default';
   isDecisionMaker: boolean;
 }
@@ -199,12 +201,16 @@ export interface ReviewerAssignment {
   id: string;
   name: string;
   role: string;
+  email?: string | null;
   isDecisionMaker: boolean;
+  userId?: string | null;
 }
 interface ContributorOption {
   id: string;
   name: string;
   role: string;
+  email?: string | null;
+  userId?: string;
 }
 
 interface Reply {
@@ -432,12 +438,46 @@ const NAV_SECTIONS: Array<{ id: string; label: string }> = [
 ];
 
 function avatarInlinePaletteStyle(
-  contributorId: string | null | undefined,
-  name: string,
+  email?: string | null,
+  contributorId?: string | null,
   ring = false,
 ) {
-  const key = (contributorId ?? name).trim() || name;
-  return getAvatarInlineStyle(key, { ring });
+  return getAvatarInlineStyle(avatarColourKey(email, contributorId), { ring });
+}
+
+function reviewerAvatarProps(
+  email?: string | null,
+  contributorId?: string | null,
+  ring = false,
+) {
+  const colourKey = avatarColourKey(email, contributorId);
+  const id = (contributorId ?? '').trim() || colourKey;
+  return {
+    contributorId: id,
+    style: getAvatarInlineStyle(colourKey, { ring }),
+  };
+}
+
+function reviewerAvatarPropsForContributorId(
+  contributorId: string | null | undefined,
+  contributorsById: Map<string, ContributorOption>,
+  reviewersById: Map<string, ReviewerAssignment>,
+  ring = false,
+) {
+  const id = (contributorId ?? '').trim();
+  const email =
+    contributorsById.get(id)?.email ?? reviewersById.get(id)?.email ?? null;
+  return reviewerAvatarProps(email, id || null, ring);
+}
+
+function contributorEmailById(
+  contributorId: string | null | undefined,
+  contributorsById: Map<string, ContributorOption>,
+  reviewersById: Map<string, ReviewerAssignment>,
+): string | null {
+  const id = (contributorId ?? '').trim();
+  if (!id) return null;
+  return contributorsById.get(id)?.email ?? reviewersById.get(id)?.email ?? null;
 }
 
 function normStatus(raw: string | null | undefined) {
@@ -585,6 +625,7 @@ function canManageChangeRequestEntry(
 export type ApproveRhcReviewerEntry = {
   reviewerId: string;
   reviewerName: string;
+  reviewerEmail?: string | null;
   status: ReviewerFeedbackEntry['status'];
   feedbackKind: 'approval' | 'change-request';
   isResubmission: boolean;
@@ -630,6 +671,7 @@ function buildApproveRhcReviewerEntries(
   resolvedEntries: ReviewerFeedbackEntry[],
   changeRequests: ReviewChangeRequestEntry[],
   allFeedbackRows: ReviewerFeedbackEntry[],
+  emailByReviewerId?: Map<string, string | null>,
 ): ApproveRhcReviewerEntry[] {
   const changeRequestReviewerIds = new Set(
     changeRequests
@@ -666,6 +708,7 @@ function buildApproveRhcReviewerEntries(
     return {
       reviewerId,
       reviewerName: entry.reviewerName,
+      reviewerEmail: emailByReviewerId?.get(reviewerId) ?? null,
       status: entry.status,
       feedbackKind,
       isResubmission: isApproveFeedbackResubmission(entry, allFeedbackRows),
@@ -708,16 +751,24 @@ function groupDecisionLogEntriesByDate(entries: ReviewerFeedbackEntry[]) {
 function ApproveRhcReviewerPendingCard({
   reviewerName,
   reviewerId,
+  reviewerEmail,
 }: {
   reviewerName: string;
   reviewerId: string;
+  reviewerEmail?: string | null;
 }) {
+  const colourKey = avatarColourKey(reviewerEmail, reviewerId);
   return (
     <div
       className="flex w-full flex-row items-center gap-2 rounded-[8px] border border-solid border-[#e4ddd3] bg-white"
       style={{ padding: '12px 16px' }}
     >
-      <Avatar name={reviewerName} contributorId={reviewerId} size="md" />
+      <Avatar
+        name={reviewerName}
+        contributorId={reviewerId}
+        size="md"
+        style={getAvatarInlineStyle(colourKey, { ring: true })}
+      />
       <span
         className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#2e1c1c]"
         style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
@@ -738,19 +789,27 @@ function ApproveRhcReviewerPendingCard({
 function ApproveRhcReviewerReceivedCard({
   reviewerName,
   reviewerId,
+  reviewerEmail,
   isResubmission,
 }: {
   reviewerName: string;
   reviewerId: string;
+  reviewerEmail?: string | null;
   isResubmission: boolean;
 }) {
   const label = isResubmission ? 'Feedback re-submitted' : 'Feedback received';
+  const colourKey = avatarColourKey(reviewerEmail, reviewerId);
   return (
     <div
       className="flex w-full flex-row items-center gap-2 rounded-[8px] border border-solid border-[#e4ddd3] bg-white"
       style={{ padding: '12px 16px' }}
     >
-      <Avatar name={reviewerName} contributorId={reviewerId} size="md" />
+      <Avatar
+        name={reviewerName}
+        contributorId={reviewerId}
+        size="md"
+        style={getAvatarInlineStyle(colourKey, { ring: true })}
+      />
       <span
         className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#2e1c1c]"
         style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
@@ -927,7 +986,7 @@ function resolveTradeoffArtifactLabel(
     .map((id) => {
       const artifact = artifacts.find((entry) => entry.id === id);
       return (
-        (artifact?.title ?? artifact?.label ?? artifact?.originalFileName ?? '').trim() ||
+        (artifact?.label ?? artifact?.title ?? artifact?.originalFileName ?? '').trim() ||
         id
       );
     })
@@ -944,7 +1003,7 @@ function resolveTradeoffArtifactIds(
   const label = (tradeoff.artifactLabel ?? '').trim();
   if (!label) return [];
   const match = artifacts.find((artifact) => {
-    const name = (artifact.title ?? artifact.label ?? artifact.originalFileName ?? '').trim();
+    const name = (artifact.label ?? artifact.title ?? artifact.originalFileName ?? '').trim();
     return name === label;
   });
   return match ? [match.id] : [];
@@ -1269,6 +1328,7 @@ export function ReviewDetailView({
       id: reviewer.id,
       name: reviewer.name,
       role: reviewer.role,
+      email: reviewer.email,
       variant: reviewerChipVariantForType(reviewer.isDecisionMaker, normalizedReviewType),
       isDecisionMaker: reviewer.isDecisionMaker,
     }))
@@ -1301,6 +1361,11 @@ export function ReviewDetailView({
     useState(0);
   const [reviewPendingAccessRequesterNames, setReviewPendingAccessRequesterNames] =
     useState<string[]>([]);
+
+  const { assignableOptions, userIdByContributorId } = useWorkspaceReviewerPickerOptions(
+    reviewWorkspaceId,
+    assignedReviewers,
+  );
 
   useEffect(() => {
     setLastReminderSentAt(lastReminderSentAtProp);
@@ -1705,7 +1770,6 @@ export function ReviewDetailView({
   const [selectedFromProject, setSelectedFromProject] = useState<string[]>([]);
   const addButtonRef = useRef<HTMLDivElement | null>(null);
   const selectMenuContainerRef = useRef<HTMLDivElement | null>(null);
-  const reviewerMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const [openKebabId, setOpenKebabId] = useState<string | null>(null);
   const kebabRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -1721,12 +1785,6 @@ export function ReviewDetailView({
     useState('');
 
   //  Create-teammate modal 
-  const [reviewerMenuOpen, setReviewerMenuOpen] = useState(false);
-  const [reviewerSearch, setReviewerSearch] = useState('');
-  const [selectedReviewerIds, setSelectedReviewerIds] = useState<string[]>([]);
-  const [allSystemContributors, setAllSystemContributors] = useState<ContributorOption[]>(
-    contributors
-  );
   const [reviewerModalOpen, setReviewerModalOpen] = useState(false);
   const [reopenReviewModalOpen, setReopenReviewModalOpen] = useState(false);
   const [reopenReviewSubmitting, setReopenReviewSubmitting] = useState(false);
@@ -1744,7 +1802,6 @@ export function ReviewDetailView({
   const [pendingReviewerAddLabel, setPendingReviewerAddLabel] = useState('reviewer');
   const [pendingReviewerAddCount, setPendingReviewerAddCount] = useState(1);
   const pendingReviewerAddConfirmRef = useRef<(() => Promise<void>) | null>(null);
-  const reviewerAnchorRef = useRef<HTMLDivElement | null>(null);
   const [newReviewerName, setNewReviewerName] = useState('');
   const [newReviewerEmail, setNewReviewerEmail] = useState('');
   const [newReviewerRole, setNewReviewerRole] = useState('');
@@ -1978,6 +2035,7 @@ export function ReviewDetailView({
         id: reviewer.id,
         name: reviewer.name,
         role: reviewer.role,
+        email: reviewer.email,
         variant: reviewerChipVariantForType(reviewer.isDecisionMaker, normalizedReviewType),
         isDecisionMaker: reviewer.isDecisionMaker,
       }))
@@ -2023,78 +2081,9 @@ export function ReviewDetailView({
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [openTradeoffMenuId]);
 
-  useEffect(() => {
-    if (!reviewerMenuOpen) return;
-    function onMouseDown(e: MouseEvent) {
-      if (reviewerMenuPanelRef.current?.contains(e.target as Node)) return;
-      if (reviewerAnchorRef.current?.contains(e.target as Node)) return;
-      setReviewerMenuOpen(false);
-    }
-    document.addEventListener('mousedown', onMouseDown);
-    return () => document.removeEventListener('mousedown', onMouseDown);
-  }, [reviewerMenuOpen]);
-
-  // Clear the reviewer search whenever the picker closes (Cancel, outside
-  // click, or confirm) so reopening always starts from an empty field.
-  useEffect(() => {
-    if (!reviewerMenuOpen) {
-      setReviewerSearch('');
-    }
-  }, [reviewerMenuOpen]);
-
-  useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
-    void supabase
-      .from('contributors')
-      .select('id, name, email, role')
-      .order('created_at', { ascending: true })
-      .then(({ data }) => {
-        if (!Array.isArray(data)) return;
-        const mapped = data.map((row) => ({
-          id: String((row as Record<string, unknown>).id ?? ''),
-          name: String((row as Record<string, unknown>).name ?? ''),
-          role: String((row as Record<string, unknown>).role ?? ''),
-        }));
-        const projectContributorIds = new Set(
-          contributors.map((contributor) => contributor.id)
-        );
-        mapped.sort((a, b) => {
-          const aProject = projectContributorIds.has(a.id) ? 0 : 1;
-          const bProject = projectContributorIds.has(b.id) ? 0 : 1;
-          if (aProject !== bProject) return aProject - bProject;
-          return a.name.localeCompare(b.name);
-        });
-        setAllSystemContributors(mapped);
-      });
-  }, [contributors]);
-
   // Project problems not already linked to this review  drives the Select menu.
   const remainingProblems = allProjectProblems.filter(
     (ap) => !problems.some((p) => p.id === ap.id)
-  );
-  const availableContributors = allSystemContributors.filter(
-    (contributor) =>
-      (reviewerSearch.trim() === '' ||
-        contributor.name.toLowerCase().includes(reviewerSearch.toLowerCase()))
-  );
-  const projectContributorIds = useMemo(
-    () => new Set(contributors.map((contributor) => contributor.id)),
-    [contributors],
-  );
-  const projectTeammatesInMenu = useMemo(
-    () => availableContributors.filter((c) => projectContributorIds.has(c.id)),
-    [availableContributors, projectContributorIds],
-  );
-  const otherMembersInMenu = useMemo(
-    () => availableContributors.filter((c) => !projectContributorIds.has(c.id)),
-    [availableContributors, projectContributorIds],
-  );
-  const rhcAssignableContributors = useMemo(
-    () =>
-      allSystemContributors.filter(
-        (contributor) => !assignedReviewers.some((reviewer) => reviewer.id === contributor.id),
-      ),
-    [allSystemContributors, assignedReviewers],
   );
   const showHelperText =
     normalizedReviewType === 'compare' || normalizedReviewType === 'approve';
@@ -2490,11 +2479,11 @@ export function ReviewDetailView({
     for (const contributor of contributors) {
       map.set(contributor.id, contributor.name);
     }
-    for (const contributor of allSystemContributors) {
-      map.set(contributor.id, contributor.name);
+    for (const option of assignableOptions) {
+      map.set(option.id, option.name);
     }
     return map;
-  }, [allSystemContributors, contributors]);
+  }, [assignableOptions, contributors]);
   const pendingReviewerAddNames = useMemo(
     () =>
       pendingReviewerAddIds.map((reviewerId) => reviewerNameLookup.get(reviewerId) ?? 'Reviewer'),
@@ -2789,16 +2778,24 @@ export function ReviewDetailView({
       .map((entry) => entry.reviewerId),
   ).size;
   const totalReviewerCount = reviewerIds.length;
-  const approveRhcReviewerEntries = useMemo(
-    () =>
-      buildApproveRhcReviewerEntries(
-        reviewerIds,
-        resolvedFeedbackEntries,
-        changeRequests,
-        allFeedbackRowsProp.length > 0 ? allFeedbackRowsProp : resolvedFeedbackEntries,
-      ),
-    [reviewerIds, resolvedFeedbackEntries, changeRequests, allFeedbackRowsProp],
-  );
+  const approveRhcReviewerEntries = useMemo(() => {
+    const emailByReviewerId = new Map(
+      assignedReviewers.map((reviewer) => [reviewer.id, reviewer.email ?? null] as const),
+    );
+    return buildApproveRhcReviewerEntries(
+      reviewerIds,
+      resolvedFeedbackEntries,
+      changeRequests,
+      allFeedbackRowsProp.length > 0 ? allFeedbackRowsProp : resolvedFeedbackEntries,
+      emailByReviewerId,
+    );
+  }, [
+    assignedReviewers,
+    reviewerIds,
+    resolvedFeedbackEntries,
+    changeRequests,
+    allFeedbackRowsProp,
+  ]);
 
   const lifecycleUi = resolveHeaderLifecycle({
     raw: displayRawStatus,
@@ -3274,7 +3271,7 @@ export function ReviewDetailView({
         pillLabel: decisionPillUi.label,
         options: decisionArtifactIds.map((id) => {
           const artifact = artifacts.find((item) => item.id === id);
-          return artifact?.title ?? artifact?.label ?? id;
+          return artifact?.label ?? artifact?.title ?? id;
         }),
         decisionText: decisionData.text ?? '',
         ownerName: decisionAttributionName,
@@ -3634,7 +3631,8 @@ export function ReviewDetailView({
               decisionMakerContributorId={decisionMakerReviewerId}
               compareReviewFullyLocked={compareReviewFullyLocked}
               compareHideSubmitFeedback={compareHideSubmitFeedback}
-              assignableContributors={rhcAssignableContributors}
+              assignableContributors={assignableOptions}
+              userIdByContributorId={userIdByContributorId}
               requireDecisionMaker={requireDecisionMaker}
               onAddReviewers={maybeAddReviewers}
               isReviewPaused={isReviewPaused}
@@ -3660,7 +3658,7 @@ export function ReviewDetailView({
                 const finalConceptLabels =
                   decisionData.selectedArtifactIds?.map((id) => {
                     const artifact = artifacts.find((item) => item.id === id);
-                    return artifact?.title ?? artifact?.label ?? id;
+                    return artifact?.label ?? artifact?.title ?? id;
                   }) ?? [];
                 const finalDecisionCrRecords = changeRequests.filter((cr) =>
                   finalDecisionChangeRequests.some((item) => item.id === cr.id),
@@ -3730,7 +3728,7 @@ export function ReviewDetailView({
                     const snapshotConceptLabels =
                       snapshot.decision_selected_artifact_ids?.map((id) => {
                         const artifact = artifacts.find((item) => item.id === id);
-                        return artifact?.title ?? artifact?.label ?? id;
+                        return artifact?.label ?? artifact?.title ?? id;
                       }) ?? [];
                     const snapshotSelectionKeys = expandArtifactSelectionKeys(
                       snapshot.decision_selected_artifact_ids ?? [],
@@ -3795,6 +3793,11 @@ export function ReviewDetailView({
                         status="approved"
                         owner={snapshotOwnerName}
                         ownerContributorId={snapshot.decision_owner_id ?? undefined}
+                        ownerContributorEmail={contributorEmailById(
+                          snapshot.decision_owner_id,
+                          contributorsById,
+                          reviewersById,
+                        )}
                         timestamp={formatDecisionCardTimestamp(
                           snapshot.decision_made_at,
                         )}
@@ -3918,6 +3921,11 @@ export function ReviewDetailView({
                                     }
                                     owner={reviewerLabel}
                                     ownerContributorId={entry.reviewerId}
+                                    ownerContributorEmail={contributorEmailById(
+                                      entry.reviewerId,
+                                      contributorsById,
+                                      reviewersById,
+                                    )}
                                     resolveArtifactTagHref={resolveArtifactTagHref}
                                     timestamp={formatDecisionCardTimestamp(
                                       entry.submittedAt,
@@ -4151,6 +4159,11 @@ export function ReviewDetailView({
                                   status="changes-needed"
                                   owner={ownerLabel}
                                   ownerContributorId={cr.reviewer_id ?? undefined}
+                                  ownerContributorEmail={contributorEmailById(
+                                    cr.reviewer_id,
+                                    contributorsById,
+                                    reviewersById,
+                                  )}
                                   timestamp={formatDecisionCardTimestamp(cr.created_at)}
                                   decisionText={(cr.changes_needed ?? '').trim()}
                                   reviewLifecycleComplete={reviewIsLifecycleComplete}
@@ -4927,279 +4940,25 @@ export function ReviewDetailView({
                   !compareReviewFullyLocked &&
                   canEditReviewMenu &&
                   !isReviewPaused && (
-                  <div
-                    className="relative w-full"
-                    ref={reviewerAnchorRef}
-                  >
-                    {reviewIsCompletedOrClosed ? (
-                      <Tooltip
-                        label="Reopen this review to add reviewers"
-                        position="top"
-                      >
-                        <span className="inline-flex w-full">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            icon="leading"
-                            iconName="plus"
-                            label="Add reviewers"
-                            disabled
-                          />
-                        </span>
-                      </Tooltip>
-                    ) : (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      icon="leading"
-                      iconName="plus"
-                      label="Add reviewers"
-                      aria-expanded={reviewerMenuOpen}
-                      aria-haspopup="menu"
-                      onClick={() => setReviewerMenuOpen((prev) => !prev)}
-                    />
-                    )}
-
-                    {reviewerMenuOpen && (
-                      <div
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          maxWidth: 400,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 6,
-                          position: 'relative',
-                        }}
-                      >
-                        <div
-                          ref={reviewerMenuPanelRef}
-                          style={{
-                            position: 'absolute',
-                            bottom: '100%',
-                            left: 0,
-                            width: 399,
-                            backgroundColor: '#ffffff',
-                            border: '1px solid #e4ddd3',
-                            borderRadius: 8,
-                            boxShadow:
-                              '0px 2px 4px rgba(41,33,28,0.06), 0px 8px 16px rgba(41,33,28,0.15)',
-                            overflow: 'hidden',
-                            zIndex: 50,
-                            paddingTop: 4,
-                            paddingBottom: 0,
-                            marginBottom: 4,
-                          }}
-                        >
-                          <div style={{ paddingBottom: 4 }}>
-                            {availableContributors.length === 0 && (
-                              <div style={{ padding: '8px 12px', fontSize: 13, color: '#998c82' }}>
-                                No teammates found.
-                              </div>
-                            )}
-                            {projectTeammatesInMenu.length > 0 ? (
-                              <>
-                                <MenuSectionHeading>Project teammates</MenuSectionHeading>
-                                {projectTeammatesInMenu.map((contributor) => {
-                                  const alreadyReviewer = reviewers.some(
-                                    (reviewer) => reviewer.id === contributor.id,
-                                  );
-                                  return (
-                                    <label
-                                      key={contributor.id}
-                                      style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 8,
-                                        padding: '8px 12px',
-                                        cursor: alreadyReviewer ? 'not-allowed' : 'pointer',
-                                        width: '100%',
-                                        boxSizing: 'border-box',
-                                        opacity: alreadyReviewer ? 0.6 : 1,
-                                      }}
-                                    >
-                                      <Checkbox
-                                        id={`reviewer-${contributor.id}`}
-                                        label=""
-                                        checked={selectedReviewerIds.includes(contributor.id)}
-                                        disabled={alreadyReviewer}
-                                        onChange={(checked) => {
-                                          if (alreadyReviewer) return;
-                                          setSelectedReviewerIds((prev) =>
-                                            checked
-                                              ? [...prev, contributor.id]
-                                              : prev.filter((id) => id !== contributor.id),
-                                          );
-                                        }}
-                                      />
-                                      <Avatar name={contributor.name} contributorId={contributor.id} size="md" />
-                                      <span
-                                        style={{
-                                          fontSize: 14,
-                                          fontWeight: 500,
-                                          color: '#2e1c1c',
-                                          flex: 1,
-                                        }}
-                                      >
-                                        {contributor.name}
-                                      </span>
-                                      {alreadyReviewer ? (
-                                        <span style={{ fontSize: 12, color: '#998c82' }}>
-                                          Already a reviewer
-                                        </span>
-                                      ) : null}
-                                    </label>
-                                  );
-                                })}
-                              </>
-                            ) : null}
-                            {otherMembersInMenu.length > 0 ? (
-                              <>
-                                <MenuSectionHeading>All members</MenuSectionHeading>
-                                {otherMembersInMenu.map((contributor) => {
-                                  const alreadyReviewer = reviewers.some(
-                                    (reviewer) => reviewer.id === contributor.id,
-                                  );
-                                  return (
-                                    <label
-                                      key={contributor.id}
-                                      style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 8,
-                                        padding: '8px 12px',
-                                        cursor: alreadyReviewer ? 'not-allowed' : 'pointer',
-                                        width: '100%',
-                                        boxSizing: 'border-box',
-                                        opacity: alreadyReviewer ? 0.6 : 1,
-                                      }}
-                                    >
-                                      <Checkbox
-                                        id={`reviewer-${contributor.id}`}
-                                        label=""
-                                        checked={selectedReviewerIds.includes(contributor.id)}
-                                        disabled={alreadyReviewer}
-                                        onChange={(checked) => {
-                                          if (alreadyReviewer) return;
-                                          setSelectedReviewerIds((prev) =>
-                                            checked
-                                              ? [...prev, contributor.id]
-                                              : prev.filter((id) => id !== contributor.id),
-                                          );
-                                        }}
-                                      />
-                                      <Avatar name={contributor.name} contributorId={contributor.id} size="md" />
-                                      <span
-                                        style={{
-                                          fontSize: 14,
-                                          fontWeight: 500,
-                                          color: '#2e1c1c',
-                                          flex: 1,
-                                        }}
-                                      >
-                                        {contributor.name}
-                                      </span>
-                                      {alreadyReviewer ? (
-                                        <span style={{ fontSize: 12, color: '#998c82' }}>
-                                          Already a reviewer
-                                        </span>
-                                      ) : null}
-                                    </label>
-                                  );
-                                })}
-                              </>
-                            ) : null}
-                          </div>
-
-                          <div style={{ height: 1, backgroundColor: '#e4ddd3' }} />
-
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              padding: '8px 12px',
-                            }}
-                          >
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              label={savingReviewers ? 'Saving' : 'Done'}
-                              disabled={savingReviewers}
-                              onClick={() => {
-                                if (savingReviewers) return;
-                                const toAddFromAll = allSystemContributors.filter((contributor) =>
-                                  selectedReviewerIds.includes(contributor.id)
-                                );
-                                if (toAddFromAll.length === 0) return;
-                                maybeAddReviewers({
-                                  reviewerIds: toAddFromAll.map((contributor) => contributor.id),
-                                  source: 'overview',
-                                  onStartSaving: () => setSavingReviewers(true),
-                                  onFinishSaving: () => setSavingReviewers(false),
-                                  onSuccess: () => {
-                                    setSelectedReviewerIds([]);
-                                    setReviewerMenuOpen(false);
-                                    setReviewerSearch('');
-                                  },
-                                });
-                              }}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setReviewerMenuOpen(false);
-                                setReviewerModalOpen(true);
-                              }}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8,
-                                background: 'none',
-                                border: 'none',
-                                cursor: 'pointer',
-                                fontSize: 14,
-                                fontWeight: 500,
-                                color: '#6b1e2e',
-                                fontFamily: "'Plus Jakarta Sans', sans-serif",
-                              }}
-                            >
-                              <Icon name="plus" size={16} />
-                              Create a new teammate
-                            </button>
-                          </div>
-                        </div>
-
-                        <input
-                          type="text"
-                          placeholder="Find teammates"
-                          value={reviewerSearch}
-                          onChange={(e) => setReviewerSearch(e.target.value)}
-                          autoFocus
-                          style={{
-                            height: 32,
-                            width: '100%',
-                            border: '1px solid #6b1e2e',
-                            borderRadius: 6,
-                            padding: '0 8px',
-                            fontSize: 13,
-                            fontFamily: "'Plus Jakarta Sans', sans-serif",
-                            color: '#2e1c1c',
-                            outline: 'none',
-                            boxSizing: 'border-box',
-                          }}
-                        />
-
-                        {showHelperText && (
-                          <p style={{ fontSize: 12, color: '#6b5e55', margin: 0 }}>
-                            {helperText}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  <AddReviewerDropdown
+                    workspaceId={reviewWorkspaceId}
+                    assignableContributors={assignableOptions}
+                    disabled={reviewIsCompletedOrClosed}
+                    disabledTooltip="Reopen this review to add reviewers"
+                    saving={savingReviewers}
+                    showHelperText={showHelperText}
+                    helperText={helperText}
+                    onOpenCreateTeammateModal={() => setReviewerModalOpen(true)}
+                    onAddReviewers={({ reviewerIds, onSuccess }) => {
+                      maybeAddReviewers({
+                        reviewerIds,
+                        source: 'overview',
+                        onStartSaving: () => setSavingReviewers(true),
+                        onFinishSaving: () => setSavingReviewers(false),
+                        onSuccess,
+                      });
+                    }}
+                  />
                 )}
               </section>
               <div className="shrink-0 h-8" aria-hidden="true" />
@@ -5270,7 +5029,8 @@ export function ReviewDetailView({
             decisionMakerContributorId={decisionMakerReviewerId}
             compareReviewFullyLocked={compareReviewFullyLocked}
             compareHideSubmitFeedback={compareHideSubmitFeedback}
-            assignableContributors={rhcAssignableContributors}
+            assignableContributors={assignableOptions}
+            userIdByContributorId={userIdByContributorId}
             requireDecisionMaker={requireDecisionMaker}
             onAddReviewers={maybeAddReviewers}
             isReviewPaused={isReviewPaused}
@@ -5370,7 +5130,7 @@ export function ReviewDetailView({
           reviewFocus={reviewFocus}
           artifacts={artifacts.map((artifact) => ({
             id: artifact.id,
-            title: artifact.title ?? artifact.label,
+            title: artifact.label ?? artifact.title,
             iterationLabel: artifact.iteration,
           }))}
           currentContributorId={currentContributorId}
@@ -5463,9 +5223,10 @@ export function ReviewDetailView({
         reviewerContributorIds={assignedReviewers.map((reviewer) => reviewer.id)}
         artifactIdsWithFeedback={artifactIdsWithFeedback}
         onSaved={() => {
-          setEditReviewDrawerOpen(false);
           setActivityRefreshKey((key) => key + 1);
-          router.refresh();
+          queueMicrotask(() => {
+            router.refresh();
+          });
         }}
       />
 
@@ -5843,6 +5604,13 @@ export function ReviewDetailView({
                           project_id: projectId,
                           description: next.text,
                         });
+                      } else {
+                        await supabase.from('problems').insert({
+                          id: next.id,
+                          project_id: projectId,
+                          review_id: reviewId,
+                          description: next.text,
+                        });
                       }
                     await persistRelatedProblemIds(nextProblems);
                     await logTimelineEventClient({
@@ -5997,7 +5765,7 @@ export function ReviewDetailView({
                 .map((a) => ({
                   value: a.id,
                   label:
-                    (a.title ?? a.label ?? a.originalFileName ?? '').trim() ||
+                    (a.label ?? a.title ?? a.originalFileName ?? '').trim() ||
                     'Artifact',
                 }))}
               value={tradeoffArtifactPickerValue}
@@ -6013,7 +5781,7 @@ export function ReviewDetailView({
                 {tradeoffSelectedArtifactIds.map((artifactId) => {
                   const art = artifacts.find((a) => a.id === artifactId);
                   const title =
-                    (art?.title ?? art?.label ?? art?.originalFileName ?? '')
+                    (art?.label ?? art?.title ?? art?.originalFileName ?? '')
                       .trim() || 'Artifact';
                   return (
                     <div
@@ -6378,6 +6146,8 @@ function ReviewerChip({
     return null;
   })();
 
+  const colourKey = avatarColourKey(reviewer.email, reviewer.id);
+
   const chip = (
     <span
       className="group inline-flex items-center"
@@ -6401,7 +6171,7 @@ function ReviewerChip({
         contributorId={reviewer.id}
         size="md"
         prominence="high"
-        style={avatarInlinePaletteStyle(reviewer.id, reviewer.name, true)}
+        style={avatarInlinePaletteStyle(reviewer.email, reviewer.id, true)}
       />
       <span
         style={{
@@ -6495,13 +6265,16 @@ function CompareDecisionPromptCard({
   variant,
   displayName,
   contributorId,
+  contributorEmail,
   onAddDecision,
 }: {
   variant: 'required' | 'pending';
   displayName: string;
   contributorId?: string | null;
+  contributorEmail?: string | null;
   onAddDecision?: () => void;
 }) {
+  const colourKey = avatarColourKey(contributorEmail, contributorId);
   const statusTooltipLabel =
     variant === 'required'
       ? 'All reviewers have submitted their preferred option. Review the feedback below and use Add Decision to record the final direction.'
@@ -6527,9 +6300,9 @@ function CompareDecisionPromptCard({
       <div className="flex items-center gap-2">
         <Avatar
           name={displayName}
-          contributorId={contributorId ?? undefined}
+          contributorId={contributorId ?? colourKey}
           size="md"
-          style={avatarInlinePaletteStyle(contributorId, displayName, true)}
+          style={avatarInlinePaletteStyle(contributorEmail, contributorId, true)}
         />
         <span
           className="min-w-0 flex-1 truncate"
@@ -6688,6 +6461,7 @@ function FeedbackThreadCommentCard({
   onFeedbackReply,
   onMakeDecision,
   disableReplies = false,
+  userIdByContributorId,
 }: {
   thread: FeedbackThread;
   threadReplies: CardReplyRow[];
@@ -6702,6 +6476,7 @@ function FeedbackThreadCommentCard({
   onFeedbackReply: (feedbackId: string, text: string) => Promise<void>;
   onMakeDecision: () => void;
   disableReplies?: boolean;
+  userIdByContributorId: Map<string, string>;
 }) {
   const timestamp = useClientRelativeTime(thread.submittedAtIso ?? null, {
     short: true,
@@ -6848,6 +6623,7 @@ function RightColumn({
   compareReviewFullyLocked,
   compareHideSubmitFeedback,
   assignableContributors,
+  userIdByContributorId,
   requireDecisionMaker,
   onAddReviewers,
   isReviewPaused = false,
@@ -6941,7 +6717,14 @@ function RightColumn({
   decisionMakerContributorId: string | null;
   compareReviewFullyLocked: boolean;
   compareHideSubmitFeedback: boolean;
-  assignableContributors: ContributorOption[];
+  assignableContributors: Array<{
+    id: string;
+    name: string;
+    role: string;
+    email?: string | null;
+    userId: string;
+  }>;
+  userIdByContributorId: Map<string, string>;
   requireDecisionMaker: boolean;
   onAddReviewers: (input: {
     reviewerIds: string[];
@@ -7409,6 +7192,11 @@ function RightColumn({
                       comparisonDecisionPromptRowName ?? decisionMakerDisplayName
                     }
                     contributorId={decisionMakerContributorId ?? currentContributorId}
+                    contributorEmail={contributorEmailById(
+                      decisionMakerContributorId ?? currentContributorId,
+                      contributorsById,
+                      reviewersById,
+                    )}
                     onAddDecision={
                       isDecisionMaker ? onOpenFinalDecisionDrawer : undefined
                     }
@@ -7419,6 +7207,11 @@ function RightColumn({
                     variant="pending"
                     displayName={decisionMakerDisplayName}
                     contributorId={decisionMakerContributorId}
+                    contributorEmail={contributorEmailById(
+                      decisionMakerContributorId,
+                      contributorsById,
+                      reviewersById,
+                    )}
                   />
                 ) : null}
               </div>
@@ -7651,6 +7444,7 @@ function RightColumn({
                           key={entry.reviewerId}
                           reviewerName={entry.reviewerName}
                           reviewerId={entry.reviewerId}
+                          reviewerEmail={entry.reviewerEmail}
                         />
                       );
                     }
@@ -7663,6 +7457,7 @@ function RightColumn({
                           key={entry.reviewerId}
                           reviewerName={entry.reviewerName}
                           reviewerId={entry.reviewerId}
+                          reviewerEmail={entry.reviewerEmail}
                           isResubmission={entry.isResubmission}
                         />
                       );
@@ -7720,11 +7515,12 @@ function RightColumn({
                           >
                             <Avatar
                               name={reviewerName}
-                              contributorId={request.reviewer_id ?? undefined}
                               size="md"
-                              style={avatarInlinePaletteStyle(
+                              {...reviewerAvatarPropsForContributorId(
                                 request.reviewer_id,
-                                reviewerName,
+                                contributorsById,
+                                reviewersById,
+                                true,
                               )}
                             />
                             <span style={{ fontSize: 13, fontWeight: 500, color: '#2e1c1c' }}>
@@ -7859,12 +7655,13 @@ function RightColumn({
                                 >
                                   <Avatar
                                     name={reviewerName}
-                                    contributorId={request.reviewer_id ?? undefined}
                                     size="md"
-                                    style={avatarInlinePaletteStyle(
-                                      request.reviewer_id,
-                                      reviewerName,
-                                    )}
+                                    {...reviewerAvatarPropsForContributorId(
+                                request.reviewer_id,
+                                contributorsById,
+                                reviewersById,
+                                true,
+                              )}
                                   />
                                   <span style={{ fontSize: 13, fontWeight: 500, color: '#2e1c1c' }}>
                                     {reviewerName}
@@ -7963,6 +7760,7 @@ function RightColumn({
                           key={entry.reviewerId}
                           reviewerName={entry.reviewerName}
                           reviewerId={entry.reviewerId}
+                          reviewerEmail={entry.reviewerEmail}
                         />
                       );
                     }
@@ -7975,6 +7773,7 @@ function RightColumn({
                           key={entry.reviewerId}
                           reviewerName={entry.reviewerName}
                           reviewerId={entry.reviewerId}
+                          reviewerEmail={entry.reviewerEmail}
                           isResubmission={entry.isResubmission}
                         />
                       );
@@ -8021,12 +7820,13 @@ function RightColumn({
                                 >
                                   <Avatar
                                     name={reviewerName}
-                                    contributorId={request.reviewer_id ?? undefined}
                                     size="md"
-                                    style={avatarInlinePaletteStyle(
-                                      request.reviewer_id,
-                                      reviewerName,
-                                    )}
+                                    {...reviewerAvatarPropsForContributorId(
+                                request.reviewer_id,
+                                contributorsById,
+                                reviewersById,
+                                true,
+                              )}
                                   />
                                   <span style={{ fontSize: 13, fontWeight: 500, color: '#2e1c1c' }}>
                                     {reviewerName}
@@ -8157,7 +7957,7 @@ function RightColumn({
                         role="dialog"
                         aria-label="Add reviewers"
                       >
-                        <div className="max-h-[240px] overflow-y-auto py-1">
+                        <div className="max-h-[280px] overflow-y-auto overflow-x-hidden py-1">
                           {assignableContributors.length === 0 ? (
                             <p className="m-0 px-3 py-2 text-[13px] text-[#998c82]">
                               No teammates available to add.
@@ -8180,7 +7980,16 @@ function RightColumn({
                                     );
                                   }}
                                 />
-                                <Avatar name={contributor.name} contributorId={contributor.id} size="md" />
+                                <Avatar
+                                  name={contributor.name}
+                                  contributorId={contributor.id}
+                                  size="md"
+                                  style={avatarInlinePaletteStyle(
+                                    contributor.email,
+                                    contributor.id,
+                                    true,
+                                  )}
+                                />
                                 <span className="min-w-0 flex-1">
                                   <span className="block truncate text-[13px] font-medium text-[#2e1c1c]">
                                     {contributor.name}
@@ -8250,6 +8059,7 @@ function RightColumn({
                       disableReplies={
                         compareReviewFullyLocked || reviewClosed || isReviewPaused
                       }
+                      userIdByContributorId={userIdByContributorId}
                     />
                   );
                 }
@@ -8280,11 +8090,12 @@ function RightColumn({
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
                       <Avatar
                         name={reviewerName}
-                        contributorId={request.reviewer_id ?? undefined}
                         size="md"
-                        style={avatarInlinePaletteStyle(
+                        {...reviewerAvatarPropsForContributorId(
                           request.reviewer_id,
-                          reviewerName,
+                          contributorsById,
+                          reviewersById,
+                          true,
                         )}
                       />
                       <span style={{ fontSize: 13, fontWeight: 500, color: '#2e1c1c' }}>

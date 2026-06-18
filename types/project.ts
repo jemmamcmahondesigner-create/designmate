@@ -29,6 +29,7 @@ export type ProjectContributor = {
   name: string;
   email: string | null;
   role: string | null;
+  userId?: string | null;
   /** Profile image URL when available */
   avatarUrl?: string | null;
 };
@@ -39,5 +40,7 @@ export type ProjectReference = {
   label: string;
   url: string | null;
   file_name: string | null;
+  storage_path: string | null;
+  file_type: string | null;
   created_at: string;
 };

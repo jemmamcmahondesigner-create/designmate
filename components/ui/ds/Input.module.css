@@ -25,6 +25,18 @@
   cursor: default;
 }
 
+.labelHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .required {
   color: var(--feedback-error-text, #a31d1d);
   margin-left: 1px;
@@ -86,6 +98,10 @@
 .size-sm {
   height: 32px;
   min-width: 160px;
+}
+
+.fieldCompact {
+  min-width: 0;
 }
 
 .size-md {

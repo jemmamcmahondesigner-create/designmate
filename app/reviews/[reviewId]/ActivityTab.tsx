@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Skeleton, TimelineDateDivider, TimelineEventCard } from "@/components/ui/ds";
 import { monthGroupLabel, type TimelineEventRow } from "@/lib/timeline/events";
 import { enrichTimelineEventsWithActors } from "@/lib/timeline/enrichTimelineActors";
+import { enrichArtifactUploadedTimelineEvents } from "@/lib/timeline/artifactUploadedPayload";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   artifactChipHref,
@@ -113,7 +114,11 @@ export function ActivityTab({
         };
       });
       const withActors = await enrichTimelineEventsWithActors(supabase, mapped);
-      setEvents(withActors);
+      const withArtifactUploads = await enrichArtifactUploadedTimelineEvents(
+        supabase,
+        withActors,
+      );
+      setEvents(withArtifactUploads);
       setIsLoading(false);
     })();
     return () => {
@@ -356,7 +361,10 @@ export function ActivityTab({
                             : String((event.payload as Record<string, unknown>).actor_name)
                       }
                       actorAvatarUrl={event.actor?.avatar_url ?? undefined}
-                      actorContributorId={event.actor?.id ?? undefined}
+                      actorContributorId={
+                        event.actor?.id ?? event.actor_id ?? undefined
+                      }
+                      actorContributorEmail={event.actor?.email ?? undefined}
                       changeRequestLabelById={changeRequestLabelById}
                       payload={(event.payload ?? {}) as Record<string, any>}
                       timestamp={event.created_at}
@@ -365,6 +373,7 @@ export function ActivityTab({
                       artifactIdByName={artifactIdByName}
                       artifactLabelById={artifactLabelById}
                       artifactUrlByName={artifactUrlByName}
+                      projectId={event.project_id}
                     />
                     {showDivider ? <TimelineDateDivider label={currentMonth} /> : null}
                   </div>

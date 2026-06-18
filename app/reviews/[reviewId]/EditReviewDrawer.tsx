@@ -22,6 +22,7 @@ import {
 import inputStyles from "@/components/ui/ds/Input.module.css";
 import modalStyles from "@/components/ui/ds/Modal.module.css";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { formatVersionLabel, isValidVersionString } from "@/lib/artifacts/versioning";
 import {
   editReviewStatusOptions,
   isEditReviewStatusSelectDisabled,
@@ -48,8 +49,9 @@ type EditableArtifact = {
   kind: "file" | "link";
   file: File | null;
   title: string;
+  versionRowLabel: string;
   iterationLabel: string;
-  versionNumber: number;
+  versionNumber: string;
   description: string;
   fileUrl: string | null;
   linkUrl: string;
@@ -64,6 +66,7 @@ function modalPayloadToEditable(payload: ArtifactModalSavePayload): EditableArti
     kind: payload.kind,
     file: payload.file,
     title: payload.title,
+    versionRowLabel: payload.versionRowLabel.trim() || payload.title.trim(),
     iterationLabel: payload.iterationLabel,
     versionNumber: payload.versionNumber,
     description: payload.description,
@@ -108,7 +111,7 @@ export type EditReviewDrawerProps = {
   onSaved?: () => void;
 };
 
-const VERSION_LABEL_OPTIONS = Array.from({ length: 10 }, (_, index) => `v${index + 1}`);
+const VERSION_ERROR_COPY = "Use format v1, v2, or v2.1";
 
 const REVIEW_TYPE_OPTIONS: Array<{ value: ReviewType; label: string }> = [
   { value: "align", label: "Align" },
@@ -138,26 +141,29 @@ function normalizeReviewType(value: string): ReviewType {
 }
 
 function parseVersionNumber(iterationLabel: string) {
-  const match = /^v(\d+)$/i.exec(String(iterationLabel ?? "").trim());
-  return match ? Number(match[1]) : 1;
+  return formatVersionLabel(String(iterationLabel ?? "v1"));
 }
 
 function normaliseVersion(raw: string | null | undefined): string {
   if (!raw) return "v1";
-  const iterMatch = raw.match(/[Ii]teration\s*(\d+)/);
-  if (iterMatch) return `v${iterMatch[1]}`;
-  if (/^v\d+$/i.test(raw)) return raw.toLowerCase();
+  const trimmed = String(raw).trim();
+  const iterMatch = trimmed.match(/[Ii]teration\s*(\d+(?:\.\d+)?)/);
+  if (iterMatch) return formatVersionLabel(`v${iterMatch[1]}`);
+  if (/^v\d+(\.\d+)?$/i.test(trimmed)) return formatVersionLabel(trimmed);
+  if (/^\d+(\.\d+)?$/.test(trimmed)) return formatVersionLabel(`v${trimmed}`);
   return "v1";
 }
 
 function toEditableArtifact(artifact: EditReviewArtifact): EditableArtifact {
   const iterationLabel = normaliseVersion(artifact.iteration);
+  const displayName = artifact.label?.trim() || artifact.title?.trim() || "";
   return {
     localKey: artifact.id,
     canonicalArtifactId: artifact.canonicalArtifactId ?? null,
     kind: artifact.linkUrl ? "link" : "file",
     file: null,
-    title: artifact.title?.trim() || artifact.label,
+    title: displayName,
+    versionRowLabel: displayName || "Artifact",
     iterationLabel,
     versionNumber: parseVersionNumber(iterationLabel),
     description: artifact.description ?? "",
@@ -191,6 +197,7 @@ function serializeArtifactsForDirtyCheck(artifacts: EditableArtifact[]): string 
       localKey: artifact.localKey,
       title: artifact.title.trim(),
       iterationLabel: artifact.iterationLabel,
+      versionNumber: artifact.versionNumber,
       description: artifact.description.trim(),
       kind: artifact.kind,
       linkUrl: artifact.linkUrl.trim(),
@@ -399,6 +406,7 @@ export function EditReviewDrawer({
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [editingArtifactKey, setEditingArtifactKey] = useState<string | null>(null);
   const [pendingRemoveKey, setPendingRemoveKey] = useState<string | null>(null);
+  const [versionErrors, setVersionErrors] = useState<Record<string, string | null>>({});
   const feedbackArtifactIdSet = useMemo(
     () => new Set(artifactIdsWithFeedback.map((id) => id.trim()).filter(Boolean)),
     [artifactIdsWithFeedback],
@@ -407,9 +415,16 @@ export function EditReviewDrawer({
   const statusSelectDisabled = isEditReviewStatusSelectDisabled(reviewStatus);
   const canEditSetup = submittedFeedbackCount === 0;
   const reviewTypeLocked = submittedFeedbackCount > 0;
+  const drawerOpenInitializedRef = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      drawerOpenInitializedRef.current = false;
+      return;
+    }
+    if (drawerOpenInitializedRef.current) return;
+    drawerOpenInitializedRef.current = true;
+
     const nextArtifacts = initialArtifacts.map(toEditableArtifact);
     initialSnapshotRef.current = {
       title: initialTitle,
@@ -429,6 +444,7 @@ export function EditReviewDrawer({
     setShowReactivateModal(false);
     setShowCompleteModal(false);
     setError(null);
+    setVersionErrors({});
   }, [open, initialTitle, initialStatus, initialReviewFocus, initialReviewType, initialArtifacts]);
 
   const isDirty = useMemo(() => {
@@ -443,12 +459,14 @@ export function EditReviewDrawer({
   }, [title, reviewStatus, reviewType, focus, artifacts]);
 
   const compareNeedsMoreArtifacts = reviewType === "compare" && artifacts.length < 2;
+  const hasVersionErrors = Object.values(versionErrors).some(Boolean);
   const saveDisabled =
     saving ||
     !isDirty ||
     !title.trim() ||
     (canEditSetup && artifacts.length === 0) ||
-    compareNeedsMoreArtifacts;
+    compareNeedsMoreArtifacts ||
+    hasVersionErrors;
 
   const editingArtifact = useMemo(
     () => artifacts.find((artifact) => artifact.localKey === editingArtifactKey) ?? null,
@@ -489,6 +507,26 @@ export function EditReviewDrawer({
       return;
     }
 
+    const artifactsToSave = artifacts.map((artifact) => {
+      const trimmed = artifact.versionNumber.trim();
+      if (!isValidVersionString(trimmed)) return artifact;
+      const label = formatVersionLabel(trimmed);
+      return {
+        ...artifact,
+        versionNumber: label,
+        iterationLabel: label,
+      };
+    });
+
+    for (const artifact of artifactsToSave) {
+      if (!isValidVersionString(artifact.versionNumber)) {
+        setError("Fix invalid version numbers before saving.");
+        return;
+      }
+    }
+
+    setVersionErrors({});
+
     if (
       !skipReactivateCheck &&
       initialSnapshotRef.current.status === "paused" &&
@@ -513,8 +551,8 @@ export function EditReviewDrawer({
 
     try {
       const storedArtifacts: Array<Record<string, unknown>> = [];
-      for (let index = 0; index < artifacts.length; index++) {
-        const artifact = artifacts[index];
+      for (let index = 0; index < artifactsToSave.length; index++) {
+        const artifact = artifactsToSave[index];
         if (artifact.kind === "file") {
           let fileUrl = artifact.fileUrl;
           let originalFileName = artifact.originalFileName;
@@ -543,7 +581,7 @@ export function EditReviewDrawer({
           storedArtifacts.push({
             kind: "file",
             title: artifact.title.trim(),
-            iterationLabel: artifact.iterationLabel,
+            iterationLabel: formatVersionLabel(artifact.versionNumber),
             description: artifact.description.trim(),
             url: fileUrl,
             originalFileName,
@@ -554,7 +592,7 @@ export function EditReviewDrawer({
           storedArtifacts.push({
             kind: "link",
             title: artifact.title.trim(),
-            iterationLabel: artifact.iterationLabel,
+            iterationLabel: formatVersionLabel(artifact.versionNumber),
             description: artifact.description.trim(),
             url: artifact.linkUrl.trim(),
           });
@@ -569,7 +607,7 @@ export function EditReviewDrawer({
       const removedArtifacts = initialSnapshotRef.current.artifacts
         .filter(
           (initialArtifact) =>
-            !artifacts.some((artifact) => artifact.localKey === initialArtifact.localKey),
+            !artifactsToSave.some((artifact) => artifact.localKey === initialArtifact.localKey),
         )
         .map((artifact) => ({
           id: artifact.localKey,
@@ -577,7 +615,7 @@ export function EditReviewDrawer({
           linkUrl: artifact.kind === "link" ? artifact.linkUrl : null,
         }));
 
-      const addedArtifacts = artifacts
+      const addedArtifacts = artifactsToSave
         .filter(
           (artifact) =>
             !initialSnapshotRef.current.artifacts.some(
@@ -586,10 +624,10 @@ export function EditReviewDrawer({
         )
         .map((artifact) => ({
           title: artifact.title.trim() || "Artifact",
-          iterationLabel: artifact.iterationLabel.trim() || "v1",
+          iterationLabel: formatVersionLabel(artifact.versionNumber),
         }));
 
-      const artifactDescriptionEdits = artifacts.flatMap((artifact) => {
+      const artifactDescriptionEdits = artifactsToSave.flatMap((artifact) => {
         const initialArtifact = initialSnapshotRef.current.artifacts.find(
           (item) => item.localKey === artifact.localKey,
         );
@@ -608,8 +646,9 @@ export function EditReviewDrawer({
         const nextTitle = artifact.title.trim() || previousTitle;
         const previousDescription = initialArtifact.description.trim();
         const nextDescription = artifact.description.trim();
-        const previousVersion = initialArtifact.iterationLabel.trim() || "v1";
-        const nextVersion = artifact.iterationLabel.trim() || "v1";
+        const previousVersion =
+          formatVersionLabel(initialArtifact.versionNumber) || "v1";
+        const nextVersion = formatVersionLabel(artifact.versionNumber) || "v1";
         const currentTitle = nextTitle || previousTitle || "Artifact";
 
         if (nextTitle !== previousTitle) {
@@ -663,8 +702,8 @@ export function EditReviewDrawer({
                     ? (primaryArtifact?.url as string | null | undefined)
                     : null),
                 artifact_file_type:
-                  primaryArtifact && artifacts.length > 0
-                    ? topLevelArtifactFileType(artifacts[0])
+                  primaryArtifact && artifactsToSave.length > 0
+                    ? topLevelArtifactFileType(artifactsToSave[0])
                     : null,
                 artifact_name: (primaryArtifact?.title as string | null | undefined) ?? null,
                 artifact_iteration:
@@ -708,23 +747,13 @@ export function EditReviewDrawer({
           return;
         }
 
-        for (let index = 0; index < artifacts.length; index++) {
-          const artifact = artifacts[index];
+        for (let index = 0; index < artifactsToSave.length; index++) {
+          const artifact = artifactsToSave[index];
           const storedArtifact = storedArtifacts[index] as Record<string, unknown>;
           let canonicalArtifactId = artifact.canonicalArtifactId;
 
           if (canonicalArtifactId) {
-            const { error: artifactUpdateError } = await supabase
-              .from("artifacts")
-              .update({
-                name: artifact.title.trim(),
-                description: artifact.description.trim() || null,
-              })
-              .eq("id", canonicalArtifactId);
-            if (artifactUpdateError) {
-              setError(artifactUpdateError.message);
-              return;
-            }
+            // Existing artifact row — version fields live on artifact_versions only.
           } else {
             const { data: insertedArtifact, error: artifactInsertError } = await supabase
               .from("artifacts")
@@ -746,8 +775,9 @@ export function EditReviewDrawer({
 
           const { error: insertVersionError } = await supabase.from("artifact_versions").insert({
             artifact_id: canonicalArtifactId,
-            version_number: artifact.versionNumber,
+            version_number: formatVersionLabel(artifact.versionNumber),
             review_id: reviewId,
+            label: artifact.versionRowLabel.trim() || artifact.title.trim() || "Artifact",
             file_url: artifact.kind === "file" ? (storedArtifact.url as string | null) : null,
             link_url: artifact.kind === "link" ? artifact.linkUrl.trim() : null,
             file_name:
@@ -764,7 +794,7 @@ export function EditReviewDrawer({
         }
 
         const remainingArtifactIds = new Set(
-          artifacts
+          artifactsToSave
             .map((artifact) => artifact.canonicalArtifactId ?? "")
             .map((value) => value.trim())
             .filter(Boolean),
@@ -785,6 +815,29 @@ export function EditReviewDrawer({
               setError(deleteArtifactError.message);
               return;
             }
+          }
+        }
+      }
+
+      if (!canEditSetup) {
+        for (const artifact of artifactsToSave) {
+          const initialArtifact = initialSnapshotRef.current.artifacts.find(
+            (item) => item.localKey === artifact.localKey,
+          );
+          if (!initialArtifact?.canonicalArtifactId) continue;
+
+          const previousVersion = formatVersionLabel(initialArtifact.versionNumber);
+          const nextVersion = formatVersionLabel(artifact.versionNumber);
+          if (previousVersion === nextVersion) continue;
+
+          const { error: versionUpdateError } = await supabase
+            .from("artifact_versions")
+            .update({ version_number: nextVersion })
+            .eq("review_id", reviewId)
+            .eq("artifact_id", initialArtifact.canonicalArtifactId);
+          if (versionUpdateError) {
+            setError(versionUpdateError.message);
+            return;
           }
         }
       }
@@ -815,6 +868,13 @@ export function EditReviewDrawer({
         showToast("Changes saved, but activity log could not be updated.");
       }
 
+      /*
+       * STEP 0 — Save close + tab navigation:
+       * - Success path calls onClose() after Supabase update (never router.push on save).
+       * - Activity tab navigation was triggered by router.push on reactivation — removed;
+       *   optional "View" on the reactivation toast only.
+       * - Parent onSaved may router.refresh(); must not change the active tab.
+       */
       const isReactivation =
         initialSnapshotRef.current.status === "paused" && reviewStatus === "in-review";
       const isCompleteSave =
@@ -824,7 +884,7 @@ export function EditReviewDrawer({
         showToast("Review reactivated");
         showToast({
           message: "Reviewers notified",
-          actionLabel: "View",
+          actionLabel: "View activity",
           onAction: () => {
             router.push(`/reviews/${reviewId}?tab=activity`);
           },
@@ -835,10 +895,17 @@ export function EditReviewDrawer({
         showToast("Changes saved");
       }
 
-      if (isReactivation) {
-        router.push(`/reviews/${reviewId}?tab=activity`);
-      }
+      initialSnapshotRef.current = {
+        title: title.trim(),
+        status: reviewStatus,
+        reviewType,
+        focus: focus.trim(),
+        artifacts: artifactsToSave,
+      };
 
+      setArtifacts(artifactsToSave);
+      setSaving(false);
+      onClose();
       onSaved?.();
     } catch (saveError) {
       setError(
@@ -946,7 +1013,7 @@ export function EditReviewDrawer({
             value={focus}
             onChange={(e) => setFocus(e.target.value)}
             variant="form-fixed"
-            size="md"
+            size="sm"
           />
           <div className="flex flex-col gap-2">
             <p className="m-0 text-[13px] font-medium text-[#2e1c1c]">
@@ -990,6 +1057,7 @@ export function EditReviewDrawer({
             )}
             {artifacts.map((artifact, index) => {
                 const canDelete = !feedbackArtifactIdSet.has(artifact.localKey);
+                const versionError = versionErrors[artifact.localKey] ?? null;
                 return (
                   <ArtifactPreview
                     key={artifact.localKey}
@@ -1006,35 +1074,69 @@ export function EditReviewDrawer({
                     }
                     lastEdited="Edited recently"
                     artifactName={artifact.title}
-                    iteration={artifact.iterationLabel}
+                    iteration={artifact.versionNumber}
                     description={artifact.description}
-                    iterationOptions={VERSION_LABEL_OPTIONS}
+                    iterationFreeText={canEditSetup}
+                    iterationPlaceholder="e.g. v2.1"
+                    iterationError={Boolean(versionError)}
+                    iterationErrorMessage={versionError ?? undefined}
                     imageUrl={artifact.fileUrl ?? undefined}
                     linkUrl={artifact.kind === "link" ? artifact.linkUrl : undefined}
                     showOptimiseButton={false}
                     onArtifactNameChange={(name) =>
                       setArtifacts((prev) =>
                         prev.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, title: name } : item,
+                          itemIndex === index
+                            ? {
+                                ...item,
+                                title: name,
+                                versionRowLabel: name.trim() || item.versionRowLabel,
+                              }
+                            : item,
                         ),
                       )
                     }
-                    onIterationChange={(iteration) =>
+                    onIterationChange={(value) => {
+                      setVersionErrors((prev) => ({
+                        ...prev,
+                        [artifact.localKey]: null,
+                      }));
                       setArtifacts((prev) =>
                         prev.map((item, itemIndex) => {
                           if (itemIndex !== index) return item;
-                          const match = /^v(\d+)$/i.exec(String(iteration).trim());
-                          const versionNumber = match ? Number(match[1]) : item.versionNumber;
                           return {
                             ...item,
-                            iterationLabel: iteration,
-                            versionNumber: Number.isFinite(versionNumber)
-                              ? versionNumber
-                              : item.versionNumber,
+                            versionNumber: value,
+                            iterationLabel: value,
                           };
                         }),
-                      )
-                    }
+                      );
+                    }}
+                    onIterationBlur={(value) => {
+                      const trimmed = value.trim();
+                      if (!isValidVersionString(trimmed)) {
+                        setVersionErrors((prev) => ({
+                          ...prev,
+                          [artifact.localKey]: VERSION_ERROR_COPY,
+                        }));
+                        return;
+                      }
+                      const label = formatVersionLabel(trimmed);
+                      setVersionErrors((prev) => ({
+                        ...prev,
+                        [artifact.localKey]: null,
+                      }));
+                      setArtifacts((prev) =>
+                        prev.map((item, itemIndex) => {
+                          if (itemIndex !== index) return item;
+                          return {
+                            ...item,
+                            versionNumber: label,
+                            iterationLabel: label,
+                          };
+                        }),
+                      );
+                    }}
                     onDescriptionChange={(description) =>
                       setArtifacts((prev) =>
                         prev.map((item, itemIndex) =>
@@ -1063,6 +1165,8 @@ export function EditReviewDrawer({
       <AddLinkModal
         open={addLinkModalOpen}
         mode={editingArtifactKey ? "edit" : "add"}
+        projectId={projectId}
+        reviewId={reviewId}
         initialValues={editingArtifactKey ? editingModalInitial : null}
         defaultTitle={`Concept ${artifacts.length + 1}`}
         onClose={() => {
@@ -1078,6 +1182,8 @@ export function EditReviewDrawer({
       <UploadModal
         open={uploadModalOpen}
         mode={editingArtifactKey ? "edit" : "add"}
+        projectId={projectId}
+        reviewId={reviewId}
         initialValues={editingArtifactKey ? editingModalInitial : null}
         defaultTitle={`Concept ${artifacts.length + 1}`}
         onClose={() => {

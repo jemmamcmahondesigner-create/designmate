@@ -185,6 +185,8 @@ function AccordionSection({
                 contributors={p.contributors.map((c) => ({
                   id: c.id,
                   name: c.name,
+                  email: c.email,
+                  userId: c.userId,
                   avatarSrc: c.avatarUrl ?? undefined,
                 }))}
                 href={`/projects/${p.id}`}

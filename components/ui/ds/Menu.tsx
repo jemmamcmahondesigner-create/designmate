@@ -18,7 +18,7 @@ import { Button } from './Button';
 import { Checkbox } from './Checkbox';
 import { FilterPanel } from './FilterPanel';
 import { Icon, type IconName } from './Icon';
-import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
+import { getAvatarInlineStyle, avatarColourKey } from '@/lib/utils/avatarColour';
 import styles from './Menu.module.css';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -83,6 +83,7 @@ export interface MenuItemProps {
   avatarName?: string;
   /** Contributor UUID for deterministic avatar colour in multi-select menus. */
   avatarContributorId?: string;
+  avatarContributorEmail?: string | null;
   /** Render a leading checkbox (multi-select pattern) */
   checkbox?: boolean;
   /** Active / selected — blush bg, brand text, trailing check */
@@ -103,6 +104,7 @@ export function MenuItem({
   avatarSrc,
   avatarName,
   avatarContributorId,
+  avatarContributorEmail,
   checkbox = false,
   active = false,
   destructive = false,
@@ -157,8 +159,11 @@ export function MenuItem({
             contributorId={avatarContributorId}
             size="md"
             style={
-              avatarContributorId
-                ? getAvatarInlineStyle(avatarContributorId, { ring: true })
+              avatarContributorId || avatarContributorEmail
+                ? getAvatarInlineStyle(
+                    avatarColourKey(avatarContributorEmail, avatarContributorId),
+                    { ring: true },
+                  )
                 : undefined
             }
           />
@@ -282,6 +287,8 @@ export interface MenuProps {
   id?: string;
   /** Declarative footer — pass `{ type, label, onClick }` */
   footerAction?: MenuFooterProps;
+  /** Custom footer slot rendered below the scrollable list (outside `ul`) */
+  footerSlot?: ReactNode;
   sections?: MenuSectionsState;
   reviewers?: MenuSectionsReviewer[];
   onApply?: (filters: MenuSectionsState) => void;
@@ -300,6 +307,7 @@ export function Menu({
   portalZIndex,
   id,
   footerAction,
+  footerSlot,
   sections,
   reviewers = [],
   onApply,
@@ -458,7 +466,7 @@ export function Menu({
       window.removeEventListener('scroll', updatePortalPosition, true);
       window.removeEventListener('resize', updatePortalPosition);
     };
-  }, [open, portal, isSectionsType, updatePortalPosition, children, footerAction]);
+  }, [open, portal, isSectionsType, updatePortalPosition, children, footerAction, footerSlot]);
 
   if (!open) return null;
 
@@ -783,6 +791,7 @@ export function Menu({
             </ul>
           )}
 
+          {footerSlot}
           {footerAction && <MenuFooter {...footerAction} />}
         </>
       )}

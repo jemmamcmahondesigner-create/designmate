@@ -2,6 +2,7 @@ import { ProfilePageClient } from "@/components/settings/ProfilePageClient";
 import { fetchWorkspaceRoleOptions } from "@/lib/workspace/contributorRoles";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createClient } from "@supabase/supabase-js";
 
 export default async function SettingsProfilePage() {
   const supabase = await createSupabaseServerClient();
@@ -67,7 +68,11 @@ export default async function SettingsProfilePage() {
 
   const adminCountByWorkspace: Record<string, number> = {};
   if (workspaceIds.length > 0) {
-    const { data: adminRows } = await supabase
+    const adminClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    );
+    const { data: adminRows } = await adminClient
       .from("workspace_members")
       .select("workspace_id")
       .in("workspace_id", workspaceIds)

@@ -24,7 +24,9 @@ export type ColumnRenderContext = {
 export type ColumnDef<T> = {
   key: string;
   label: string;
-  width?: number | 'flex';
+  width?: number | 'flex' | 'hug';
+  /** Minimum width (px) when `width` is `'hug'`. Defaults to 80. */
+  minWidth?: number;
   align?: 'left' | 'right' | 'center';
   cellType?: TableCellType;
   /** When true, no vertical rule after this header cell (e.g. custom layouts). Last column never shows a divider. */
@@ -60,6 +62,10 @@ export type TableProps<T extends { id: string }> = {
 
 function pageSizeLabel(size: TablePageSizeOption): string {
   return size === 'all' ? 'All' : String(size);
+}
+
+function columnHugMinWidth(minWidth?: number): number {
+  return minWidth ?? 80;
 }
 
 function TableFooterRowsPerPage({
@@ -164,10 +170,13 @@ export function Table<T extends { id: string }>({
           {columns.map((col) => (
             <col
               key={col.key}
+              className={col.width === 'hug' ? styles.colHug : undefined}
               style={
                 col.width === 'flex' || col.width == null
                   ? undefined
-                  : { width: col.width, minWidth: col.width }
+                  : col.width === 'hug'
+                    ? { width: 0, minWidth: columnHugMinWidth(col.minWidth) }
+                    : { width: col.width, minWidth: col.width }
               }
             />
           ))}
@@ -197,12 +206,17 @@ export function Table<T extends { id: string }>({
                 <th
                   key={column.key}
                   scope="col"
-                  style={{
-                    width:
-                      column.width === 'flex' || column.width == null
-                        ? undefined
-                        : column.width,
-                  }}
+                  className={column.width === 'hug' ? styles.colHug : undefined}
+                  style={
+                    column.width === 'flex' || column.width == null
+                      ? undefined
+                      : column.width === 'hug'
+                        ? {
+                            width: 0,
+                            minWidth: columnHugMinWidth(column.minWidth),
+                          }
+                        : { width: column.width }
+                  }
                 >
                   <div className={styles.headerCellWrap}>
                     <div
@@ -267,6 +281,7 @@ export function Table<T extends { id: string }>({
                     <td
                       key={`${row.id}-${column.key}`}
                       className={[
+                        column.width === 'hug' ? styles.colHug : '',
                         column.align === 'right' || type === 'kebab'
                           ? styles.alignRight
                           : column.align === 'center'
@@ -279,6 +294,11 @@ export function Table<T extends { id: string }>({
                       onClick={
                         type === 'kebab'
                           ? (event) => event.stopPropagation()
+                          : undefined
+                      }
+                      style={
+                        column.width === 'hug'
+                          ? { minWidth: columnHugMinWidth(column.minWidth) }
                           : undefined
                       }
                     >

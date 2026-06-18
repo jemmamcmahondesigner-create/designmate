@@ -6,7 +6,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { useLayoutEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { Avatar } from './Avatar';
-import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
+import { getAvatarInlineStyle, avatarColourKey } from '@/lib/utils/avatarColour';
 import { Tooltip } from './Tooltip';
 import styles from './Sidebar.module.css';
 
@@ -27,7 +27,7 @@ export interface SidebarProps {
   onShowAll?: () => void;
   onProjectClick?: (id: string) => void;
   onReviewsClick?: () => void;
-  user?: { name: string; avatarSrc?: string; contributorId?: string };
+  user?: { name: string; avatarSrc?: string; contributorId?: string; contributorEmail?: string };
   onUserClick?: () => void;
   /** Highlight footer row (settings route or menu open). */
   userActive?: boolean;
@@ -129,7 +129,10 @@ export function Sidebar({
     onRailWidthChange?.(isExpanded ? RAIL_EXPANDED : RAIL_COLLAPSED);
   }, [isExpanded, onRailWidthChange]);
 
-  const footerAvatarColourKey = (user?.contributorId ?? '').trim();
+  const footerAvatarColourKey = avatarColourKey(
+    user?.contributorEmail,
+    user?.contributorId,
+  );
   const footerAvatarStyle = footerAvatarColourKey
     ? getAvatarInlineStyle(footerAvatarColourKey, { ring: true })
     : undefined;

@@ -8,6 +8,11 @@ import {
 } from "@/lib/auth/resolveEffectiveContributor";
 import { logReviewersNotifiedEvent } from "@/lib/reviews/reviewersNotifiedActivity";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
+import { formatVersionLabel, isValidVersionString } from "@/lib/artifacts/versioning";
+import {
+  buildArtifactUploadedPayloadFields,
+  resolveCrossReviewRelatedArtifact,
+} from "@/lib/timeline/artifactUploadedPayload";
 
 /** Tradeoff row shape stored on `reviews.tradeoffs` jsonb (same as AI generate payload). */
 export type TradeoffItem = Tradeoff;
@@ -17,12 +22,14 @@ export type ArtifactDraftForSubmit = {
   file: File | null;
   linkUrl: string;
   title: string;
-  /** Display label; caller sets `v{n}` from `versionNumber`. */
+  /** Display label; use `formatVersionLabel(versionNumber)`. */
   iterationLabel: string;
   description: string;
   /** When null, submit creates a new `artifacts` row for this project. */
   resolvedCanonicalArtifactId: string | null;
-  versionNumber: number;
+  versionNumber: string;
+  /** User-entered name at save — written to `artifact_versions.label`. */
+  versionRowLabel: string;
 };
 
 export type SubmitReviewInput = {
@@ -33,6 +40,8 @@ export type SubmitReviewInput = {
   sendNotification: boolean;
   reviewFocus: string | null;
   relatedProblemIds: string[];
+  /** Problems created for this review only (not yet in `problems` until submit). */
+  reviewSpecificProblems?: Array<{ id: string; description: string }>;
   reviewerContributorIds: string[];
   requireDecisionMaker: boolean;
   ownerDisplayName: string;
@@ -65,7 +74,7 @@ export function validateSubmitInput(
     if (!a.title.trim()) return "Each artifact needs a title.";
     if (!a.iterationLabel.trim())
       return "Each artifact needs a version label.";
-    if (!Number.isFinite(a.versionNumber) || a.versionNumber < 1)
+    if (!isValidVersionString(a.versionNumber))
       return "Each artifact needs a valid version.";
     if (a.kind === "file") {
       if (!a.file) return "Each file artifact needs an uploaded file.";
@@ -245,7 +254,7 @@ export async function submitReviewClient(
       stored.push({
         kind: "file",
         title: a.title.trim(),
-        iterationLabel: `v${a.versionNumber}`,
+        iterationLabel: formatVersionLabel(a.versionNumber),
         description: a.description.trim(),
         url: publicUrl,
         originalFileName: a.file.name,
@@ -256,7 +265,7 @@ export async function submitReviewClient(
       stored.push({
         kind: "link",
         title: a.title.trim(),
-        iterationLabel: `v${a.versionNumber}`,
+        iterationLabel: formatVersionLabel(a.versionNumber),
         description: a.description.trim(),
         url: a.linkUrl.trim()
       });
@@ -343,6 +352,28 @@ export async function submitReviewClient(
     return { error: error.message };
   }
 
+  /*
+   * STEP 0 — Review-specific problems (Create Review Step 3):
+   * - Modal in CreateReviewDrawer; review-only rows deferred until submit.
+   * - Project problems insert immediately with project_id only (review_id null).
+   * - Review detail page loads project problems + problems where review_id matches.
+   */
+  if (input.reviewSpecificProblems?.length) {
+    for (const problem of input.reviewSpecificProblems) {
+      const description = problem.description.trim();
+      if (!description) continue;
+      const { error: problemInsertError } = await supabase.from("problems").insert({
+        id: problem.id,
+        project_id: input.projectId,
+        review_id: input.reviewId,
+        description,
+      });
+      if (problemInsertError) {
+        return { error: problemInsertError.message };
+      }
+    }
+  }
+
   if (input.reviewerContributorIds.length > 0) {
     const feedbackRows = input.reviewerContributorIds.map((reviewerId) => ({
       review_id: input.reviewId,
@@ -377,15 +408,9 @@ export async function submitReviewClient(
         return { error: artErr?.message ?? "Could not create artifact." };
       }
       canonicalId = String((insertedArtifact as Record<string, unknown>).id ?? "");
-    } else {
-      await supabase
-        .from("artifacts")
-        .update({
-          name: draft.title.trim(),
-          description: draft.description.trim() || null,
-        })
-        .eq("id", canonicalId);
     }
+    // Related-artifact link: resolvedCanonicalArtifactId reuses an existing artifacts row —
+    // only insert artifact_versions below; never UPDATE artifacts.name/description here.
 
     const fileUrl = draft.kind === "file" ? row.url : null;
     const linkUrl = draft.kind === "link" ? row.url : null;
@@ -394,8 +419,9 @@ export async function submitReviewClient(
 
     const { error: verErr } = await supabase.from("artifact_versions").insert({
       artifact_id: canonicalId,
-      version_number: draft.versionNumber,
+      version_number: formatVersionLabel(draft.versionNumber),
       review_id: input.reviewId,
+      label: draft.versionRowLabel.trim() || draft.title.trim() || "Artifact",
       file_url: fileUrl,
       link_url: linkUrl,
       file_name: fileName,
@@ -421,17 +447,38 @@ export async function submitReviewClient(
       review_type: input.reviewType
     }
   });
+  let relatedArtifactForUpload = null;
+  for (const draft of input.artifacts) {
+    const canonicalId = draft.resolvedCanonicalArtifactId?.trim();
+    if (!canonicalId) continue;
+    const related = await resolveCrossReviewRelatedArtifact(
+      supabase,
+      canonicalId,
+      input.reviewId,
+      draft.versionNumber,
+    );
+    if (related) {
+      relatedArtifactForUpload = related;
+      break;
+    }
+  }
+  const artifactUploadPayload = buildArtifactUploadedPayloadFields({
+    items: input.artifacts.map((draft) => ({
+      name: draft.title.trim() || "Artifact",
+      version: draft.versionNumber,
+    })),
+    relatedArtifact: relatedArtifactForUpload,
+  });
   await logTimelineEventClient({
     projectId: input.projectId,
     reviewId: input.reviewId,
     actorId: createdBy,
     eventType: "artifact_uploaded",
     payload: {
-      iteration_label: primaryArtifact?.iterationLabel ?? "v1",
-      artifact_names: stored.map((artifact) => artifact.title).filter(Boolean),
+      ...artifactUploadPayload,
       review_title: input.title.trim(),
-      review_id: input.reviewId
-    }
+      review_id: input.reviewId,
+    },
   });
 
   if (input.sendNotification) {

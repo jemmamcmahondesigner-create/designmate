@@ -17,6 +17,7 @@ import {
 import { Divider } from './Divider';
 import { Icon } from './Icon';
 import { IconSquareButton } from './IconSquareButton';
+import { Input } from './Input';
 import { Select } from './Select';
 import { Tag } from './Tag';
 import { Tooltip } from './Tooltip';
@@ -361,10 +362,16 @@ export interface ArtifactPreviewProps {
 
   // Version select options (v1…vN in Create Review)
   iterationOptions?: string[];
+  /** Free-text version Input instead of Select (Edit Review). */
+  iterationFreeText?: boolean;
+  iterationPlaceholder?: string;
+  iterationError?: boolean;
+  iterationErrorMessage?: string;
 
   // Callbacks
   onArtifactNameChange?: (value: string) => void;
   onIterationChange?: (value: string) => void;
+  onIterationBlur?: (value: string) => void;
   onDescriptionChange?: (value: string) => void;
   onDescriptionBlur?: () => void;
   /** Minimise / remove artifact (editable mode trash control) */
@@ -417,8 +424,13 @@ export function ArtifactPreview({
   linkUrl,
   figmaFileMeta = null,
   iterationOptions = [],
+  iterationFreeText = false,
+  iterationPlaceholder,
+  iterationError = false,
+  iterationErrorMessage,
   onArtifactNameChange,
   onIterationChange,
+  onIterationBlur,
   onDescriptionChange,
   onDescriptionBlur,
   onMinimise,
@@ -808,8 +820,15 @@ export function ArtifactPreview({
           className={styles.detailsEditable}
           style={{ paddingBottom: 16 }}
         >
-          {/* Row: name input + version select */}
-          <div className={styles.detailsRow}>
+          {/* Row: name input + version select or free-text version input */}
+          <div
+            className={[
+              styles.detailsRow,
+              iterationFreeText ? styles.detailsRowFreeText : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
             <input
               ref={nameRef}
               type="text"
@@ -824,25 +843,47 @@ export function ArtifactPreview({
               onChange={e => onArtifactNameChange?.(e.target.value)}
               aria-label="Artifact name"
             />
-            <div
-              className={[
-                styles.iterationSelectWrap,
-                highlightIterationError ? styles.iterationSelectWrapError : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-            >
-              <Select
-                options={iterationOptions.map((opt) => ({
-                  value: opt,
-                  label: displayVersionTagLabel(opt),
-                }))}
-                value={resolveVersionSelectValue(iteration, iterationOptions)}
-                onChange={(val) => onIterationChange?.(val)}
-                placeholder=""
-                size="sm"
-              />
-            </div>
+            {iterationFreeText ? (
+              <div className={styles.iterationInputWrap}>
+                <Input
+                  label="Version"
+                  hideLabel
+                  size="sm"
+                  compact
+                  placeholder={iterationPlaceholder ?? 'e.g. v2.1'}
+                  value={iteration}
+                  error={iterationError || highlightIterationError}
+                  errorMessage={
+                    iterationErrorMessage ??
+                    (highlightIterationError ? 'Version is required.' : undefined)
+                  }
+                  onChange={(e) => onIterationChange?.(e.target.value)}
+                  onBlur={(e) => onIterationBlur?.(e.target.value)}
+                />
+              </div>
+            ) : (
+              <div
+                className={[
+                  styles.iterationSelectWrap,
+                  highlightIterationError ? styles.iterationSelectWrapError : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
+                <Select
+                  options={iterationOptions.map((opt) => ({
+                    value: opt,
+                    label: displayVersionTagLabel(opt),
+                  }))}
+                  value={resolveVersionSelectValue(iteration, iterationOptions)}
+                  onChange={(val) => onIterationChange?.(val)}
+                  placeholder=""
+                  size="sm"
+                  portaled
+                  closeOnScroll
+                />
+              </div>
+            )}
           </div>
 
           {/* Description — Textarea, or TextareaAi when AI actions / loading are shown */}

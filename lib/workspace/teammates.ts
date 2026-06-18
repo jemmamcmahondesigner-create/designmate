@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   isPaidPermissionLevel,
   mapInvitePermissionLevel,
@@ -5,6 +6,14 @@ import {
   toStoredPermissionLevel,
   type ContentPermissionLevel,
 } from "@/lib/workspace/permissions";
+
+export type WorkspaceContributorPickerOption = {
+  id: string;
+  name: string;
+  role: string;
+  userId: string;
+  email: string | null;
+};
 
 export type WorkspaceTeammate = {
   id: string;
@@ -81,17 +90,27 @@ export function buildWorkspaceTeammates(
 ): WorkspaceTeammate[] {
   const contributorsByUserId = new Map<string, ContributorRow>();
   const contributorsByEmail = new Map<string, ContributorRow>();
-  const usedContributorIds = new Set<string>();
 
   for (const contributor of contributors) {
     const userId = contributor.user_id;
     if (userId != null && String(userId).trim() !== "") {
-      contributorsByUserId.set(String(userId), contributor);
+      const uid = String(userId);
+      const existing = contributorsByUserId.get(uid);
+      const isWorkspaceProfile = contributor.project_id == null;
+      const existingIsWorkspaceProfile = existing?.project_id == null;
+      if (!existing || (isWorkspaceProfile && !existingIsWorkspaceProfile)) {
+        contributorsByUserId.set(uid, contributor);
+      }
     }
     const email =
       contributor.email == null ? "" : String(contributor.email).trim().toLowerCase();
     if (email) {
-      contributorsByEmail.set(email, contributor);
+      const existingByEmail = contributorsByEmail.get(email);
+      const isWorkspaceProfile = contributor.project_id == null;
+      const existingIsWorkspaceProfile = existingByEmail?.project_id == null;
+      if (!existingByEmail || (isWorkspaceProfile && !existingIsWorkspaceProfile)) {
+        contributorsByEmail.set(email, contributor);
+      }
     }
   }
 
@@ -127,12 +146,12 @@ export function buildWorkspaceTeammates(
 
     if (contributor) {
       const mapped = mapContributorToTeammate(contributor);
-      usedContributorIds.add(mapped.id);
       teammates.push({
         ...mapped,
         isPending: false,
         memberId: member.id,
-        userId,
+        // Always hash avatars on auth user id from workspace_members, not contributor row.
+        userId: String(member.user_id ?? userId),
       });
       continue;
     }
@@ -145,7 +164,7 @@ export function buildWorkspaceTeammates(
     teammates.push({
       id: `member-${member.id}`,
       memberId: member.id,
-      userId,
+      userId: String(member.user_id),
       name: "Team member",
       email: member.invite_email,
       roleId: null,
@@ -157,17 +176,82 @@ export function buildWorkspaceTeammates(
     });
   }
 
-  for (const contributor of contributors) {
-    const id = String(contributor.id ?? "");
-    if (!id || usedContributorIds.has(id)) continue;
-    if (contributor.deleted_at != null) continue;
-    teammates.push({
-      ...mapContributorToTeammate(contributor),
-      isPending: false,
-    });
+  return teammates;
+}
+
+function dedupeWorkspaceContributorProfiles(
+  profiles: Array<Record<string, unknown>>,
+  excludeUserIds: Set<string>,
+): WorkspaceContributorPickerOption[] {
+  const profilesByUserId = new Map<string, Record<string, unknown>>();
+
+  const sortedProfiles = [...profiles].sort((left, right) => {
+    const leftTime = Date.parse(String(left.created_at ?? ""));
+    const rightTime = Date.parse(String(right.created_at ?? ""));
+    if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    return String(left.id ?? "").localeCompare(String(right.id ?? ""));
+  });
+
+  for (const profile of sortedProfiles) {
+    const userId = String(profile.user_id ?? "").trim();
+    if (!userId || excludeUserIds.has(userId)) continue;
+    if (!profilesByUserId.has(userId)) {
+      profilesByUserId.set(userId, profile);
+    }
   }
 
-  return teammates;
+  return Array.from(profilesByUserId.values())
+    .map((profile) => {
+      const userId = String(profile.user_id ?? "").trim();
+      return {
+        id: String(profile.id ?? ""),
+        name: String(profile.name ?? ""),
+        role: String(profile.role ?? ""),
+        userId,
+        email:
+          profile.email == null || String(profile.email).trim() === ""
+            ? null
+            : String(profile.email).trim(),
+      };
+    })
+    .filter((row) => row.id && row.userId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Active workspace members as deduped contributor profiles (one row per user_id). */
+export async function fetchWorkspaceContributorPickerOptions(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  options?: { excludeUserIds?: Iterable<string> },
+): Promise<WorkspaceContributorPickerOption[]> {
+  const excludeUserIds = new Set(options?.excludeUserIds ?? []);
+
+  const { data: workspaceMembers } = await supabase
+    .from("workspace_members")
+    .select("user_id")
+    .eq("workspace_id", workspaceId)
+    .eq("status", "active");
+
+  const userIds = (workspaceMembers ?? [])
+    .map((member) =>
+      String((member as { user_id?: string }).user_id ?? "").trim(),
+    )
+    .filter(Boolean);
+
+  if (userIds.length === 0) return [];
+
+  const { data: profiles } = await supabase
+    .from("contributors")
+    .select("id, name, email, role, user_id, workspace_id, project_id, created_at")
+    .in("user_id", userIds)
+    .eq("workspace_id", workspaceId);
+
+  return dedupeWorkspaceContributorProfiles(
+    (profiles ?? []) as Record<string, unknown>[],
+    excludeUserIds,
+  );
 }
 
 export function mapPendingWorkspaceInvites(

@@ -86,16 +86,31 @@ export type ResolvedReviewCardReviewer = ResolvedContributor;
 export function buildReviewCardReviewers(
   rawContributorIds: unknown,
   resolutionByRawId: Map<string, ResolvedReviewCardReviewer>,
-): Array<{ id: string; name: string }> {
+): Array<{ id: string; name: string; userId: string | null; email: string | null }> {
   if (!Array.isArray(rawContributorIds)) return [];
   return rawContributorIds
     .map((rawId) => {
       const raw = String(rawId ?? "").trim();
       const match = resolutionByRawId.get(raw);
       if (!raw || !match) return null;
-      return { id: match.contributorId, name: match.name };
+      return {
+        id: match.contributorId,
+        name: match.name,
+        userId: match.userId,
+        email: match.email,
+      };
     })
-    .filter((item): item is { id: string; name: string } => item != null);
+    .filter((item): item is { id: string; name: string; userId: string | null; email: string | null } => item != null);
+}
+
+/** Map reviews.creator_id (auth user or legacy contributor ref) → canonical contributor profile. */
+export function resolveReviewCardCreator(
+  rawCreatorId: unknown,
+  resolutionByRawId: Map<string, ResolvedReviewCardReviewer>,
+): ResolvedReviewCardReviewer | undefined {
+  const raw = String(rawCreatorId ?? "").trim();
+  if (!raw) return undefined;
+  return resolutionByRawId.get(raw);
 }
 
 /** Map reviews.creator_id (auth user or legacy contributor ref) → canonical contributors.id. */
@@ -103,9 +118,51 @@ export function resolveReviewCardCreatorId(
   rawCreatorId: unknown,
   resolutionByRawId: Map<string, ResolvedReviewCardReviewer>,
 ): string | undefined {
-  const raw = String(rawCreatorId ?? "").trim();
-  if (!raw) return undefined;
-  return resolutionByRawId.get(raw)?.contributorId;
+  return resolveReviewCardCreator(rawCreatorId, resolutionByRawId)?.contributorId;
+}
+
+async function resolveCreatorContributorIdsByWorkspace(
+  supabase: SupabaseClient,
+  creatorIds: string[],
+  workspaceId: string | null,
+): Promise<Map<string, ResolvedReviewCardReviewer>> {
+  const resolved = new Map<string, ResolvedReviewCardReviewer>();
+  const wid = workspaceId?.trim() || null;
+  if (!wid || creatorIds.length === 0) return resolved;
+
+  const uniqueCreatorIds = [...new Set(creatorIds.map((id) => id.trim()).filter(Boolean))];
+  if (uniqueCreatorIds.length === 0) return resolved;
+
+  const { data: rows } = await supabase
+    .from("contributors")
+    .select("id, name, email, user_id, created_at")
+    .eq("workspace_id", wid)
+    .is("project_id", null)
+    .in("user_id", uniqueCreatorIds)
+    .order("created_at", { ascending: true });
+
+  const byUserId = new Map<string, Record<string, unknown>>();
+  for (const row of (rows ?? []) as Record<string, unknown>[]) {
+    const userId = String(row.user_id ?? "").trim();
+    if (!userId || byUserId.has(userId)) continue;
+    byUserId.set(userId, row);
+  }
+
+  for (const creatorId of uniqueCreatorIds) {
+    const matched = byUserId.get(creatorId);
+    if (!matched) continue;
+    resolved.set(creatorId, {
+      contributorId: String(matched.id ?? "").trim(),
+      name: String(matched.name ?? "").trim(),
+      userId: String(matched.user_id ?? "").trim() || null,
+      email:
+        matched.email == null || String(matched.email).trim() === ""
+          ? null
+          : String(matched.email).trim(),
+    });
+  }
+
+  return resolved;
 }
 
 export async function fetchReviewCardMeta(
@@ -114,10 +171,12 @@ export async function fetchReviewCardMeta(
     reviewIds,
     reviewerIds,
     creatorIds = [],
+    workspaceId = null,
   }: {
     reviewIds: string[];
     reviewerIds: string[];
     creatorIds?: string[];
+    workspaceId?: string | null;
   },
 ): Promise<{
   reviewerNameById: Map<string, string>;
@@ -130,6 +189,14 @@ export async function fetchReviewCardMeta(
     supabase,
     [...new Set([...reviewerIds, ...creatorIds])],
   );
+  const creatorResolutionByWorkspace = await resolveCreatorContributorIdsByWorkspace(
+    supabase,
+    creatorIds,
+    workspaceId,
+  );
+  for (const [creatorId, resolved] of creatorResolutionByWorkspace) {
+    reviewerResolutionByRawId.set(creatorId, resolved);
+  }
   for (const [rawId, match] of reviewerResolutionByRawId) {
     reviewerNameById.set(rawId, match.name);
   }
@@ -188,7 +255,10 @@ export async function fetchReviewCardMeta(
 export async function fetchProjectReviewsForCards(
   supabase: SupabaseClient,
   projectId: string,
-  options?: { assignedReviewerContributorId?: string | null },
+  options?: {
+    assignedReviewerContributorId?: string | null;
+    workspaceId?: string | null;
+  },
 ): Promise<ReviewCardData[]> {
   const { data, error } = await supabase
     .from("reviews")
@@ -233,6 +303,7 @@ export async function fetchProjectReviewsForCards(
     reviewIds,
     reviewerIds,
     creatorIds,
+    workspaceId: options?.workspaceId ?? null,
   });
   return sortReviewCardsForProjectSidebar(
     rows.map((row) => {
@@ -271,6 +342,10 @@ export async function fetchProjectReviewsForCards(
       requireDecisionMaker: Boolean(r.require_decision_maker),
       ownerName: String(r.owner_display_name ?? "Reviewer"),
       creatorId: resolveReviewCardCreatorId(r.creator_id, reviewerResolutionByRawId),
+      creatorEmail:
+        resolveReviewCardCreator(r.creator_id, reviewerResolutionByRawId)?.email ?? null,
+      creatorUserId:
+        resolveReviewCardCreator(r.creator_id, reviewerResolutionByRawId)?.userId ?? null,
       dateLabel,
       dateTooltipIso:
         r.created_at == null ? null : String(r.created_at),

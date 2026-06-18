@@ -29,6 +29,7 @@ import { getSiteOrigin } from "@/lib/auth/mapAuthError";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { WorkspaceSwitchConfirmModal } from "@/components/settings/WorkspaceSwitchConfirmModal";
 import { ensureContributorProfile } from "@/lib/workspace/ensureContributorProfile";
+import { ensureWorkspaceMember } from "@/lib/workspace/ensureWorkspaceMember";
 import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
 import {
   duplicateOwnedWorkspaceMessage,
@@ -36,7 +37,7 @@ import {
   parseWorkspaceCreateError,
 } from "@/lib/workspace/workspaceCreateErrors";
 import { generateInviteCode } from "@/lib/workspace/utils";
-import { getAvatarInlineStyle } from "@/lib/utils/avatarColour";
+import { getAvatarInlineStyle, avatarColourKey } from "@/lib/utils/avatarColour";
 
 export type ProfileRoleOption = { id: string; name: string };
 
@@ -866,7 +867,7 @@ export function ProfilePageClient({
           return;
         }
 
-        const { error: memberError } = await supabase.from("workspace_members").insert({
+        const { error: memberError } = await ensureWorkspaceMember(supabase, {
           workspace_id: workspace.id,
           user_id: userId,
           role: "admin",
@@ -875,7 +876,7 @@ export function ProfilePageClient({
         });
 
         if (memberError) {
-          reportCreateWorkspaceError(memberError.message);
+          reportCreateWorkspaceError(memberError);
           return;
         }
 
@@ -942,31 +943,16 @@ export function ProfilePageClient({
         return;
       }
 
-      const { data: existingMember } = await supabase
-        .from("workspace_members")
-        .select("id")
-        .eq("workspace_id", workspace.id)
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (existingMember) {
-        await supabase
-          .from("workspace_members")
-          .update({ status: "active", joined_at: new Date().toISOString() })
-          .eq("workspace_id", workspace.id)
-          .eq("user_id", userId);
-      } else {
-        const { error: joinError } = await supabase.from("workspace_members").insert({
-          workspace_id: workspace.id,
-          user_id: userId,
-          role: "member",
-          permission_level: "reviewer",
-          status: "active",
-        });
-        if (joinError) {
-          reportJoinWorkspaceError(joinError.message);
-          return;
-        }
+      const { error: joinError } = await ensureWorkspaceMember(supabase, {
+        workspace_id: workspace.id,
+        user_id: userId,
+        role: "member",
+        permission_level: "reviewer",
+        status: "active",
+      });
+      if (joinError) {
+        reportJoinWorkspaceError(joinError);
+        return;
       }
 
       setWorkspaceSwitchConfirm({
@@ -1158,7 +1144,9 @@ export function ProfilePageClient({
                   fontSize: 32,
                   fontWeight: 800,
                   fontFamily: "'Plus Jakarta Sans', sans-serif",
-                  ...getAvatarInlineStyle((contributor?.id ?? "").trim() || "?"),
+                  ...getAvatarInlineStyle(
+                    avatarColourKey(email, contributor?.id),
+                  ),
                 }}
                 aria-hidden
               >

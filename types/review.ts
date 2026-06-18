@@ -23,8 +23,12 @@ export type ReviewCardData = {
   /** `reviews.require_decision_maker` */
   requireDecisionMaker?: boolean;
   ownerName: string;
-  /** Canonical contributors.id for review creator avatar colour. */
+  /** Canonical contributors.id for review creator avatar colour fallback. */
   creatorId?: string;
+  /** Contributor email for stable cross-workspace avatar colour. */
+  creatorEmail?: string | null;
+  /** Auth user id for stable creator avatar colour (matches teammates settings). */
+  creatorUserId?: string | null;
   /** Relative / formatted date string for display */
   dateLabel: string;
   dateTooltipIso?: string | null;
@@ -40,6 +44,8 @@ export type ReviewCardData = {
   decisionCount?: number;
   reviewers?: Array<{
     id?: string;
+    userId?: string | null;
+    email?: string | null;
     name: string;
     avatarSrc?: string | null;
   }>;

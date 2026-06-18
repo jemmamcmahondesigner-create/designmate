@@ -5,7 +5,7 @@ import { StatusPill, type StatusPillStatus } from './StatusPill';
 import { Tag } from './Tag';
 import { Avatar } from './Avatar';
 import { Tooltip } from './Tooltip';
-import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
+import { getAvatarInlineStyle, avatarColourKey } from '@/lib/utils/avatarColour';
 import {
   formatProjectReviewBreakdownTooltip,
   type ProjectReviewStatusBreakdown,
@@ -17,6 +17,8 @@ const MAX_VISIBLE_TEAMMATES = 5;
 export interface ProductCardContributor {
   id: string;
   name: string;
+  email?: string | null;
+  userId?: string | null;
   avatarSrc?: string;
 }
 
@@ -86,7 +88,9 @@ export function ProductCard({
                 className={styles.metaAvatarGroup}
                 aria-label={`${contributors.length} teammates`}
               >
-                {visibleContributors.map((c, i) => (
+                {visibleContributors.map((c, i) => {
+                  const colourKey = avatarColourKey(c.email, c.id, c.name);
+                  return (
                   <span
                     key={c.id || i}
                     className={styles.metaAvatarWrap}
@@ -95,12 +99,13 @@ export function ProductCard({
                     <Avatar
                       src={c.avatarSrc}
                       name={c.name}
-                      contributorId={c.id}
+                      contributorId={colourKey}
                       size="md"
-                      style={getAvatarInlineStyle(c.id)}
+                      style={getAvatarInlineStyle(colourKey)}
                     />
                   </span>
-                ))}
+                  );
+                })}
                 {overflowCount > 0 ? (
                   <span
                     className={styles.metaAvatarOverflow}

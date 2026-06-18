@@ -63,6 +63,8 @@ export interface SelectProps {
    * When false, menu is position:absolute; top:100% under the trigger wrapper.
    */
   portaled?: boolean;
+  /** When portaled, close the menu on scroll outside the trigger/menu (e.g. drawer body). */
+  closeOnScroll?: boolean;
 }
 
 export function Select({
@@ -86,6 +88,7 @@ export function Select({
   name,
   className,
   portaled = false,
+  closeOnScroll = false,
 }: SelectProps) {
   const autoId = useId();
   const id = idProp ?? autoId;
@@ -197,16 +200,26 @@ export function Select({
 
   useEffect(() => {
     if (!open || !portaled) return;
-    const onScrollOrResize = () => {
+    const onScroll = (e: Event) => {
+      if (closeOnScroll) {
+        const target = e.target as Node;
+        if (menuRef.current?.contains(target)) return;
+        if (wrapperRef.current?.contains(target)) return;
+        setOpen(false);
+        return;
+      }
       requestAnimationFrame(() => updatePortalPosition());
     };
-    window.addEventListener('scroll', onScrollOrResize, true);
-    window.addEventListener('resize', onScrollOrResize);
-    return () => {
-      window.removeEventListener('scroll', onScrollOrResize, true);
-      window.removeEventListener('resize', onScrollOrResize);
+    const onResize = () => {
+      requestAnimationFrame(() => updatePortalPosition());
     };
-  }, [open, portaled, updatePortalPosition]);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [open, portaled, closeOnScroll, updatePortalPosition]);
 
   const finishSelect = useCallback(
     (optValue: string, options?: { focusTrigger?: boolean }) => {

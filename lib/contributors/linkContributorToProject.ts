@@ -5,12 +5,14 @@ export type LinkedProjectContributor = {
   name: string;
   email: string | null;
   role: string | null;
+  userId?: string | null;
 };
 
 type LinkContributorInput = {
   projectId: string;
   workspaceId: string | null;
   contributorId?: string | null;
+  userId?: string | null;
   name: string;
   email?: string | null;
   role?: string | null;
@@ -18,82 +20,164 @@ type LinkContributorInput = {
   isPaid?: boolean;
 };
 
+const CONTRIBUTOR_LINK_SELECT = "id, name, email, role, user_id, project_id";
+
 function mapContributorRow(row: Record<string, unknown>): LinkedProjectContributor {
   return {
     id: String(row.id ?? ""),
     name: String(row.name ?? ""),
     email: (row.email as string | null | undefined) ?? null,
     role: (row.role as string | null | undefined) ?? null,
+    userId:
+      row.user_id == null || String(row.user_id).trim() === ""
+        ? null
+        : String(row.user_id),
   };
 }
 
-async function resolveCanonicalWorkspaceContributorId(
+async function findProjectContributorByUserId(
   supabase: SupabaseClient,
-  workspaceId: string,
-  seed: { id: string; user_id?: string | null; email?: string | null },
-): Promise<string> {
-  const userId = String(seed.user_id ?? "").trim();
-  if (userId) {
-    const { data } = await supabase
-      .from("contributors")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", userId)
-      .is("project_id", null)
-      .maybeSingle();
-    const canonicalId = String((data as { id?: string } | null)?.id ?? "").trim();
-    if (canonicalId) return canonicalId;
-  }
+  projectId: string,
+  userId: string,
+): Promise<LinkedProjectContributor | null> {
+  const { data } = await supabase
+    .from("contributors")
+    .select(CONTRIBUTOR_LINK_SELECT)
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
 
-  const email = String(seed.email ?? "").trim().toLowerCase();
-  if (email) {
-    const { data } = await supabase
-      .from("contributors")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .ilike("email", email)
-      .is("project_id", null)
-      .maybeSingle();
-    const canonicalId = String((data as { id?: string } | null)?.id ?? "").trim();
-    if (canonicalId) return canonicalId;
-  }
-
-  return seed.id;
+  return data ? mapContributorRow(data as Record<string, unknown>) : null;
 }
 
-async function findWorkspaceContributorByEmail(
+async function findWorkspaceContributorByUserId(
   supabase: SupabaseClient,
   workspaceId: string,
-  email: string,
-): Promise<string | null> {
-  const normalized = email.trim().toLowerCase();
-  if (!normalized) return null;
+  userId: string,
+): Promise<Record<string, unknown> | null> {
+  const { data } = await supabase
+    .from("contributors")
+    .select(CONTRIBUTOR_LINK_SELECT)
+    .eq("user_id", userId)
+    .eq("workspace_id", workspaceId)
+    .is("project_id", null)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
 
-  console.log("[linkContributorToProject] findWorkspaceContributorByEmail BEFORE", {
-    email: normalized,
+  return (data as Record<string, unknown> | null) ?? null;
+}
+
+async function findAnyContributorForUserWorkspace(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  userId: string,
+): Promise<Record<string, unknown> | null> {
+  const workspaceProfile = await findWorkspaceContributorByUserId(
+    supabase,
     workspaceId,
-  });
+    userId,
+  );
+  if (workspaceProfile) return workspaceProfile;
+
+  const { data } = await supabase
+    .from("contributors")
+    .select(CONTRIBUTOR_LINK_SELECT)
+    .eq("user_id", userId)
+    .eq("workspace_id", workspaceId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  return (data as Record<string, unknown> | null) ?? null;
+}
+
+async function loadContributorSeed(
+  supabase: SupabaseClient,
+  contributorId: string,
+  workspaceId: string | null,
+): Promise<Record<string, unknown> | null> {
+  let query = supabase
+    .from("contributors")
+    .select(
+      "id, name, email, role, user_id, permission_level, is_paid, project_id, workspace_id",
+    )
+    .eq("id", contributorId);
+
+  if (workspaceId) {
+    query = query.eq("workspace_id", workspaceId);
+  }
+
+  const { data } = await query.maybeSingle();
+  return (data as Record<string, unknown> | null) ?? null;
+}
+
+async function deleteLegacyProjectDuplicates(
+  supabase: SupabaseClient,
+  projectId: string,
+  userId: string,
+  canonicalId: string,
+): Promise<void> {
+  await supabase
+    .from("contributors")
+    .delete()
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .neq("id", canonicalId);
+}
+
+async function linkExistingWorkspaceContributor(
+  supabase: SupabaseClient,
+  projectId: string,
+  workspaceId: string,
+  userId: string,
+  existingRow: Record<string, unknown>,
+): Promise<LinkedProjectContributor | null> {
+  const canonicalId = String(existingRow.id ?? "").trim();
+  if (!canonicalId) return null;
+
+  const currentProjectId =
+    existingRow.project_id == null ? null : String(existingRow.project_id).trim();
+
+  if (currentProjectId === projectId) {
+    return mapContributorRow(existingRow);
+  }
+
+  const legacyProjectRow = await findProjectContributorByUserId(
+    supabase,
+    projectId,
+    userId,
+  );
+  if (legacyProjectRow && legacyProjectRow.id !== canonicalId) {
+    await deleteLegacyProjectDuplicates(
+      supabase,
+      projectId,
+      userId,
+      canonicalId,
+    );
+  }
 
   const { data, error } = await supabase
     .from("contributors")
-    .select("id")
-    .eq("workspace_id", workspaceId)
-    .ilike("email", normalized)
-    .is("project_id", null)
-    .maybeSingle();
+    .update({ project_id: projectId })
+    .eq("id", canonicalId)
+    .select(CONTRIBUTOR_LINK_SELECT)
+    .single();
 
-  console.log("[linkContributorToProject] findWorkspaceContributorByEmail AFTER", {
-    email: normalized,
-    workspaceId,
-    data,
-    error,
-  });
+  if (error || !data) {
+    console.error(
+      "[linkContributorToProject] failed to link workspace contributor:",
+      error?.message ?? "unknown error",
+    );
+    return null;
+  }
 
-  const canonicalId = String((data as { id?: string } | null)?.id ?? "").trim();
-  return canonicalId || null;
+  return mapContributorRow(data as Record<string, unknown>);
 }
 
-/** Reuse the workspace-scoped contributor row; set project_id instead of inserting a duplicate. */
+/** Link a workspace member to a project, reusing the workspace contributor row. */
 export async function linkContributorToProject(
   supabase: SupabaseClient,
   input: LinkContributorInput,
@@ -105,116 +189,84 @@ export async function linkContributorToProject(
   const name = input.name.trim();
   if (!name) return null;
 
-  const updates: Record<string, unknown> = {
-    project_id: projectId,
-    name,
-    role: input.role?.trim() || null,
-  };
-  if (input.permissionLevel) {
-    updates.permission_level = input.permissionLevel;
-    updates.is_paid = input.isPaid ?? false;
+  let resolvedUserId = input.userId?.trim() || null;
+  let seedRow: Record<string, unknown> | null = null;
+
+  if (input.contributorId?.trim()) {
+    seedRow = await loadContributorSeed(
+      supabase,
+      input.contributorId.trim(),
+      workspaceId,
+    );
+    if (!resolvedUserId && seedRow?.user_id != null) {
+      resolvedUserId = String(seedRow.user_id).trim() || null;
+    }
   }
 
-  if (workspaceId) {
-    let targetContributorId = input.contributorId?.trim() || null;
+  if (resolvedUserId && workspaceId) {
+    const existingWorkspace = await findAnyContributorForUserWorkspace(
+      supabase,
+      workspaceId,
+      resolvedUserId,
+    );
 
-    if (!targetContributorId && input.email?.trim()) {
-      targetContributorId = await findWorkspaceContributorByEmail(
-        supabase,
-        workspaceId,
-        input.email,
+    if (!existingWorkspace) {
+      console.error(
+        "[linkContributorToProject] no workspace contributor row found for user",
+        { userId: resolvedUserId, workspaceId },
       );
+      return null;
     }
 
-    if (targetContributorId) {
-      const { data: seed } = await supabase
-        .from("contributors")
-        .select("id, user_id, email")
-        .eq("id", targetContributorId)
-        .eq("workspace_id", workspaceId)
-        .maybeSingle();
+    return linkExistingWorkspaceContributor(
+      supabase,
+      projectId,
+      workspaceId,
+      resolvedUserId,
+      existingWorkspace,
+    );
+  }
 
-      if (seed) {
-        const seedRow = seed as {
-          id?: string;
-          user_id?: string | null;
-          email?: string | null;
-        };
-        const canonicalId = await resolveCanonicalWorkspaceContributorId(
+  if (workspaceId && input.email?.trim()) {
+    const normalizedEmail = input.email.trim().toLowerCase();
+    const { data: workspaceProfile } = await supabase
+      .from("contributors")
+      .select(CONTRIBUTOR_LINK_SELECT)
+      .eq("workspace_id", workspaceId)
+      .ilike("email", normalizedEmail)
+      .is("project_id", null)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (workspaceProfile) {
+      const profile = workspaceProfile as Record<string, unknown>;
+      const profileUserId = String(profile.user_id ?? "").trim() || null;
+      if (profileUserId) {
+        return linkExistingWorkspaceContributor(
           supabase,
+          projectId,
           workspaceId,
-          {
-            id: String(seedRow.id ?? targetContributorId),
-            user_id: seedRow.user_id,
-            email: seedRow.email,
-          },
+          profileUserId,
+          profile,
         );
-
-        const { data, error } = await supabase
-          .from("contributors")
-          .update(updates)
-          .eq("id", canonicalId)
-          .select("id, name, email, role")
-          .single();
-
-        if (!error && data) {
-          return mapContributorRow(data as Record<string, unknown>);
-        }
       }
     }
+  }
 
-    let canonicalId: string | null = null;
-    if (input.email?.trim()) {
-      canonicalId = await findWorkspaceContributorByEmail(
-        supabase,
-        workspaceId,
-        input.email,
+  if (workspaceId && resolvedUserId) {
+    const existing = await findAnyContributorForUserWorkspace(
+      supabase,
+      workspaceId,
+      resolvedUserId,
+    );
+    if (existing) {
+      console.error(
+        "[linkContributorToProject] contributor already exists for user/workspace; refusing insert",
+        { userId: resolvedUserId, workspaceId },
       );
+      return null;
     }
-
-    if (canonicalId) {
-      const { data, error } = await supabase
-        .from("contributors")
-        .update(updates)
-        .eq("id", canonicalId)
-        .select("id, name, email, role")
-        .single();
-
-      if (!error && data) {
-        return mapContributorRow(data as Record<string, unknown>);
-      }
-    }
-
-    const fallbackInsertPayload = {
-      workspace_id: workspaceId,
-      project_id: null,
-      name,
-      email: input.email?.trim() || null,
-      role: input.role?.trim() || null,
-      permission_level: input.permissionLevel ?? "reviewer",
-      is_paid: input.isPaid ?? false,
-    };
-    console.log("[linkContributorToProject] fallback insert BEFORE", fallbackInsertPayload);
-
-    const { data: inserted, error: insertError } = await supabase
-      .from("contributors")
-      .insert(fallbackInsertPayload)
-      .select("id, name, email, role")
-      .single();
-
-    if (insertError || !inserted) return null;
-
-    const { data: linked, error: linkError } = await supabase
-      .from("contributors")
-      .update(updates)
-      .eq("id", (inserted as { id: string }).id)
-      .select("id, name, email, role")
-      .single();
-
-    if (!linkError && linked) {
-      return mapContributorRow(linked as Record<string, unknown>);
-    }
-    return mapContributorRow(inserted as Record<string, unknown>);
   }
 
   const { data, error } = await supabase
@@ -222,20 +274,21 @@ export async function linkContributorToProject(
     .insert({
       project_id: projectId,
       workspace_id: workspaceId,
+      user_id: resolvedUserId,
       name,
       email: input.email?.trim() || null,
       role: input.role?.trim() || null,
       permission_level: input.permissionLevel ?? "reviewer",
       is_paid: input.isPaid ?? false,
     })
-    .select("id, name, email, role")
+    .select(CONTRIBUTOR_LINK_SELECT)
     .single();
 
   if (error || !data) return null;
   return mapContributorRow(data as Record<string, unknown>);
 }
 
-/** Detach from project without deleting the workspace-scoped contributor row. */
+/** Detach from project without deleting the workspace-profile contributor row. */
 export async function unlinkContributorFromProject(
   supabase: SupabaseClient,
   contributorId: string,
@@ -245,13 +298,43 @@ export async function unlinkContributorFromProject(
 
   const { data } = await supabase
     .from("contributors")
-    .select("workspace_id")
+    .select("workspace_id, user_id, project_id")
     .eq("id", id)
     .maybeSingle();
 
-  const workspaceId = String(
-    (data as { workspace_id?: string | null } | null)?.workspace_id ?? "",
-  ).trim();
+  const row = data as {
+    workspace_id?: string | null;
+    user_id?: string | null;
+    project_id?: string | null;
+  } | null;
+
+  const workspaceId = String(row?.workspace_id ?? "").trim();
+  const userId = String(row?.user_id ?? "").trim();
+  const projectId = row?.project_id == null ? null : String(row.project_id).trim();
+
+  if (workspaceId && userId) {
+    const workspaceProfile =
+      (await findWorkspaceContributorByUserId(supabase, workspaceId, userId)) ??
+      (row as Record<string, unknown> | null);
+
+    const canonicalId = String(workspaceProfile?.id ?? id).trim();
+    if (!canonicalId) return;
+
+    if (projectId) {
+      await deleteLegacyProjectDuplicates(
+        supabase,
+        projectId,
+        userId,
+        canonicalId,
+      );
+    }
+
+    await supabase
+      .from("contributors")
+      .update({ project_id: null })
+      .eq("id", canonicalId);
+    return;
+  }
 
   if (workspaceId) {
     await supabase.from("contributors").update({ project_id: null }).eq("id", id);

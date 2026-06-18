@@ -13,6 +13,14 @@ import {
   type CSSProperties
 } from "react";
 import { useRouter } from "next/navigation";
+import { AddLinkModal } from "@/components/AddLinkModal";
+import { UploadModal } from "@/components/UploadModal";
+import type { ArtifactModalSavePayload } from "@/components/artifact-modals/artifactModalShared";
+import {
+  fetchProjectArtifactsForRelatedSelect,
+  isFigmaUrl,
+  isValidHttpUrl,
+} from "@/components/artifact-modals/artifactModalShared";
 import { DiscardChangesModal } from "@/components/DiscardChangesModal";
 import { ArtifactCountIndicator } from "@/components/artifacts/ArtifactCountIndicator";
 import modalStyles from "@/components/ui/ds/Modal.module.css";
@@ -25,7 +33,6 @@ import {
   Checkbox,
   Drawer,
   Icon,
-  IconSquareButton,
   Input,
   Modal,
   Menu,
@@ -40,6 +47,10 @@ import {
   TradeoffCard,
 } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import {
+  formatVersionLabel,
+  isValidVersionString,
+} from "@/lib/artifacts/versioning";
 import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
 import { sendWorkspaceInvite } from "@/lib/workspace/invite-client";
 import { inviteToastMessage } from "@/lib/workspace/invite-toast";
@@ -50,11 +61,14 @@ import {
 } from "@/lib/workspace/permissions";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
 import { linkContributorToProject } from "@/lib/contributors/linkContributorToProject";
+import {
+  flatReviewerPickerList,
+  splitReviewerPickerSections,
+} from "@/lib/reviews/reviewerPickerSections";
 import type {
   ArtifactDraftForSubmit,
   SubmitReviewInput
 } from "@/lib/reviews/submitReviewClient";
-import { generateArtifactDescription } from "@/app/actions/generateArtifactDescription";
 import { generateReviewTitle } from "@/app/actions/generateReviewTitle";
 import { generateReviewFocus } from "@/app/actions/generateReviewFocus";
 import {
@@ -66,7 +80,7 @@ import type { ArtifactPreviewFileType } from "@/components/ui/ds/ArtifactPreview
 import type { ProjectProblem } from "@/types/project";
 import type { ReviewType } from "@/types/review";
 import type { User } from "@/types/user";
-import { getAvatarInlineStyle } from "@/lib/utils/avatarColour";
+import { getAvatarInlineStyle, avatarColourKey } from "@/lib/utils/avatarColour";
 
 export type { ReviewType } from "@/types/review";
 
@@ -129,8 +143,6 @@ const VERSION_LABEL_OPTIONS = Array.from(
   (_, i) => `v${i + 1}`
 );
 
-const RELATED_NEW = "__new__";
-
 const TEAMMATE_ROLE_SELECT_OPTIONS = [
   { value: "Designer", label: "Designer" },
   { value: "Product Manager", label: "Product Manager" },
@@ -142,15 +154,6 @@ const TEAMMATE_PERMISSION_SELECT_OPTIONS = [
   { value: "reviewer", label: "Reviewer" },
   { value: "editor", label: "Editor" },
 ] as const;
-
-const ACCEPTED_MIME_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/svg+xml",
-  "application/pdf"
-].join(",");
 
 function DrawerArtifactToastPortal({ message }: { message: string }) {
   const [mounted, setMounted] = useState(false);
@@ -182,44 +185,6 @@ function DrawerArtifactToastPortal({ message }: { message: string }) {
   );
 }
 
-function formatFileSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function isValidHttpUrl(s: string): boolean {
-  try {
-    const u = new URL(s.trim());
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function isFigmaUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return u.hostname === "www.figma.com" || u.hostname === "figma.com";
-  } catch {
-    return false;
-  }
-}
-
-function buildFigmaEmbedUrl(url: string): string {
-  try {
-    const embedUrl = new URL(url);
-    embedUrl.hostname = "embed.figma.com";
-    if (embedUrl.pathname.startsWith("/file/")) {
-      embedUrl.pathname = embedUrl.pathname.replace("/file/", "/design/");
-    }
-    embedUrl.searchParams.set("embed-host", "designmate");
-    return embedUrl.toString();
-  } catch {
-    return url;
-  }
-}
-
 type ArtifactDraft = {
   localKey: string;
   kind: "file" | "link";
@@ -229,35 +194,41 @@ type ArtifactDraft = {
   /** `v{n}` display; keep aligned with `versionNumber`. */
   iterationLabel: string;
   description: string;
-  versionNumber: number;
+  versionNumber: string;
   /** When adding from an existing canonical artifact; null = new artifact on submit. */
   resolvedArtifactId: string | null;
+  /** User-entered name at save — written to `artifact_versions.label`. */
+  versionRowLabel: string;
   descriptionAiState?: ArtifactDescriptionState;
   /** Session-only — tracks whether the current description came from AI (for submit payload if needed later). */
   aiGenerated?: boolean;
 };
 
-type ModalDraftState = {
-  /** Empty string = no selection (placeholder). RELATED_NEW = explicit “New artifact”. */
-  relatedArtifactId: typeof RELATED_NEW | "" | string;
-  linkUrl: string;
-  title: string;
-  versionNumber: number;
-  /** Max version index allowed in the Version select (1…ceiling as v1…vN). */
-  versionCeiling: number;
-  description: string;
-  file: File | null;
-};
-
-function getEmptyModalDraftState(conceptTitle: string): ModalDraftState {
+function modalPayloadToArtifactDraft(
+  payload: ArtifactModalSavePayload,
+  existingTitles: Set<string>,
+): ArtifactDraft {
+  const baseTitle = payload.title.trim();
+  let finalTitle = baseTitle;
+  let counter = 2;
+  while (existingTitles.has(finalTitle)) {
+    finalTitle = `${baseTitle} ${counter}`;
+    counter++;
+  }
+  const versionLabel = formatVersionLabel(payload.versionNumber);
   return {
-    relatedArtifactId: "",
-    linkUrl: "",
-    title: conceptTitle,
-    versionNumber: 1,
-    versionCeiling: 1,
-    description: "",
-    file: null,
+    localKey: payload.localKey,
+    kind: payload.kind,
+    file: payload.kind === "file" ? payload.file : null,
+    linkUrl: payload.kind === "link" ? payload.linkUrl.trim() : "",
+    title: finalTitle,
+    versionRowLabel: payload.versionRowLabel.trim() || finalTitle,
+    iterationLabel: versionLabel,
+    description: payload.description.trim(),
+    versionNumber: versionLabel,
+    resolvedArtifactId: payload.canonicalArtifactId,
+    descriptionAiState: "idle",
+    aiGenerated: false,
   };
 }
 
@@ -343,17 +314,6 @@ function firstSentenceForTitle(desc: string, maxLen: number): string {
   let s = end >= 0 ? t.slice(0, end).trim() : t;
   if (s.length > maxLen) s = s.slice(0, maxLen).trim();
   return s;
-}
-
-/** Figma oEmbed title is often "FileName · FrameName" (U+00B7 middle dot). */
-const FIGMA_OEMBED_TITLE_SEP = " \u00b7 ";
-
-function parseFigmaFrameNameFromOembedTitle(oembedTitle: string): string {
-  const t = oembedTitle.trim();
-  if (!t) return "";
-  const parts = t.split(FIGMA_OEMBED_TITLE_SEP);
-  if (parts.length < 2) return t;
-  return (parts[parts.length - 1] ?? "").trim() || t;
 }
 
 function getFileType(artifact: ArtifactDraft): ArtifactPreviewFileType {
@@ -453,51 +413,20 @@ export function CreateReviewDrawer({
   onDirtyChange
 }: CreateReviewDrawerProps) {
   const titleInputRef = useRef<HTMLInputElement>(null);
-  const uploadFileInputRef = useRef<HTMLInputElement>(null);
   const drawerBodyRef = useRef<HTMLDivElement>(null);
   const reviewerBlockRef = useRef<HTMLDivElement>(null);
   const problemsSelectRef = useRef<HTMLDivElement>(null);
 
   const [showDraftWarningModal, setShowDraftWarningModal] = useState(false);
   const [addLinkModalOpen, setAddLinkModalOpen] = useState(false);
-  const addLinkModalBodyRef = useRef<HTMLDivElement>(null);
-  const [addLinkBodyScrolled, setAddLinkBodyScrolled] = useState(false);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
-  const [modalDescriptionGenerating, setModalDescriptionGenerating] =
-    useState(false);
-  const [modalDescriptionAiGenerated, setModalDescriptionAiGenerated] =
-    useState(false);
-  const [relatedArtifactChanged, setRelatedArtifactChanged] = useState(false);
-  const [modalOembedRaw, setModalOembedRaw] = useState<string | null>(null);
   const [tradeoffModalOpen, setTradeoffModalOpen] = useState(false);
   const [newTradeoffText, setNewTradeoffText] = useState("");
   const [newTradeoffSeverity, setNewTradeoffSeverity] = useState<
     "High" | "Medium" | "Low"
   >("Medium");
   const [newTradeoffArtifactLabel, setNewTradeoffArtifactLabel] = useState("");
-  const [modalDraft, setModalDraft] = useState<ModalDraftState>({
-    relatedArtifactId: "",
-    linkUrl: "",
-    title: "",
-    versionNumber: 1,
-    versionCeiling: 1,
-    description: "",
-    file: null
-  });
-  const modalDraftRef = useRef(modalDraft);
-  const modalDescriptionRef = useRef("");
-  useEffect(() => {
-    modalDraftRef.current = modalDraft;
-  }, [modalDraft]);
-  const modalDraftResetRef = useRef(false);
-  const artifactNameUserEdited = useRef(false);
-  const lastAutoFilledArtifactTitleRef = useRef("");
-  const modalNameFieldMountedRef = useRef(false);
-  const uploadModalNameFieldMountedRef = useRef(false);
-  const userHasEditedDescription = useRef(false);
-  const [projectArtifacts, setProjectArtifacts] = useState<
-    { id: string; name: string }[]
-  >([]);
+  const [projectArtifactCount, setProjectArtifactCount] = useState(0);
 
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [reviewTitle, setReviewTitle] = useState("");
@@ -546,6 +475,7 @@ export function CreateReviewDrawer({
   const [includeNewProblemInProject, setIncludeNewProblemInProject] =
     useState(true);
   const [isCreatingProblem, setIsCreatingProblem] = useState(false);
+  const [reviewSpecificProblemIds, setReviewSpecificProblemIds] = useState<string[]>([]);
 
   const router = useRouter();
   const { showToast } = useToast();
@@ -631,17 +561,67 @@ export function CreateReviewDrawer({
     figmaMetaMapRef.current = figmaMetaMap;
   }, [figmaMetaMap]);
 
-  function abortModalGeneration() {
-    modalDraftResetRef.current = true;
-    setModalDescriptionGenerating(false);
-    setModalDescriptionAiGenerated(false);
-    setRelatedArtifactChanged(false);
-    userHasEditedDescription.current = false;
-    setModalOembedRaw(null);
-    modalDescriptionRef.current = "";
-    const next = { ...modalDraftRef.current, description: "" };
-    modalDraftRef.current = next;
-    setModalDraft(next);
+  function addArtifactFromModal(payload: ArtifactModalSavePayload) {
+    if (artifacts.length >= 10) return;
+    const existingTitles = new Set(artifacts.map((a) => a.title.trim()));
+    const newArtifact = modalPayloadToArtifactDraft(payload, existingTitles);
+    const localKey = newArtifact.localKey;
+
+    setArtifacts((prev) => [...prev, newArtifact]);
+
+    if (newArtifact.kind === "file" && newArtifact.file) {
+      const file = newArtifact.file;
+      if (
+        [
+          "image/jpeg",
+          "image/png",
+          "image/gif",
+          "image/webp",
+          "image/svg+xml",
+          "application/pdf",
+        ].includes(file.type)
+      ) {
+        const url = URL.createObjectURL(file);
+        setArtifactPreviews((prev) => ({ ...prev, [localKey]: url }));
+      }
+    }
+
+    if (newArtifact.kind === "link" && isFigmaUrl(newArtifact.linkUrl)) {
+      const oEmbedUrl = `https://www.figma.com/api/oembed?url=${encodeURIComponent(newArtifact.linkUrl.trim())}`;
+      void fetch(oEmbedUrl)
+        .then((r) => r.json())
+        .then((data: { title?: string }) => {
+          const raw = data?.title?.trim();
+          if (!raw) return;
+          setFigmaMetaMap((prev) => ({
+            ...prev,
+            [localKey]: {
+              fileName: raw,
+              lastEdited: "Just added",
+            },
+          }));
+        })
+        .catch(() => undefined);
+    }
+
+    setTimeout(() => {
+      const names = artifactsLatestRef.current
+        .map((x) => {
+          const fromDesc = firstSentenceForTitle(x.description, 120);
+          if (fromDesc) return fromDesc;
+          return x.title.trim();
+        })
+        .filter(Boolean);
+      if (names.length > 0) void runReviewTitleGeneration(names);
+    }, 0);
+    setArtifactToast("Artifact added");
+    setTimeout(() => setArtifactToast(null), 3000);
+    setTimeout(() => {
+      drawerBodyRef.current?.scrollTo({
+        top: drawerBodyRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }, 50);
   }
 
   const reset = useCallback(() => {
@@ -658,6 +638,7 @@ export function CreateReviewDrawer({
     setSendNotification(true);
     setShowDraftWarningModal(false);
     setRelatedProblems([]);
+    setReviewSpecificProblemIds([]);
     setReviewFocus("");
     setReviewerQuery("");
     setReviewerMenuOpen(false);
@@ -668,23 +649,11 @@ export function CreateReviewDrawer({
     setHoveredChipId(null);
     setAddLinkModalOpen(false);
     setUploadModalOpen(false);
-    setModalDescriptionGenerating(false);
-    setModalDescriptionAiGenerated(false);
-    setRelatedArtifactChanged(false);
-    setModalOembedRaw(null);
     setTradeoffModalOpen(false);
     setNewTradeoffText("");
     setNewTradeoffSeverity("Medium");
     setNewTradeoffArtifactLabel("");
-    setModalDraft({
-      relatedArtifactId: "",
-      linkUrl: "",
-      title: "",
-      versionNumber: 1,
-      versionCeiling: 1,
-      description: "",
-      file: null
-    });
+    setProjectArtifactCount(0);
     setStep1SubmitAttempted(false);
     setStep2SubmitAttempted(false);
     titleIsAiGenerated.current = false;
@@ -702,10 +671,6 @@ export function CreateReviewDrawer({
     reviewFocusSnapshotRef.current = null;
     setTradeoffsGenerating(false);
     setAiTradeoffs([]);
-    artifactNameUserEdited.current = false;
-    lastAutoFilledArtifactTitleRef.current = "";
-    userHasEditedDescription.current = false;
-    modalDescriptionRef.current = "";
     setCreateTeammateModalOpen(false);
     setNewTeammateName("");
     setNewTeammateEmail("");
@@ -845,7 +810,6 @@ export function CreateReviewDrawer({
         closeCreateTeammateModal();
         return;
       }
-      abortModalGeneration();
       setAddLinkModalOpen(false);
       setUploadModalOpen(false);
       setProblemsSelectOpen(false);
@@ -860,47 +824,6 @@ export function CreateReviewDrawer({
     closeCreateTeammateModal,
     closeCreateProblemModal
   ]);
-
-  useEffect(() => {
-    if (!addLinkModalOpen) {
-      modalNameFieldMountedRef.current = false;
-      return;
-    }
-    modalNameFieldMountedRef.current = false;
-    const id = requestAnimationFrame(() => {
-      modalNameFieldMountedRef.current = true;
-    });
-    return () => cancelAnimationFrame(id);
-  }, [addLinkModalOpen]);
-
-  useLayoutEffect(() => {
-    if (!addLinkModalOpen) {
-      setAddLinkBodyScrolled(false);
-      return;
-    }
-    const el = addLinkModalBodyRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      setAddLinkBodyScrolled(el.scrollTop > 0);
-    };
-    onScroll();
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-    };
-  }, [addLinkModalOpen]);
-
-  useEffect(() => {
-    if (!uploadModalOpen) {
-      uploadModalNameFieldMountedRef.current = false;
-      return;
-    }
-    uploadModalNameFieldMountedRef.current = false;
-    const id = requestAnimationFrame(() => {
-      uploadModalNameFieldMountedRef.current = true;
-    });
-    return () => cancelAnimationFrame(id);
-  }, [uploadModalOpen]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -938,7 +861,7 @@ export function CreateReviewDrawer({
       const activeWorkspaceId = await getActiveWorkspaceId(supabase);
       let baseQuery = supabase
         .from("contributors")
-        .select("id, name, email, role")
+        .select("id, name, email, role, user_id")
         .order("created_at", { ascending: true });
       if (activeWorkspaceId) {
         baseQuery = baseQuery
@@ -963,6 +886,10 @@ export function CreateReviewDrawer({
               item.email == null || String(item.email).trim() === ""
                 ? null
                 : String(item.email),
+            userId:
+              item.user_id == null || String(item.user_id).trim() === ""
+                ? null
+                : String(item.user_id),
             avatarUrl: null,
           } satisfies User;
         });
@@ -991,6 +918,7 @@ export function CreateReviewDrawer({
         .from("problems")
         .select("id, description")
         .eq("project_id", projectId)
+        .is("review_id", null)
         .order("created_at", { ascending: true });
       if (cancelled) return;
       if (!Array.isArray(data)) {
@@ -1013,107 +941,20 @@ export function CreateReviewDrawer({
   }, [open, currentStep, effectiveProjectId]);
 
   useEffect(() => {
-    if (!open || currentStep !== 1 || !effectiveProjectId?.trim()) {
-      setProjectArtifacts([]);
+    if (!open || !effectiveProjectId?.trim()) {
+      setProjectArtifactCount(0);
       return;
     }
     let cancelled = false;
     const supabase = createSupabaseBrowserClient();
     const pid = effectiveProjectId.trim();
-    void (async () => {
-      const { data, error } = await supabase
-        .from("artifacts")
-        .select("id, name")
-        .eq("project_id", pid)
-        .order("name", { ascending: true });
-      if (cancelled) return;
-      if (error) {
-        setProjectArtifacts([]);
-        return;
-      }
-      setProjectArtifacts(
-        (data ?? []).map((row) => {
-          const r = row as Record<string, unknown>;
-          return {
-            id: String(r.id ?? ""),
-            name: String(r.name ?? ""),
-          };
-        })
-      );
-    })();
+    void fetchProjectArtifactsForRelatedSelect(supabase, pid).then((rows) => {
+      if (!cancelled) setProjectArtifactCount(rows.length);
+    });
     return () => {
       cancelled = true;
     };
-  }, [open, currentStep, effectiveProjectId]);
-
-  const handleModalRelatedChange = useCallback(async (value: string) => {
-    if (value === RELATED_NEW) {
-      setModalDescriptionGenerating(false);
-      setModalDescriptionAiGenerated(false);
-      const nextDesc = userHasEditedDescription.current
-        ? modalDraftRef.current.description
-        : "";
-      modalDescriptionRef.current = nextDesc;
-      setModalDraft((d) => ({
-        ...d,
-        relatedArtifactId: RELATED_NEW,
-        title: "",
-        versionNumber: 1,
-        versionCeiling: 1,
-        description: nextDesc,
-      }));
-      setRelatedArtifactChanged(true);
-      return;
-    }
-    const supabase = createSupabaseBrowserClient();
-    const { data: art } = await supabase
-      .from("artifacts")
-      .select("name, description")
-      .eq("id", value)
-      .maybeSingle();
-    const { data: rows } = await supabase
-      .from("artifact_versions")
-      .select("version_number, description")
-      .eq("artifact_id", value)
-      .order("version_number", { ascending: false })
-      .limit(1);
-    const top =
-      Array.isArray(rows) && rows.length > 0
-        ? (rows[0] as { version_number?: number; description?: string | null })
-        : null;
-    const maxVer =
-      typeof top?.version_number === "number" ? top.version_number : 0;
-    const nextVer = maxVer + 1;
-    const lastDesc =
-      top?.description != null && String(top.description).trim() !== ""
-        ? String(top.description).trim()
-        : String((art as { description?: string | null })?.description ?? "").trim();
-
-    const descToApply = userHasEditedDescription.current
-      ? modalDraftRef.current.description
-      : lastDesc;
-
-    const titleToApply = artifactNameUserEdited.current
-      ? modalDraftRef.current.title
-      : String((art as { name?: string })?.name ?? "");
-
-    modalDescriptionRef.current = descToApply;
-
-    const nextDraft = {
-      ...modalDraftRef.current,
-      relatedArtifactId: value,
-      title: titleToApply,
-      versionNumber: nextVer,
-      versionCeiling: nextVer,
-      description: descToApply,
-    };
-    modalDraftRef.current = nextDraft;
-
-    setModalDescriptionGenerating(false);
-    setModalDescriptionAiGenerated(false);
-    setModalDraft(nextDraft);
-    setRelatedArtifactChanged(true);
-  }, []);
+  }, [open, effectiveProjectId]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -1133,7 +974,7 @@ export function CreateReviewDrawer({
     artifacts.length <= 10 &&
     artifacts.every((a) => {
       if (!a.title.trim()) return false;
-      if (!a.iterationLabel.trim() || a.versionNumber < 1) return false;
+      if (!a.iterationLabel.trim() || !isValidVersionString(a.versionNumber)) return false;
       if (a.kind === "file") return Boolean(a.file);
       return isValidHttpUrl(a.linkUrl);
     });
@@ -1235,8 +1076,6 @@ export function CreateReviewDrawer({
     return "Complete required fields to proceed";
   }, [reviewFocus]);
 
-  const modalDescTrim = modalDraft.description.trim();
-
   const titleFieldError = step2SubmitAttempted && !reviewTitle.trim();
   const relatedProjectFieldError =
     !projectScoped && step2SubmitAttempted && !selectedRelatedProjectId.trim();
@@ -1251,84 +1090,32 @@ export function CreateReviewDrawer({
     );
   });
 
-  const projectTeammateIds = useMemo(
-    () =>
-      new Set(
-        teammateOptions
-          .map((teammate) => String(teammate.id ?? "").trim())
-          .filter(Boolean),
-      ),
-    [teammateOptions],
-  );
+  const filteredProjectTeammates = useMemo(() => {
+    const q = reviewerQuery.trim().toLowerCase();
+    return teammateOptions.filter((u) => {
+      if (!q) return true;
+      return (
+        u.name.toLowerCase().includes(q) ||
+        (u.email?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [teammateOptions, reviewerQuery]);
 
-  const projectTeammates = useMemo(
-    () => filteredTeammates.filter((user) => projectTeammateIds.has(user.id)),
-    [filteredTeammates, projectTeammateIds],
-  );
+  const reviewerPickerSections = useMemo(() => {
+    if (!effectiveProjectId.trim()) return null;
+    return splitReviewerPickerSections(filteredProjectTeammates, filteredTeammates);
+  }, [effectiveProjectId, filteredProjectTeammates, filteredTeammates]);
 
-  const otherWorkspaceMembers = useMemo(
-    () => filteredTeammates.filter((user) => !projectTeammateIds.has(user.id)),
-    [filteredTeammates, projectTeammateIds],
-  );
+  const reviewerMenuPeople = useMemo(() => {
+    if (!effectiveProjectId.trim()) return filteredTeammates;
+    if (!reviewerPickerSections) return filteredTeammates;
+    return flatReviewerPickerList(reviewerPickerSections);
+  }, [effectiveProjectId, filteredTeammates, reviewerPickerSections]);
 
   const reviewerExclude = new Set(reviewers.map((r) => r.id));
 
-  const versionModalOk =
-    modalDraft.versionNumber >= 1 &&
-    modalDraft.versionNumber <= modalDraft.versionCeiling;
-
-  const linkModalAddEnabled =
-    isValidHttpUrl(modalDraft.linkUrl) &&
-    modalDraft.title.trim().length > 0 &&
-    versionModalOk;
-
-  const uploadModalAddEnabled =
-    modalDraft.file !== null &&
-    modalDraft.title.trim().length > 0 &&
-    versionModalOk;
-
-  const relatedArtifactOptions = useMemo(
-    () => [
-      { value: RELATED_NEW, label: "New artifact" },
-      ...projectArtifacts.map((a) => ({ value: a.id, label: a.name })),
-    ],
-    [projectArtifacts]
-  );
-
-  const modalVersionSelectOptions = useMemo(
-    () =>
-      Array.from({ length: modalDraft.versionCeiling }, (_, i) => {
-        const n = i + 1;
-        return { value: String(n), label: `v${n}` };
-      }),
-    [modalDraft.versionCeiling]
-  );
-
   const selectedProjectName =
     projectMenuOptions.find((p) => p.id === selectedRelatedProjectId)?.name ?? "";
-
-  /** Modal description AI — only from the description field wand / labelled button. */
-  async function runModalDescriptionGeneration() {
-    const d = modalDraftRef.current;
-    const trimmed = d.description.trim();
-    if (!trimmed) return;
-    setModalDescriptionGenerating(true);
-    try {
-      const result = await generateArtifactDescription({
-        existingContent: trimmed,
-      });
-      if (!result.ok) return;
-      const next = { ...modalDraftRef.current, description: result.description };
-      modalDraftRef.current = next;
-      modalDescriptionRef.current = result.description;
-      setModalDraft(next);
-      setModalDescriptionAiGenerated(true);
-      setRelatedArtifactChanged(false);
-      userHasEditedDescription.current = true;
-    } finally {
-      setModalDescriptionGenerating(false);
-    }
-  }
 
   // Map ReviewType → the API surface used by the AI server actions.
   function reviewTypeForAi(rt: ReviewType): "Approval" | "Comparison" {
@@ -1347,7 +1134,7 @@ export function CreateReviewDrawer({
       versionNumber: a.versionNumber,
       hasRelatedArtifact: a.resolvedArtifactId != null,
     }));
-    const priorReviewsExist = projectArtifacts.length > 0;
+    const priorReviewsExist = projectArtifactCount > 0;
     setReviewTitleGenerating(true);
     const result = await generateReviewTitle({
       artifactNames: names,
@@ -1461,100 +1248,6 @@ export function CreateReviewDrawer({
     closeTradeoffModal();
   }
 
-  function handleAddLinkUrlBlur() {
-    const urlToFetch = modalDraftRef.current.linkUrl.trim();
-    if (!isFigmaUrl(urlToFetch)) {
-      setModalOembedRaw(null);
-      return;
-    }
-    const oEmbedUrl = `https://www.figma.com/api/oembed?url=${encodeURIComponent(urlToFetch)}`;
-    void fetch(oEmbedUrl)
-      .then((r) => r.json())
-      .then((data: { title?: string }) => {
-        const raw = data?.title?.trim();
-        if (!raw) {
-          setModalOembedRaw(null);
-          return;
-        }
-        setModalOembedRaw(raw);
-        const frameName = parseFigmaFrameNameFromOembedTitle(raw);
-        if (!frameName) return;
-        const currentTitle = modalDraftRef.current.title.trim();
-        const isDefaultTitle =
-          /^Concept \d+$/.test(currentTitle) || currentTitle === "";
-        if (isDefaultTitle) {
-          setModalDraft((d) => ({ ...d, title: frameName }));
-        }
-      })
-      .catch(() => {
-        setModalOembedRaw(null);
-      });
-  }
-
-  function handleAddLinkArtifact() {
-    if (artifacts.length >= 10) return;
-    if (!linkModalAddEnabled) return;
-    const localKey = crypto.randomUUID();
-    const linkUrl = modalDraft.linkUrl.trim();
-    const v = modalDraft.versionNumber;
-    const descriptionTrim = modalDraft.description.trim();
-    const baseTitle = modalDraft.title.trim();
-    const existingTitles = new Set(artifacts.map((a) => a.title.trim()));
-    let finalTitle = baseTitle;
-    let counter = 2;
-    while (existingTitles.has(finalTitle)) {
-      finalTitle = `${baseTitle} ${counter}`;
-      counter++;
-    }
-    const newArtifact: ArtifactDraft = {
-      localKey,
-      kind: "link",
-      file: null,
-      linkUrl,
-      title: finalTitle,
-      iterationLabel: `v${v}`,
-      description: descriptionTrim,
-      descriptionAiState: modalDescriptionAiGenerated ? "ai_generated" : "idle",
-      aiGenerated: modalDescriptionAiGenerated,
-      versionNumber: v,
-      resolvedArtifactId:
-        modalDraft.relatedArtifactId &&
-        modalDraft.relatedArtifactId !== RELATED_NEW
-          ? modalDraft.relatedArtifactId
-          : null,
-    };
-    setArtifacts((prev) => [...prev, newArtifact]);
-    if (isFigmaUrl(linkUrl) && modalOembedRaw) {
-      setFigmaMetaMap((prev) => ({
-        ...prev,
-        [localKey]: {
-          fileName: modalOembedRaw,
-          lastEdited: "Just added",
-        },
-      }));
-    }
-    setAddLinkModalOpen(false);
-    abortModalGeneration();
-    setTimeout(() => {
-      const names = artifactsLatestRef.current
-        .map((x) => {
-          const fromDesc = firstSentenceForTitle(x.description, 120);
-          if (fromDesc) return fromDesc;
-          return x.title.trim();
-        })
-        .filter(Boolean);
-      if (names.length > 0) void runReviewTitleGeneration(names);
-    }, 0);
-    setArtifactToast("Artifact added");
-    setTimeout(() => setArtifactToast(null), 3000);
-    setTimeout(() => {
-      drawerBodyRef.current?.scrollTo({
-        top: drawerBodyRef.current.scrollHeight,
-        behavior: "smooth"
-      });
-    }, 50);
-  }
-
   function removeArtifactByKey(localKey: string) {
     setArtifacts((prev) => prev.filter((x) => x.localKey !== localKey));
     setArtifactPreviews((prev) => {
@@ -1569,75 +1262,6 @@ export function CreateReviewDrawer({
       delete next[localKey];
       return next;
     });
-  }
-
-  function handleAddUploadArtifact() {
-    if (artifacts.length >= 10) return;
-    if (!uploadModalAddEnabled || !modalDraft.file) return;
-    const localKey = crypto.randomUUID();
-    const file = modalDraft.file;
-    const v = modalDraft.versionNumber;
-    const baseTitle = modalDraft.title.trim();
-    const existingTitles = new Set(artifacts.map((a) => a.title.trim()));
-    let titleTrim = baseTitle;
-    let counter = 2;
-    while (existingTitles.has(titleTrim)) {
-      titleTrim = `${baseTitle} ${counter}`;
-      counter++;
-    }
-    const descriptionTrim = modalDraft.description.trim();
-    setArtifacts((prev) => [
-      ...prev,
-      {
-        localKey,
-        kind: "file",
-        file,
-        linkUrl: "",
-        title: titleTrim,
-        iterationLabel: `v${v}`,
-        description: descriptionTrim,
-        descriptionAiState: modalDescriptionAiGenerated ? "ai_generated" : "idle",
-        aiGenerated: modalDescriptionAiGenerated,
-        versionNumber: v,
-        resolvedArtifactId:
-          modalDraft.relatedArtifactId &&
-          modalDraft.relatedArtifactId !== RELATED_NEW
-            ? modalDraft.relatedArtifactId
-            : null,
-      },
-    ]);
-    if (
-      file &&
-      ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"].includes(
-        file.type
-      )
-    ) {
-      const url = URL.createObjectURL(file);
-      setArtifactPreviews((prev) => ({ ...prev, [localKey]: url }));
-    } else if (file.type === "application/pdf") {
-      const url = URL.createObjectURL(file);
-      setArtifactPreviews((prev) => ({ ...prev, [localKey]: url }));
-    }
-    setUploadModalOpen(false);
-    abortModalGeneration();
-    setTimeout(() => {
-      const names = artifactsLatestRef.current
-        .map((x) => {
-          const fromDesc = firstSentenceForTitle(x.description, 120);
-          if (fromDesc) return fromDesc;
-          return x.title.trim();
-        })
-        .filter(Boolean);
-      if (names.length > 0) void runReviewTitleGeneration(names);
-    }, 0);
-    setArtifactToast("Artifact added");
-    setTimeout(() => setArtifactToast(null), 3000);
-    setTimeout(() => {
-      drawerBodyRef.current?.scrollTo({
-        top: drawerBodyRef.current.scrollHeight,
-        behavior: "smooth"
-      });
-    }, 50);
   }
 
   async function handleCreateReview() {
@@ -1660,7 +1284,20 @@ export function CreateReviewDrawer({
       description: a.description,
       resolvedCanonicalArtifactId: a.resolvedArtifactId,
       versionNumber: a.versionNumber,
+      versionRowLabel: a.versionRowLabel.trim() || a.title.trim(),
     }));
+
+    const reviewSpecificProblemIdSet = new Set(reviewSpecificProblemIds);
+    const reviewSpecificProblems = availableProblems
+      .filter(
+        (problem) =>
+          reviewSpecificProblemIdSet.has(problem.id) &&
+          relatedProblems.includes(problem.id),
+      )
+      .map((problem) => ({
+        id: problem.id,
+        description: problem.description,
+      }));
 
     const input: SubmitReviewInput = {
       reviewId: crypto.randomUUID(),
@@ -1670,6 +1307,7 @@ export function CreateReviewDrawer({
       sendNotification: sendNotification,
       reviewFocus: reviewFocus.trim() || null,
       relatedProblemIds: relatedProblems,
+      reviewSpecificProblems,
       reviewerContributorIds: reviewers.map((r) => r.id),
       requireDecisionMaker: requireDecisionMakerForDb(reviewType),
       ownerDisplayName: reviewers[0]?.name ?? "Reviewer",
@@ -1688,11 +1326,7 @@ export function CreateReviewDrawer({
     onClose();
   }
 
-  const linkModalUrlFieldId = `${uid}-modal-link-url`;
-  const linkModalRelatedFieldId = `${uid}-modal-link-related`;
-  const linkModalNameFieldId = `${uid}-modal-link-name`;
-  const uploadModalRelatedFieldId = `${uid}-modal-upload-related`;
-  const uploadModalNameFieldId = `${uid}-modal-upload-name`;
+  const artifactModalProjectId = effectiveProjectId.trim() || null;
 
   return (
     <>
@@ -1889,32 +1523,6 @@ export function CreateReviewDrawer({
         </div>
       }
     >
-      <input
-        ref={uploadFileInputRef}
-        type="file"
-        accept={ACCEPTED_MIME_TYPES}
-        className="sr-only"
-        tabIndex={-1}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) {
-            if (!ACCEPTED_MIME_TYPES.split(",").includes(file.type)) {
-              setArtifactToast(
-                "Unsupported file type. Use JPEG, PNG, GIF, WEBP, SVG or PDF."
-              );
-              setTimeout(() => setArtifactToast(null), 4000);
-              e.target.value = "";
-              return;
-            }
-            setModalDraft((d) => ({
-              ...d,
-              file,
-              title: d.title || file.name.replace(/\.[^/.]+$/, "") || file.name
-            }));
-          }
-          e.target.value = "";
-        }}
-      />
       <div
         className="form-content-zone flex min-w-0 w-full flex-col"
         style={{
@@ -1973,21 +1581,6 @@ export function CreateReviewDrawer({
                     disabled={artifacts.length >= 10}
                     onClick={() => {
                       if (artifacts.length >= 10) return;
-                      const conceptTitle = `Concept ${artifacts.length + 1}`;
-                      const next = {
-                        ...getEmptyModalDraftState(conceptTitle),
-                        description: modalDescriptionRef.current,
-                      };
-                      setModalDraft(next);
-                      modalDraftRef.current = next;
-                      setModalDescriptionGenerating(false);
-                      setModalDescriptionAiGenerated(false);
-                      setRelatedArtifactChanged(false);
-                      artifactNameUserEdited.current = false;
-                      userHasEditedDescription.current = false;
-                      lastAutoFilledArtifactTitleRef.current = "";
-                      lastAutoFilledArtifactTitleRef.current = conceptTitle;
-                      setModalOembedRaw(null);
                       setAddLinkModalOpen(true);
                     }}
                   />
@@ -2001,21 +1594,6 @@ export function CreateReviewDrawer({
                     disabled={artifacts.length >= 10}
                     onClick={() => {
                       if (artifacts.length >= 10) return;
-                      const conceptTitle = `Concept ${artifacts.length + 1}`;
-                      const next = {
-                        ...getEmptyModalDraftState(conceptTitle),
-                        description: modalDescriptionRef.current,
-                      };
-                      setModalDraft(next);
-                      modalDraftRef.current = next;
-                      setModalDescriptionGenerating(false);
-                      setModalDescriptionAiGenerated(false);
-                      setRelatedArtifactChanged(false);
-                      artifactNameUserEdited.current = false;
-                      userHasEditedDescription.current = false;
-                      lastAutoFilledArtifactTitleRef.current = "";
-                      lastAutoFilledArtifactTitleRef.current = conceptTitle;
-                      setModalOembedRaw(null);
                       setUploadModalOpen(true);
                     }}
                   />
@@ -2067,7 +1645,7 @@ export function CreateReviewDrawer({
                         }
                         lastEdited="Just uploaded"
                         artifactName={a.title}
-                        iteration={a.iterationLabel}
+                        iteration={formatVersionLabel(a.versionNumber)}
                         description={a.description}
                         iterationOptions={VERSION_LABEL_OPTIONS}
                         imageUrl={artifactPreviews[a.localKey]}
@@ -2082,12 +1660,11 @@ export function CreateReviewDrawer({
                           setArtifacts((prev) =>
                             prev.map((x, i) => {
                               if (i !== idx) return x;
-                              const m = /^v(\d+)$/i.exec(String(iteration).trim());
-                              const n = m ? parseInt(m[1], 10) : x.versionNumber;
+                              const label = formatVersionLabel(iteration);
                               return {
                                 ...x,
-                                iterationLabel: iteration,
-                                versionNumber: Number.isFinite(n) ? n : x.versionNumber,
+                                iterationLabel: label,
+                                versionNumber: label,
                               };
                             })
                           )
@@ -2126,6 +1703,8 @@ export function CreateReviewDrawer({
                   <Select
                     label="Project"
                     required
+                    portaled
+                    closeOnScroll
                     options={projectMenuOptions.map((p) => ({
                       value: p.id,
                       label: p.name
@@ -2167,6 +1746,8 @@ export function CreateReviewDrawer({
               <div className="flex flex-col gap-2">
                 <Select
                   label="Review type"
+                  portaled
+                  closeOnScroll
                   options={REVIEW_TYPE_OPTIONS.map((o) => ({
                     value: o.value,
                     label: o.label,
@@ -2244,23 +1825,64 @@ export function CreateReviewDrawer({
                       }
                     }}
                   >
-                    {filteredTeammates.length === 0 ? (
+                    {reviewerMenuPeople.length === 0 ? (
                       <MenuItem
                         label="No teammates found"
                         disabled
                         onClick={() => {}}
                       />
                     ) : null}
-                    {effectiveProjectId.trim() && projectTeammates.length > 0 ? (
+                    {!effectiveProjectId.trim() ? (
+                      reviewerMenuPeople.map((u) => (
+                        <MenuItem
+                          key={u.id}
+                          label={u.name}
+                          avatarSrc={u.avatarUrl ?? undefined}
+                          avatarName={u.name}
+                          avatarContributorId={u.id}
+                          avatarContributorEmail={u.email}
+                          checkbox
+                          active={reviewerExclude.has(u.id)}
+                          onClick={() => {
+                            setReviewers((prev) =>
+                              prev.some((r) => r.id === u.id)
+                                ? prev.filter((r) => r.id !== u.id)
+                                : [...prev, u]
+                            );
+                          }}
+                        />
+                      ))
+                    ) : reviewerPickerSections?.showSectionHeadings ? (
                       <>
                         <MenuSectionHeading>Project teammates</MenuSectionHeading>
-                        {projectTeammates.map((u) => (
+                        {reviewerPickerSections.projectTeammates.map((u) => (
                           <MenuItem
                             key={`project-${u.id}`}
                             label={u.name}
                             avatarSrc={u.avatarUrl ?? undefined}
                             avatarName={u.name}
                             avatarContributorId={u.id}
+                          avatarContributorEmail={u.email}
+                            checkbox
+                            active={reviewerExclude.has(u.id)}
+                            onClick={() => {
+                              setReviewers((prev) =>
+                                prev.some((r) => r.id === u.id)
+                                  ? prev.filter((r) => r.id !== u.id)
+                                  : [...prev, u]
+                              );
+                            }}
+                          />
+                        ))}
+                        <MenuSectionHeading>All members</MenuSectionHeading>
+                        {reviewerPickerSections.otherWorkspaceMembers.map((u) => (
+                          <MenuItem
+                            key={`workspace-${u.id}`}
+                            label={u.name}
+                            avatarSrc={u.avatarUrl ?? undefined}
+                            avatarName={u.name}
+                            avatarContributorId={u.id}
+                          avatarContributorEmail={u.email}
                             checkbox
                             active={reviewerExclude.has(u.id)}
                             onClick={() => {
@@ -2273,20 +1895,15 @@ export function CreateReviewDrawer({
                           />
                         ))}
                       </>
-                    ) : null}
-                    {effectiveProjectId.trim() &&
-                    projectTeammates.length > 0 &&
-                    otherWorkspaceMembers.length > 0 ? (
-                      <MenuSectionHeading>All members</MenuSectionHeading>
-                    ) : null}
-                    {(effectiveProjectId.trim() ? otherWorkspaceMembers : filteredTeammates).map(
-                      (u) => (
+                    ) : (
+                      reviewerMenuPeople.map((u) => (
                         <MenuItem
                           key={u.id}
                           label={u.name}
                           avatarSrc={u.avatarUrl ?? undefined}
                           avatarName={u.name}
                           avatarContributorId={u.id}
+                          avatarContributorEmail={u.email}
                           checkbox
                           active={reviewerExclude.has(u.id)}
                           onClick={() => {
@@ -2297,7 +1914,7 @@ export function CreateReviewDrawer({
                             );
                           }}
                         />
-                      ),
+                      ))
                     )}
                   </Menu>
                 </div>
@@ -2344,7 +1961,10 @@ export function CreateReviewDrawer({
                             contributorId={user.id}
                             size="md"
                             prominence="high"
-                            style={getAvatarInlineStyle(user.id, { ring: true })}
+                            style={getAvatarInlineStyle(
+                              avatarColourKey(user.email, user.id),
+                              { ring: true },
+                            )}
                           />
                           <span
                             style={{
@@ -2610,7 +2230,7 @@ export function CreateReviewDrawer({
                 <TextareaAi
                   id={focusFieldId}
                   label="Review focus*"
-                  size="md"
+                  size="sm"
                   variant="form-fixed"
                   hideIdleAiFooter
                   placeholder={
@@ -3021,6 +2641,9 @@ export function CreateReviewDrawer({
                   return;
                 }
               } else {
+                setReviewSpecificProblemIds((prev) =>
+                  prev.includes(newId) ? prev : [...prev, newId],
+                );
                 setIsCreatingProblem(false);
               }
               setAvailableProblems((prev) => [...prev, nextProblem]);
@@ -3047,546 +2670,36 @@ export function CreateReviewDrawer({
       />
     </Modal>
 
-    <Modal
+    {/*
+      STEP 0 — Shared artifact modals (Create Review Step 1):
+      Triggers: Add link / Upload file buttons in Step 1.
+      projectId: effectiveProjectId (null hides Related Artifact in shared modals).
+      reviewId: null — create flow always uses cross-review major increment; no write-back.
+      onSave -> addArtifactFromModal() updates local Step 1 artifact state.
+    */}
+    <AddLinkModal
       open={addLinkModalOpen}
-      type="form"
-      size="lg"
-      title="Add Link"
-      bodyRef={addLinkModalBodyRef}
-      dialogStyle={{ width: 800, maxWidth: "calc(100vw - 48px)" }}
-      footerNoPadding
-      onClose={() => {
-        abortModalGeneration();
+      projectId={artifactModalProjectId}
+      reviewId={null}
+      defaultTitle={`Concept ${artifacts.length + 1}`}
+      onClose={() => setAddLinkModalOpen(false)}
+      onSave={(payload) => {
+        addArtifactFromModal(payload);
         setAddLinkModalOpen(false);
       }}
-      footer={
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 8,
-            width: "100%",
-            minWidth: 0,
-            alignSelf: "stretch",
-            borderTop: "1px solid var(--border-subtle, #ede8e0)",
-            boxShadow: addLinkBodyScrolled
-              ? "0 -2px 8px rgba(41, 33, 28, 0.08)"
-              : "none",
-            padding: "16px 24px",
-            boxSizing: "border-box",
-          }}
-        >
-          <Button
-            variant="secondary"
-            size="sm"
-            label="Cancel"
-            onClick={() => {
-              abortModalGeneration();
-              setAddLinkModalOpen(false);
-            }}
-          />
-          {linkModalAddEnabled ? (
-            <Button
-              variant="primary"
-              size="sm"
-              label="Add Artifact"
-              disabled={modalDescriptionGenerating}
-              onClick={handleAddLinkArtifact}
-            />
-          ) : (
-            <Tooltip
-              label={
-                modalDescriptionGenerating
-                  ? "Optimising description…"
-                  : !isValidHttpUrl(modalDraft.linkUrl.trim())
-                    ? "Enter a valid URL"
-                    : !modalDraft.title.trim()
-                      ? "Enter an artifact name"
-                      : !versionModalOk
-                        ? "Select a valid version for this artifact"
-                        : "Complete all required fields"
-              }
-              position="top"
-            >
-              <Button
-                variant="primary"
-                size="sm"
-                label="Add Artifact"
-                disabled
-                onClick={() => {}}
-              />
-            </Tooltip>
-          )}
-        </div>
-      }
-    >
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "row",
-          width: "calc(100% + 48px)",
-          marginLeft: -24,
-          marginRight: -24,
-          marginTop: -20,
-          marginBottom: -20,
-          flex: "1 1 auto",
-          minHeight: 400,
-          alignSelf: "stretch",
-          minWidth: 0,
-        }}
-      >
-        {/* Preview column */}
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            width: "50%",
-            alignSelf: "stretch",
-            borderRight: "1px solid var(--border-subtle, #ede8e0)",
-            minWidth: 0,
-          }}
-        >
-          <div
-            style={{
-              flex: 1,
-              position: "relative",
-              background: "transparent",
-              overflow: "hidden",
-              minHeight: 0,
-            }}
-          >
-            {isFigmaUrl(modalDraft.linkUrl) ? (
-              <iframe
-                src={buildFigmaEmbedUrl(modalDraft.linkUrl)}
-                width="100%"
-                height="100%"
-                style={{ border: "none", display: "block" }}
-                allowFullScreen
-                title="Figma preview"
-              />
-            ) : (
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Icon
-                  name="artifact"
-                  size={64}
-                  style={{
-                    opacity: 0.35,
-                    color: "var(--text-tertiary)",
-                  }}
-                />
-              </div>
-            )}
-            {isFigmaUrl(modalDraft.linkUrl) ? (
-              <div style={{ position: "absolute", top: 10, right: 10 }}>
-                <IconSquareButton
-                  icon="trash"
-                  label="Clear link"
-                  onClick={() => {
-                    setModalDraft((d) => ({ ...d, linkUrl: "" }));
-                    setModalOembedRaw(null);
-                    setModalDescriptionAiGenerated(false);
-                  }}
-                />
-              </div>
-            ) : null}
-          </div>
-        </div>
+    />
 
-        {/* Form column */}
-        <div
-          style={{
-            width: "50%",
-            overflowY: "auto",
-            padding: "20px 24px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-            minWidth: 0,
-          }}
-        >
-          <Input
-            fieldId={linkModalUrlFieldId}
-            label="Link URL"
-            required
-            size="sm"
-            placeholder="http://"
-            value={modalDraft.linkUrl}
-            onChange={(e) => setModalDraft((d) => ({ ...d, linkUrl: e.target.value }))}
-            onBlur={() => handleAddLinkUrlBlur()}
-            error={modalDraft.linkUrl.length > 0 && !isValidHttpUrl(modalDraft.linkUrl)}
-            errorMessage="Please enter a valid URL"
-          />
-          {projectArtifacts.length > 0 ? (
-            <Select
-              id={linkModalRelatedFieldId}
-              label="Related Artifact"
-              options={relatedArtifactOptions}
-              value={modalDraft.relatedArtifactId || undefined}
-              placeholder="Select or create new"
-              onChange={(v) => {
-                void handleModalRelatedChange(v);
-              }}
-              size="sm"
-            />
-          ) : null}
-          <div className="flex w-full min-w-0 gap-2" style={{ alignItems: "flex-start" }}>
-            <div className="min-w-0 flex-1">
-              <Input
-                fieldId={linkModalNameFieldId}
-                label="Artifact Name"
-                required
-                size="sm"
-                placeholder="e.g. Concept 1"
-                value={modalDraft.title}
-                onChange={(e) => {
-                  if (modalNameFieldMountedRef.current) {
-                    artifactNameUserEdited.current = true;
-                  }
-                  setModalDraft((d) => ({ ...d, title: e.target.value }));
-                }}
-              />
-            </div>
-            <div style={{ width: 120, flexShrink: 0 }}>
-              <Select
-                label="Version"
-                options={modalVersionSelectOptions}
-                value={String(modalDraft.versionNumber)}
-                onChange={(opt) =>
-                  setModalDraft((d) => ({
-                    ...d,
-                    versionNumber: parseInt(opt, 10) || 1,
-                  }))
-                }
-                placeholder="v1"
-                size="sm"
-              />
-            </div>
-          </div>
-          <div className="flex flex-col" style={{ gap: 0 }}>
-            <TextareaAi
-              label="Description"
-              size="md"
-              variant="form-fixed"
-              generating={modalDescriptionGenerating}
-              hideIdleAiFooter
-              placeholder={
-                modalDescriptionGenerating
-                  ? "Optimising description…"
-                  : "Describe what this design shows"
-              }
-              value={modalDraft.description}
-              onChange={(e) => {
-                userHasEditedDescription.current = true;
-                setRelatedArtifactChanged(false);
-                setModalDescriptionAiGenerated(false);
-                modalDescriptionRef.current = e.target.value;
-                setModalDraft((d) => ({ ...d, description: e.target.value }));
-              }}
-              showLoadingButton={modalDescriptionGenerating}
-              showAiButton={false}
-            />
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "flex-start",
-                gap: 6,
-                width: "100%",
-                marginTop: 6,
-              }}
-            >
-              {relatedArtifactChanged && modalDraft.description.trim().length > 0 ? (
-                <p
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    fontSize: 12,
-                    color: "var(--text-secondary)",
-                    lineHeight: 1.5,
-                    margin: 0,
-                  }}
-                >
-                  Description carried over from previous version — edit or optimise as needed.
-                </p>
-              ) : (
-                <span style={{ flex: 1, minWidth: 0 }} aria-hidden />
-              )}
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                label="Optimise with Ai"
-                icon="leading"
-                iconName="ai-stars"
-                style={{ flexShrink: 0 }}
-                disabled={modalDescriptionGenerating || !modalDraft.description.trim()}
-                onClick={() => {
-                  void runModalDescriptionGeneration();
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-    </Modal>
-
-    <Modal
+    <UploadModal
       open={uploadModalOpen}
-      type="form"
-      size="md"
-      title="Upload Artifact"
-      onClose={() => {
-        abortModalGeneration();
+      projectId={artifactModalProjectId}
+      reviewId={null}
+      defaultTitle={`Concept ${artifacts.length + 1}`}
+      onClose={() => setUploadModalOpen(false)}
+      onSave={(payload) => {
+        addArtifactFromModal(payload);
         setUploadModalOpen(false);
       }}
-      footer={
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 8,
-            width: "100%",
-          }}
-        >
-          <Button
-            variant="secondary"
-            size="sm"
-            label="Cancel"
-            onClick={() => {
-              abortModalGeneration();
-              setUploadModalOpen(false);
-            }}
-          />
-          {uploadModalAddEnabled ? (
-            <Button
-              variant="primary"
-              size="sm"
-              label="Add Artifact"
-              disabled={modalDescriptionGenerating}
-              onClick={handleAddUploadArtifact}
-            />
-          ) : (
-            <Tooltip
-              label={
-                modalDescriptionGenerating
-                  ? "Optimising description…"
-                  : !modalDraft.file
-                    ? "Select a file"
-                    : !modalDraft.title.trim()
-                      ? "Enter an artifact name"
-                      : !versionModalOk
-                        ? "Select a valid version for this artifact"
-                        : "Complete all required fields"
-              }
-              position="top"
-            >
-              <Button
-                variant="primary"
-                size="sm"
-                label="Add Artifact"
-                disabled
-                onClick={() => {}}
-              />
-            </Tooltip>
-          )}
-        </div>
-      }
-    >
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 8
-        }}
-      >
-        <div
-          style={{
-            backgroundColor: "#f3efe9",
-            border: "2px dashed #c9c0b4",
-            borderRadius: 8,
-            height: 150,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 10
-          }}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            const file = e.dataTransfer.files?.[0];
-            if (file) {
-              if (!ACCEPTED_MIME_TYPES.split(",").includes(file.type)) {
-                setArtifactToast(
-                  "Unsupported file type. Use JPEG, PNG, GIF, WEBP, SVG or PDF."
-                );
-                setTimeout(() => setArtifactToast(null), 4000);
-                return;
-              }
-              setModalDraft((d) => ({
-                ...d,
-                file,
-                title: d.title || file.name.replace(/\.[^/.]+$/, "") || file.name,
-              }));
-            }
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Icon name="upload" size={20} style={{ color: "#6b5e55" }} />
-            <span style={{ fontSize: 14, fontWeight: 500, color: "#6b5e55" }}>
-              Drag & drop files here
-            </span>
-          </div>
-          <span style={{ fontSize: 14, fontWeight: 500, color: "#6b5e55" }}>OR</span>
-          <Button
-            variant="secondary"
-            size="sm"
-            label="Browse files"
-            onClick={() => uploadFileInputRef.current?.click()}
-          />
-        </div>
-        <p
-          style={{
-            fontFamily: "'Plus Jakarta Sans', sans-serif",
-            fontSize: 12,
-            fontWeight: 400,
-            lineHeight: 1.5,
-            letterSpacing: "0.24px",
-            color: "#6b5e55",
-            margin: 0
-          }}
-        >
-          You can upload files in the following formats: JPEG, PNG, GIF, WEBP, SVG, and PDF.
-        </p>
-      </div>
-
-      {modalDraft.file && (
-        <p style={{ fontSize: 12, color: "#6b5e55", margin: 0 }}>
-          {modalDraft.file.name} · {formatFileSize(modalDraft.file.size)}
-        </p>
-      )}
-
-      {projectArtifacts.length > 0 ? (
-        <Select
-          id={uploadModalRelatedFieldId}
-          label="Related Artifact"
-          options={relatedArtifactOptions}
-          value={modalDraft.relatedArtifactId || undefined}
-          placeholder="Select or create new"
-          onChange={(v) => {
-            void handleModalRelatedChange(v);
-          }}
-          size="sm"
-        />
-      ) : null}
-
-      <div className="flex w-full min-w-0 gap-2" style={{ alignItems: "flex-start" }}>
-        <div className="min-w-0 flex-1">
-          <Input
-            fieldId={uploadModalNameFieldId}
-            label="Artifact Name"
-            required
-            size="sm"
-            placeholder="e.g. Concept 1"
-            value={modalDraft.title}
-            onChange={(e) => {
-              if (uploadModalNameFieldMountedRef.current) {
-                artifactNameUserEdited.current = true;
-              }
-              setModalDraft((d) => ({ ...d, title: e.target.value }));
-            }}
-          />
-        </div>
-        <div style={{ width: 120, flexShrink: 0 }}>
-          <Select
-            label="Version"
-            options={modalVersionSelectOptions}
-            value={String(modalDraft.versionNumber)}
-            onChange={(opt) =>
-              setModalDraft((d) => ({
-                ...d,
-                versionNumber: parseInt(opt, 10) || 1,
-              }))
-            }
-            placeholder="v1"
-            size="sm"
-          />
-        </div>
-      </div>
-
-      <div className="flex flex-col" style={{ gap: 0 }}>
-        <TextareaAi
-          label="Description"
-          size="md"
-          variant="form-fixed"
-          generating={modalDescriptionGenerating}
-          hideIdleAiFooter
-          placeholder={
-            modalDescriptionGenerating
-              ? "Optimising description…"
-              : "Describe what this design shows"
-          }
-          value={modalDraft.description}
-          onChange={(e) => {
-            userHasEditedDescription.current = true;
-            setRelatedArtifactChanged(false);
-            setModalDescriptionAiGenerated(false);
-            modalDescriptionRef.current = e.target.value;
-            setModalDraft((d) => ({ ...d, description: e.target.value }));
-          }}
-          showLoadingButton={modalDescriptionGenerating}
-          showAiButton={false}
-        />
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "row",
-            alignItems: "flex-start",
-            gap: 6,
-            width: "100%",
-            marginTop: 6,
-          }}
-        >
-          {relatedArtifactChanged && modalDraft.description.trim().length > 0 ? (
-            <p
-              style={{
-                flex: 1,
-                minWidth: 0,
-                fontSize: 12,
-                color: "var(--text-secondary)",
-                lineHeight: 1.5,
-                margin: 0,
-              }}
-            >
-              Description carried over from previous version — edit or optimise as needed.
-            </p>
-          ) : (
-            <span style={{ flex: 1, minWidth: 0 }} aria-hidden />
-          )}
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            label="Optimise with Ai"
-            icon="leading"
-            iconName="ai-stars"
-            style={{ flexShrink: 0 }}
-            disabled={modalDescriptionGenerating || !modalDraft.description.trim()}
-            onClick={() => {
-              void runModalDescriptionGeneration();
-            }}
-          />
-        </div>
-      </div>
-    </Modal>
+    />
     <Modal
       open={tradeoffModalOpen}
       type="form"

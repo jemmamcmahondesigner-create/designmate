@@ -37,6 +37,14 @@ export async function enrichTimelineEventsWithActors(
   }
 
   const resolution = await resolveCanonicalContributorIds(supabase, rawIds);
+  const emailByContributorId = new Map<string, string>();
+  for (const match of resolution.values()) {
+    const email = match.email?.trim();
+    if (email) {
+      emailByContributorId.set(match.contributorId, email);
+    }
+  }
+
   const idsNeedingNames = [
     ...new Set(
       rawIds.flatMap((rawId) => {
@@ -67,6 +75,8 @@ export async function enrichTimelineEventsWithActors(
       ...event,
       actor: {
         id: canonicalId,
+        user_id: resolved?.userId ?? null,
+        email: emailByContributorId.get(canonicalId) ?? resolved?.email ?? null,
         name,
         avatar_url: null,
       },

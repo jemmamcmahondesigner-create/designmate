@@ -11,7 +11,7 @@ import {
   resolveReviewStatusPill,
 } from '@/lib/reviews/reviewStatusDisplay';
 import { Warning } from 'phosphor-react';
-import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
+import { getAvatarInlineStyle, avatarColourKey } from '@/lib/utils/avatarColour';
 import styles from './ReviewCard.module.css';
 
 export type ReviewStatus =
@@ -42,8 +42,12 @@ export interface ReviewCardProps {
    * Prefer `creatorName`; `ownerName` must be the same person (`reviews.owner_display_name`), not the decision maker.
    */
   creatorName?: string;
-  /** Canonical `contributors.id` for deterministic avatar colour (from `reviews.creator_id`). */
+  /** Canonical contributors.id for deterministic avatar colour (from `reviews.creator_id`). */
   creatorId?: string;
+  /** Contributor email for stable cross-workspace avatar colour. */
+  creatorEmail?: string | null;
+  /** Auth user id for stable creator avatar colour (matches teammates settings). */
+  creatorUserId?: string | null;
   creatorAvatarSrc?: string;
   /** Review creator display name when `creatorName` is not passed (not the decision maker). */
   ownerName?: string;
@@ -77,6 +81,8 @@ export interface ReviewCardProps {
   showDecisionCount?: boolean;
   reviewers?: Array<{
     id?: string;
+    userId?: string | null;
+    email?: string | null;
     name: string;
     avatarSrc?: string | null;
   }>;
@@ -127,6 +133,8 @@ export function ReviewCard({
   requireDecisionMaker = true,
   creatorName,
   creatorId,
+  creatorEmail,
+  creatorUserId,
   creatorAvatarSrc,
   ownerName,
   ownerAvatarSrc,
@@ -172,6 +180,7 @@ export function ReviewCard({
   const metaName = creatorName ?? ownerName;
   const metaAvatarSrc = creatorAvatarSrc ?? ownerAvatarSrc;
   const metaContributorId = creatorId?.trim() || undefined;
+  const metaColourKey = avatarColourKey(creatorEmail, metaContributorId, metaName);
   const hiddenReviewers = reviewers.length > 3 ? reviewers.slice(3) : [];
   const hiddenReviewerTooltipLabel = hiddenReviewers.map((reviewer) => reviewer.name).join('\n');
 
@@ -277,15 +286,9 @@ export function ReviewCard({
           <Avatar
             src={metaAvatarSrc}
             name={metaName?.trim() || undefined}
-            contributorId={metaContributorId}
+            contributorId={metaColourKey}
             size="md"
-            style={
-              metaContributorId
-                ? getAvatarInlineStyle(metaContributorId)
-                : metaName
-                  ? getAvatarInlineStyle(metaName)
-                  : undefined
-            }
+            style={getAvatarInlineStyle(metaColourKey)}
           />
         )}
         {dateLabel && (
@@ -346,7 +349,13 @@ export function ReviewCard({
                   {countText ? <span className={countsClass}>{countText}</span> : <span />}
                   {reviewers.length > 0 ? (
                     <span className={styles.reviewersSlot}>
-                      {reviewers.slice(0, 3).map((reviewer, index) => (
+                      {reviewers.slice(0, 3).map((reviewer, index) => {
+                        const reviewerColourKey = avatarColourKey(
+                          reviewer.email,
+                          reviewer.id,
+                          reviewer.name,
+                        );
+                        return (
                         <span
                           key={`${reviewer.name}-${index}`}
                           className={styles.reviewerAvatar}
@@ -355,18 +364,19 @@ export function ReviewCard({
                           <Avatar
                             src={reviewer.avatarSrc ?? undefined}
                             name={reviewer.name}
-                            contributorId={reviewer.id}
+                            contributorId={reviewerColourKey}
                             size="md"
                             style={
-                              reviewer.id
-                                ? getAvatarInlineStyle(reviewer.id, {
+                              reviewer.id || reviewer.userId
+                                ? getAvatarInlineStyle(reviewerColourKey, {
                                     ring: reviewerAvatarRing,
                                   })
                                 : undefined
                             }
                           />
                         </span>
-                      ))}
+                        );
+                      })}
                       {reviewers.length > 3 ? (
                         <Tooltip
                           label={hiddenReviewerTooltipLabel}

@@ -3,10 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getEffectiveCurrentContributor } from "@/lib/auth/effectiveContributor";
+import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import {
   notifyReviewNeedsAttention,
 } from "@/lib/notifications/reviews";
 import { logTimelineEventServer } from "@/lib/timeline/logEventServer";
+import { buildArtifactUploadedPayloadFields } from "@/lib/timeline/artifactUploadedPayload";
 import { approvePendingAccessRequestsServer } from "@/lib/accessRequests/approvePendingAccessRequests";
 import { linkContributorToProject, unlinkContributorFromProject } from "@/lib/contributors/linkContributorToProject";
 import { changeRequestCompletedEmailHtml } from "@/lib/emails/change-request-completed-email";
@@ -498,11 +500,8 @@ export async function createTeammateFromReviewAction(input: {
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    const activeWorkspaceId = user?.user_metadata?.active_workspace_id;
-    workspaceId =
-      typeof activeWorkspaceId === "string" && activeWorkspaceId.trim()
-        ? activeWorkspaceId.trim()
-        : null;
+    const activeWorkspaceId = getActiveWorkspaceIdFromUser(user);
+    workspaceId = activeWorkspaceId;
   }
 
   const linkedContributor = await linkContributorToProject(supabase, {
@@ -2463,8 +2462,9 @@ export async function logEditReviewSaveEventsAction(input: {
     const artifactTitle = String(artifact.title ?? "").trim() || "Artifact";
     const iterationLabel = String(artifact.iterationLabel ?? "").trim() || "v1";
     await writeEvent("artifact_uploaded", {
-      artifact_names: [artifactTitle],
-      iteration_label: iterationLabel,
+      ...buildArtifactUploadedPayloadFields({
+        items: [{ name: artifactTitle, version: iterationLabel }],
+      }),
     });
   }
 

@@ -22,12 +22,14 @@ import {
   Table,
   Tooltip,
   TruncatedTooltip,
-  type ArtifactPreviewFileType,
   type ColumnDef,
   type StatusPillColor,
 } from "@/components/ui/ds";
 import { formatDistanceToNow } from "@/lib/formatDistanceToNow";
+import { compareVersions, formatVersionLabel } from "@/lib/artifacts/versioning";
+import { resolveArtifactPreviewFileType } from "@/lib/artifacts/resolveArtifactPreviewFileType";
 import { resolveReviewStatusPill } from "@/lib/reviews/reviewStatusDisplay";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import artifactStyles from "@/components/project-detail/ArtifactsTab.module.css";
 import panelEmptyStateStyles from "@/components/project-detail/projectPanelEmptyState.module.css";
 import type {
@@ -45,9 +47,65 @@ const TEXT_DISABLED = "var(--text-disabled, #c9c0b4)";
 const TEXT_LINK = "var(--text-link, #6b1e2e)";
 const TEXT_PRIMARY = "var(--text-primary, #2e1c1c)";
 
-type ArtifactTableRow = ProjectArtifactOverviewRow & { id: string };
+type ArtifactDataRow = ProjectArtifactOverviewRow & {
+  id: string;
+  type: "artifact";
+  versionRowTitle: string;
+};
+type ArtifactsTableRow =
+  | { id: string; type: "section"; title: string }
+  | ArtifactDataRow;
 
-function renderReviewStatusPill(row: ArtifactTableRow) {
+const ARTIFACTS_TABLE_SCOPE = "artifacts-tab-table";
+
+const ARTIFACTS_TABLE_SECTION_ROW_STYLES = `
+.${ARTIFACTS_TABLE_SCOPE} tbody tr:has([data-artifact-section-heading]) {
+  position: relative;
+}
+.${ARTIFACTS_TABLE_SCOPE} tbody tr:has([data-artifact-section-heading]) td {
+  overflow: visible !important;
+  max-width: none !important;
+}
+.${ARTIFACTS_TABLE_SCOPE} tbody tr:has([data-artifact-section-heading]) [data-artifact-section-heading] {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  overflow: visible;
+  white-space: normal;
+  z-index: 1;
+}
+`;
+
+const SECTION_HEADING_COLOR = "var(--text-heading, #6b1e2e)";
+
+function isArtifactRow(row: ArtifactsTableRow): row is ArtifactDataRow {
+  return row.type === "artifact";
+}
+
+function renderArtifactSectionHeading(row: Extract<ArtifactsTableRow, { type: "section" }>) {
+  return (
+    <div
+      data-artifact-section-heading
+      style={{ display: "flex", alignItems: "center", gap: 6, overflow: "visible" }}
+    >
+      <span
+        style={{
+          fontSize: 16,
+          fontWeight: 600,
+          color: SECTION_HEADING_COLOR,
+          overflow: "visible",
+          whiteSpace: "normal",
+        }}
+      >
+        {row.title}
+      </span>
+    </div>
+  );
+}
+
+function renderReviewStatusPill(row: ArtifactDataRow) {
   const pill = resolveReviewStatusPill({
     status: row.reviewStatus ?? "",
     reviewType: row.reviewType,
@@ -101,30 +159,32 @@ function isCompareReviewType(rt: string | null | undefined): boolean {
   return raw === "compare" || raw === "comparison";
 }
 
-function toPreviewFileType(
-  fileType: string | null,
-  linkUrl: string | null
-): ArtifactPreviewFileType {
-  if (linkUrl) {
-    if (linkUrl.toLowerCase().includes("figma.com")) return "figma";
-    return "link";
-  }
-  const f = (fileType ?? "").toLowerCase();
-  if (f === "pdf") return "pdf";
-  if (["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(f))
-    return f as ArtifactPreviewFileType;
-  return "generic";
+function versionLabelFor(
+  versionId: string,
+  versionLabelsByVersionId: Record<string, string>,
+  fallback: string
+): string {
+  return versionLabelsByVersionId[versionId]?.trim() || fallback;
 }
 
 function VersionArtifactPanel({
   v,
-  artifactDisplayName,
+  versionLabel,
 }: {
   v: ProjectArtifactHistoryVersion;
-  artifactDisplayName: string;
+  versionLabel: string;
 }) {
   const pill = mapReviewTypePill(v.reviewType);
-  const ft = toPreviewFileType(v.fileType, v.linkUrl);
+  const previewFileType = resolveArtifactPreviewFileType({
+    linkUrl: v.linkUrl,
+    originalFileName: v.fileName,
+    type:
+      v.linkUrl && v.linkUrl.toLowerCase().includes("figma.com")
+        ? "Figma"
+        : v.fileType?.toLowerCase() === "pdf"
+          ? "PDF"
+          : undefined,
+  });
   const created = v.versionCreatedAt ? new Date(v.versionCreatedAt) : null;
   const lastEdited =
     created && !Number.isNaN(created.getTime())
@@ -210,11 +270,7 @@ function VersionArtifactPanel({
       <DetailRow
         label="Feedback"
         value={
-          v.feedbackNa ? (
-            <span className="text-[13px] font-normal" style={{ color: TEXT_DISABLED }}>
-              n/a
-            </span>
-          ) : v.reviewId && v.feedbackCount > 0 ? (
+          v.feedbackCount > 0 && v.reviewId ? (
             <Link
               href={`/reviews/${v.reviewId}?tab=activity`}
               className="text-[13px] font-normal no-underline hover:underline"
@@ -224,7 +280,7 @@ function VersionArtifactPanel({
             </Link>
           ) : (
             <span className="text-[13px] font-normal" style={{ color: TEXT_DISABLED }}>
-              No feedback
+              n/a
             </span>
           )
         }
@@ -257,14 +313,16 @@ function VersionArtifactPanel({
       size="large"
       mode="readonly"
       inlineEditable={false}
+      enableOpenInteraction
       showDetails
-      fileType={ft}
-      fileName={v.fileName?.trim() ?? ""}
-      historyVersionNumber={v.versionNumber}
+      fileType={previewFileType}
+      fileName={versionLabel}
+      historyVersionNumber={undefined}
+      iteration={formatVersionLabel(v.versionNumber)}
       lastEdited={lastEdited}
-      artifactName={artifactDisplayName}
+      artifactName={versionLabel}
       description={v.description ?? ""}
-      imageUrl={v.linkUrl ? undefined : (v.fileUrl ?? undefined)}
+      imageUrl={v.fileUrl ?? undefined}
       linkUrl={v.linkUrl ?? undefined}
       figmaFileMeta={null}
       iterationOptions={[]}
@@ -276,22 +334,36 @@ function VersionArtifactPanel({
 function VersionHistoryAccordion({
   versions,
   artifactDisplayName,
+  selectedVersionId,
+  versionLabelsByVersionId,
 }: {
   versions: ProjectArtifactHistoryVersion[];
   artifactDisplayName: string;
+  selectedVersionId: string | null;
+  versionLabelsByVersionId: Record<string, string>;
 }) {
-  const maxVersion = Math.max(...versions.map((x) => x.versionNumber), 0);
+  const latestVersion = versions.reduce<string | null>((best, current) => {
+    if (!best) return current.versionNumber;
+    return compareVersions(current.versionNumber, best) > 0
+      ? current.versionNumber
+      : best;
+  }, null);
   const multi = versions.length >= 2;
 
   const [expanded, setExpanded] = useState<Set<string>>(() => {
-    const latest = versions.find((x) => x.versionNumber === maxVersion)?.versionId;
+    if (selectedVersionId) return new Set([selectedVersionId]);
+    const latest = versions.find((x) => x.versionNumber === latestVersion)?.versionId;
     return latest ? new Set([latest]) : new Set();
   });
 
   useEffect(() => {
-    const latest = versions.find((x) => x.versionNumber === maxVersion)?.versionId;
+    if (selectedVersionId) {
+      setExpanded(new Set([selectedVersionId]));
+      return;
+    }
+    const latest = versions.find((x) => x.versionNumber === latestVersion)?.versionId;
     setExpanded(latest ? new Set([latest]) : new Set());
-  }, [versions, maxVersion]);
+  }, [versions, latestVersion, selectedVersionId]);
 
   const toggle = useCallback((id: string) => {
     setExpanded((prev) => {
@@ -302,6 +374,31 @@ function VersionHistoryAccordion({
     });
   }, []);
 
+  const renderVersionHeading = (
+    v: ProjectArtifactHistoryVersion,
+    isLatest: boolean,
+    isOpen: boolean,
+  ) => {
+    const label = versionLabelFor(v.versionId, versionLabelsByVersionId, artifactDisplayName);
+    const versionTag = formatVersionLabel(v.versionNumber);
+    return (
+      <>
+        <span
+          className="shrink-0 text-[12px] font-bold leading-snug"
+          style={{ color: isOpen ? TEXT_HEADING : TEXT_SECONDARY }}
+        >
+          {label}
+        </span>
+        <span
+          className="shrink-0 text-[12px] font-normal tabular-nums leading-snug"
+          style={{ color: TEXT_TERTIARY }}
+        >
+          {` · ${versionTag}${isLatest ? " — Current" : ""}`}
+        </span>
+      </>
+    );
+  };
+
   if (!multi) {
     const v = versions[0];
     if (!v) return null;
@@ -311,11 +408,8 @@ function VersionHistoryAccordion({
           className="flex h-8 w-full min-w-0 shrink-0 items-center gap-2 px-0"
           style={{ boxSizing: "border-box" }}
         >
-          <span
-            className="shrink-0 text-[15px] font-normal leading-snug"
-            style={{ color: TEXT_SECONDARY }}
-          >
-            {`Version ${v.versionNumber} — Current`}
+          <span className="flex min-w-0 items-center gap-1 text-[12px] leading-snug">
+            {renderVersionHeading(v, true, true)}
           </span>
           <span
             className="min-h-px min-w-0 flex-1 border-t border-solid"
@@ -324,7 +418,10 @@ function VersionHistoryAccordion({
           />
         </div>
         <div className="w-full min-w-0 pb-4 pt-2">
-          <VersionArtifactPanel v={v} artifactDisplayName={artifactDisplayName} />
+          <VersionArtifactPanel
+            v={v}
+            versionLabel={versionLabelFor(v.versionId, versionLabelsByVersionId, artifactDisplayName)}
+          />
         </div>
       </div>
     );
@@ -333,7 +430,7 @@ function VersionHistoryAccordion({
   return (
     <div className="flex min-w-0 w-full flex-col">
       {versions.map((v) => {
-        const isLatest = v.versionNumber === maxVersion;
+        const isLatest = v.versionNumber === latestVersion;
         const open = expanded.has(v.versionId);
         return (
           <div key={v.versionId} className="w-full min-w-0">
@@ -341,13 +438,8 @@ function VersionHistoryAccordion({
               className="flex h-8 w-full min-w-0 shrink-0 items-center gap-2 px-0"
               style={{ boxSizing: "border-box" }}
             >
-              <span
-                className="shrink-0 text-[15px] font-normal leading-snug"
-                style={{ color: TEXT_SECONDARY }}
-              >
-                {isLatest
-                  ? `Version ${v.versionNumber} — Current`
-                  : `Version ${v.versionNumber}`}
+              <span className="flex min-w-0 items-center gap-1 text-[12px] leading-snug">
+                {renderVersionHeading(v, isLatest, open)}
               </span>
               <span
                 className="min-h-px min-w-0 flex-1 border-t border-solid"
@@ -364,7 +456,14 @@ function VersionHistoryAccordion({
             </div>
             {open ? (
               <div className="w-full min-w-0 pb-4 pt-2">
-                <VersionArtifactPanel v={v} artifactDisplayName={artifactDisplayName} />
+                <VersionArtifactPanel
+                  v={v}
+                  versionLabel={versionLabelFor(
+                    v.versionId,
+                    versionLabelsByVersionId,
+                    artifactDisplayName
+                  )}
+                />
               </div>
             ) : null}
           </div>
@@ -418,55 +517,139 @@ export function ArtifactsTab({
 }) {
   const router = useRouter();
   const { overview, historyByArtifactId } = data;
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [versionLabelsByVersionId, setVersionLabelsByVersionId] = useState<
+    Record<string, string>
+  >({});
   const actionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
-  const artifactRows = useMemo(
-    () => overview.map((r) => ({ ...r, id: r.artifactId })),
-    [overview]
-  );
+  useEffect(() => {
+    let cancelled = false;
+    const versionIds = [
+      ...new Set([
+        ...overview.map((row) => row.versionId),
+        ...Object.values(historyByArtifactId).flatMap((versions) =>
+          versions.map((version) => version.versionId)
+        ),
+      ]),
+    ].filter(Boolean);
+    if (versionIds.length === 0) {
+      setVersionLabelsByVersionId({});
+      return;
+    }
+
+    const supabase = createSupabaseBrowserClient();
+    void supabase
+      .from("artifact_versions")
+      .select("id, label")
+      .in("id", versionIds)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const next: Record<string, string> = {};
+        for (const row of data ?? []) {
+          const record = row as { id?: string; label?: string | null };
+          const id = String(record.id ?? "").trim();
+          const label = String(record.label ?? "").trim();
+          if (id && label) next[id] = label;
+        }
+        setVersionLabelsByVersionId(next);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [overview, historyByArtifactId]);
+
+  const tableRows = useMemo((): ArtifactsTableRow[] => {
+    const byArtifact = new Map<string, ArtifactDataRow[]>();
+
+    for (const row of overview) {
+      const versionRowTitle =
+        versionLabelsByVersionId[row.versionId]?.trim() || row.artifactName;
+      const dataRow: ArtifactDataRow = {
+        ...row,
+        id: row.versionId,
+        type: "artifact",
+        versionRowTitle,
+      };
+      const list = byArtifact.get(row.artifactId) ?? [];
+      list.push(dataRow);
+      byArtifact.set(row.artifactId, list);
+    }
+
+    const groups = [...byArtifact.entries()].map(([artifactId, rows]) => {
+      const sorted = [...rows].sort((a, b) =>
+        compareVersions(a.versionNumber, b.versionNumber)
+      );
+      const earliestVersion = sorted[0]?.versionNumber ?? "v1";
+      const groupLabel = sorted[0]?.versionRowTitle ?? "Untitled artifact";
+      return { artifactId, groupLabel, earliestVersion, rows: sorted };
+    });
+
+    groups.sort((a, b) => compareVersions(a.earliestVersion, b.earliestVersion));
+
+    const out: ArtifactsTableRow[] = [];
+    for (const group of groups) {
+      out.push({
+        id: `section-${group.artifactId}`,
+        type: "section",
+        title: group.groupLabel,
+      });
+      for (const row of group.rows) {
+        out.push(row);
+      }
+    }
+    return out;
+  }, [overview, versionLabelsByVersionId]);
 
   const artifactColumns = useMemo(
-    (): ColumnDef<ArtifactTableRow>[] => [
+    (): ColumnDef<ArtifactsTableRow>[] => [
       {
         key: "version",
         label: "Version",
         width: 96,
         align: "right",
         cellType: "custom",
-        render: (row, { selected }) => (
-          <span
-            className="tabular-nums"
-            style={{
-              fontWeight: 500,
-              color: selected ? TEXT_HEADING : TEXT_SECONDARY,
-            }}
-          >
-            v{row.versionNumber}
-          </span>
-        ),
+        render: (row, { selected }) => {
+          if (row.type === "section") {
+            return renderArtifactSectionHeading(row);
+          }
+          return (
+            <span
+              className="tabular-nums"
+              style={{
+                fontWeight: 500,
+                color: selected ? TEXT_HEADING : TEXT_SECONDARY,
+              }}
+            >
+              {formatVersionLabel(row.versionNumber)}
+            </span>
+          );
+        },
       },
       {
         key: "title",
         label: "Title",
         width: "flex",
         cellType: "text-bold",
-        render: (row) => row.artifactName,
+        render: (row) => (isArtifactRow(row) ? row.versionRowTitle : null),
       },
       {
         key: "status",
         label: "Status",
-        width: 196,
+        width: "hug",
+        minWidth: 120,
         cellType: "status",
-        render: (row) => renderReviewStatusPill(row),
+        render: (row) => (isArtifactRow(row) ? renderReviewStatusPill(row) : null),
       },
       {
         key: "reviewType",
         label: "Review Type",
         width: 128,
         cellType: "text",
-        render: (row) => row.reviewType ?? "—",
+        render: (row) => (isArtifactRow(row) ? row.reviewType ?? "—" : null),
       },
       {
         key: "feedback",
@@ -474,87 +657,86 @@ export function ArtifactsTab({
         width: 104,
         align: "center",
         cellType: "custom",
-        render: (row) => (
-          <span
-            style={{
-              color:
-                row.feedbackNa || row.feedbackCount === 0
-                  ? TEXT_DISABLED
-                  : TEXT_SECONDARY,
-            }}
-          >
-            {row.feedbackNa || row.feedbackCount === 0
-              ? "n/a"
-              : row.feedbackCount}
-          </span>
-        ),
+        render: (row) =>
+          isArtifactRow(row) ? (
+            <span
+              style={{
+                color:
+                  row.feedbackCount === 0 ? TEXT_DISABLED : TEXT_SECONDARY,
+              }}
+            >
+              {row.feedbackCount === 0 ? "n/a" : row.feedbackCount}
+            </span>
+          ) : null,
       },
       {
         key: "actions",
         label: "",
         width: 40,
         cellType: "kebab",
-        render: (row) => (
-          <>
-            <IconSquareButton
-              variant="ghost"
-              ref={(el) => {
-                actionRefs.current[row.id] = el;
-              }}
-              icon="kebab"
-              label="Artifact actions"
-              aria-expanded={openMenuId === row.id}
-              aria-haspopup="menu"
-              onClick={() =>
-                setOpenMenuId((prev) => (prev === row.id ? null : row.id))
-              }
-            />
-            <Menu
-              open={openMenuId === row.id}
-              onClose={() => setOpenMenuId(null)}
-              type="action-menu"
-              anchorRef={{
-                current: actionRefs.current[row.id] as HTMLElement | null,
-              }}
-              align="left"
-              portal
-              portalZIndex={100}
-            >
-              <MenuItem
-                label="View version history"
-                onClick={() => {
-                  setSelectedId(row.artifactId);
-                  setOpenMenuId(null);
+        render: (row) =>
+          isArtifactRow(row) ? (
+            <>
+              <IconSquareButton
+                variant="ghost"
+                ref={(el) => {
+                  actionRefs.current[row.id] = el;
                 }}
+                icon="kebab"
+                label="Artifact actions"
+                aria-expanded={openMenuId === row.id}
+                aria-haspopup="menu"
+                onClick={() =>
+                  setOpenMenuId((prev) => (prev === row.id ? null : row.id))
+                }
               />
-              <MenuItem
-                label="Open review"
-                disabled={!row.reviewId}
-                onClick={() => {
-                  if (row.reviewId) router.push(`/reviews/${row.reviewId}`);
-                  setOpenMenuId(null);
+              <Menu
+                open={openMenuId === row.id}
+                onClose={() => setOpenMenuId(null)}
+                type="action-menu"
+                anchorRef={{
+                  current: actionRefs.current[row.id] as HTMLElement | null,
                 }}
-              />
-            </Menu>
-          </>
-        ),
+                align="left"
+                portal
+                portalZIndex={100}
+              >
+                <MenuItem
+                  label="View version history"
+                  onClick={() => {
+                    setSelectedArtifactId(row.artifactId);
+                    setSelectedVersionId(row.versionId);
+                    setOpenMenuId(null);
+                  }}
+                />
+                <MenuItem
+                  label="Open review"
+                  disabled={!row.reviewId}
+                  onClick={() => {
+                    if (row.reviewId) router.push(`/reviews/${row.reviewId}`);
+                    setOpenMenuId(null);
+                  }}
+                />
+              </Menu>
+            </>
+          ) : null,
       },
     ],
     [openMenuId, router]
   );
 
   const selectedHistory = useMemo(() => {
-    if (!selectedId) return null;
-    return historyByArtifactId[selectedId] ?? null;
-  }, [selectedId, historyByArtifactId]);
+    if (!selectedArtifactId) return null;
+    return historyByArtifactId[selectedArtifactId] ?? null;
+  }, [selectedArtifactId, historyByArtifactId]);
 
   const selectedName = useMemo(() => {
-    if (!selectedId) return "";
-    return overview.find((r) => r.artifactId === selectedId)?.artifactName ?? "";
-  }, [selectedId, overview]);
+    if (!selectedArtifactId) return "";
+    return overview.find((r) => r.artifactId === selectedArtifactId)?.artifactName ?? "";
+  }, [selectedArtifactId, overview]);
 
   const drawer =
-    typeof document !== "undefined" && selectedId
+    typeof document !== "undefined" && selectedArtifactId
       ? createPortal(
           <div
             role="dialog"
@@ -603,7 +785,10 @@ export function ArtifactsTab({
                 variant="ghost"
                 icon="close"
                 label="Close panel"
-                onClick={() => setSelectedId(null)}
+                onClick={() => {
+                  setSelectedArtifactId(null);
+                  setSelectedVersionId(null);
+                }}
               />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
@@ -611,6 +796,8 @@ export function ArtifactsTab({
                 <VersionHistoryAccordion
                   versions={selectedHistory}
                   artifactDisplayName={selectedName}
+                  selectedVersionId={selectedVersionId}
+                  versionLabelsByVersionId={versionLabelsByVersionId}
                 />
               ) : (
                 <p
@@ -643,14 +830,14 @@ export function ArtifactsTab({
               className="m-0 text-[20px] font-bold leading-[1.3] text-[#6b1e2e]"
               style={{ letterSpacing: "-0.3px" }}
             >
-              Current Artifacts
+              Artifacts
             </h3>
             {overview.length > 0 ? (
               <p
                 className="m-0 text-[14px] font-normal leading-relaxed"
                 style={{ color: TEXT_SECONDARY }}
               >
-                The latest version of each artifact in this project.
+                The version history of each artifact on this project.
               </p>
             ) : null}
           </div>
@@ -672,13 +859,28 @@ export function ArtifactsTab({
               />
             </div>
           ) : (
-            <Table<ArtifactTableRow>
-              className={artifactStyles.artifactsTable}
-              columns={artifactColumns}
-              rows={artifactRows}
-              selectedRowId={selectedId ?? undefined}
-              onRowClick={(row) => setSelectedId(row.artifactId)}
-            />
+            <>
+              <style>{ARTIFACTS_TABLE_SECTION_ROW_STYLES}</style>
+              <Table<ArtifactsTableRow>
+                className={`${artifactStyles.artifactsTable} ${ARTIFACTS_TABLE_SCOPE}`}
+                columns={artifactColumns}
+                rows={tableRows}
+                selectedRowId={selectedVersionId ?? undefined}
+                onRowClick={(row) => {
+                  if (!isArtifactRow(row)) return;
+                  if (
+                    selectedVersionId === row.versionId &&
+                    selectedArtifactId === row.artifactId
+                  ) {
+                    setSelectedArtifactId(null);
+                    setSelectedVersionId(null);
+                    return;
+                  }
+                  setSelectedArtifactId(row.artifactId);
+                  setSelectedVersionId(row.versionId);
+                }}
+              />
+            </>
           )}
         </div>
       </div>

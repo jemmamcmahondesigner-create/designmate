@@ -37,11 +37,17 @@ export type AllReviewsRow = {
   owner_display_name: string | null;
   /** Canonical contributors.id for creator avatar colour. */
   creator_id?: string | null;
+  /** Contributor email for stable cross-workspace creator avatar colour. */
+  creator_email?: string | null;
+  /** Auth user id for stable creator avatar colour. */
+  creator_user_id?: string | null;
   feedback_count: number;
   change_request_count: number;
   contributor_names: string[];
   reviewers?: Array<{
     id?: string;
+    userId?: string | null;
+    email?: string | null;
     name: string;
     avatarSrc?: string | null;
   }>;
@@ -803,6 +809,8 @@ export function AllReviewsView({
                             undefined
                           }
                           creatorId={review.creator_id ?? undefined}
+                          creatorEmail={review.creator_email}
+                          creatorUserId={review.creator_user_id}
                           dateLabel={review.updated_ago}
                           dateTooltipIso={review.date_tooltip_iso ?? undefined}
                           breadcrumb={{

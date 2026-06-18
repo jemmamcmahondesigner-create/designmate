@@ -1,3 +1,14 @@
-export function getDesignTraceWordmarkHtml(fontSize = 20): string {
-  return `<span style="font-family:'Plus Jakarta Sans', Georgia, serif;font-size:${fontSize}px;font-weight:800;color:#6b1e2e;letter-spacing:-0.3px;">Design</span><span style="font-family:'Plus Jakarta Sans', Georgia, serif;font-size:${fontSize}px;font-weight:300;color:#a0384f;letter-spacing:-0.3px;">Trace</span>`;
+const DESIGN_TRACE_WORDMARK_LOGO_URL =
+  "https://gushydvliscbciehvwbl.supabase.co/storage/v1/object/public/project-references/brand/DesignTrace_Wordmark_Logo.png";
+
+/** Inline logo header block for transactional email templates (Outlook-safe). */
+export function getDesignTraceWordmarkHtml(): string {
+  return `<div style="padding:24px 0 16px 0;">
+  <img
+    src="${DESIGN_TRACE_WORDMARK_LOGO_URL}"
+    alt="DesignTrace"
+    width="160"
+    style="display:block;height:auto;border:0;"
+  />
+</div>`;
 }

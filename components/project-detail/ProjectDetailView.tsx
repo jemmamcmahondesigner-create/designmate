@@ -27,10 +27,12 @@ import { ContributorsSection } from "@/components/project-detail/ContributorsSec
 import { ReferencesSection } from "@/components/project-detail/ReferencesSection";
 import { SidebarDetailCollapsible } from "@/components/SidebarDetailCollapsible";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
 import { formatDistanceToNow } from "@/lib/formatDistanceToNow";
 import {
   buildReviewCardReviewers,
   fetchReviewCardMeta,
+  resolveReviewCardCreator,
   resolveReviewCardCreatorId,
 } from "@/lib/reviews/fetchProjectReviews";
 import { resolveRequesterContributorId } from "@/lib/accessRequests/loadPendingAccessRequest";
@@ -78,6 +80,7 @@ function contributorsToTeammateUsers(rows: ProjectContributor[]): User[] {
     id: c.id,
     name: c.name,
     email: c.email,
+    userId: c.userId ?? null,
     avatarUrl: c.avatarUrl ?? null
   }));
 }
@@ -282,6 +285,7 @@ export function ProjectDetailView({
   }, [project.id, supabase]);
 
   const fetchReviews = useCallback(async () => {
+    const activeWorkspaceId = await getActiveWorkspaceId(supabase);
     const { data, error } = await supabase
       .from("reviews")
       .select(
@@ -340,6 +344,7 @@ export function ProjectDetailView({
       reviewIds,
       reviewerIds,
       creatorIds,
+      workspaceId: activeWorkspaceId,
     });
     const mapped: ReviewCardData[] = rows.map((row) => {
       const r = row as Record<string, unknown>;
@@ -365,6 +370,10 @@ export function ProjectDetailView({
         requireDecisionMaker: Boolean(r.require_decision_maker),
         ownerName: String(r.owner_display_name ?? "Reviewer"),
         creatorId: resolveReviewCardCreatorId(r.creator_id, reviewerResolutionByRawId),
+        creatorEmail:
+          resolveReviewCardCreator(r.creator_id, reviewerResolutionByRawId)?.email ?? null,
+        creatorUserId:
+          resolveReviewCardCreator(r.creator_id, reviewerResolutionByRawId)?.userId ?? null,
         dateLabel,
         dateTooltipIso:
           r.created_at == null ? null : String(r.created_at),
@@ -717,6 +726,8 @@ export function ProjectDetailView({
                               requireDecisionMaker={r.requireDecisionMaker}
                               ownerName={r.ownerName}
                               creatorId={r.creatorId}
+                              creatorEmail={r.creatorEmail}
+                              creatorUserId={r.creatorUserId}
                               dateLabel={r.dateLabel}
                               dateTooltipIso={r.dateTooltipIso ?? undefined}
                               clientName={clientLabel}

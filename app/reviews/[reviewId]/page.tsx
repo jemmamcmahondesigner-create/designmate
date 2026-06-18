@@ -16,6 +16,7 @@ import { getEffectiveCurrentContributor } from '@/lib/auth/effectiveContributor'
 import { getDevImpersonatedContributorId } from '@/lib/auth/devImpersonation';
 import { fetchContactDisplayNames } from '@/lib/contacts/fetchContactDisplayNames';
 import { getDecisionMakerReviewerId } from '@/lib/reviews/workflow';
+import { formatVersionLabel } from '@/lib/artifacts/versioning';
 import { ReviewDetailView } from './ReviewDetailView';
 import type {
   CardReplyRow,
@@ -102,19 +103,27 @@ type RawArtifact = {
   aiGenerated?: boolean;
 };
 
-/** When `artifact_versions` rows exist for this review, overlay canonical name + v{n}. */
+/** When `artifact_versions` rows exist for this review, overlay canonical name + version label. */
 function applyArtifactVersionDisplay(
   base: ReviewArtifact[],
-  fromDb: { version_number: number; artifact_name: string; artifact_id: string | null }[]
+  fromDb: {
+    version_number: string;
+    version_label: string | null;
+    artifact_name: string;
+    artifact_id: string | null;
+  }[],
 ): ReviewArtifact[] {
   return base.map((a, i) => {
     const row = fromDb[i];
-    if (!row || !row.artifact_name.trim()) return a;
+    if (!row) return a;
+    const displayName =
+      row.version_label?.trim() || row.artifact_name.trim() || a.label;
+    if (!displayName.trim()) return a;
     return {
       ...a,
-      title: row.artifact_name,
-      label: row.artifact_name,
-      iteration: `v${row.version_number}`,
+      title: displayName,
+      label: displayName,
+      iteration: formatVersionLabel(String(row.version_number ?? 'v1')),
       canonicalArtifactId: row.artifact_id,
     };
   });
@@ -262,7 +271,7 @@ export default async function ReviewDetailPage({
 
   const { data: versionRows } = await supabase
     .from('artifact_versions')
-    .select('artifact_id, version_number, created_at, artifacts ( name )')
+    .select('artifact_id, version_number, label, created_at, artifacts ( name )')
     .eq('review_id', row.id)
     .order('created_at', { ascending: true });
 
@@ -276,13 +285,17 @@ export default async function ReviewDetailPage({
       const name = Array.isArray(rel)
         ? rel[0]?.name
         : rel?.name;
+      const versionLabel =
+        o.label == null ? '' : String(o.label).trim();
+      const artifactName = String(name ?? '').trim();
       return {
         artifact_id:
           o.artifact_id == null || String(o.artifact_id).trim() === ''
             ? null
             : String(o.artifact_id),
-        version_number: Number(o.version_number ?? 0),
-        artifact_name: String(name ?? '').trim(),
+        version_number: formatVersionLabel(String(o.version_number ?? 'v1')),
+        version_label: versionLabel || null,
+        artifact_name: artifactName,
       };
     });
     artifacts = applyArtifactVersionDisplay(artifacts, enriched);
@@ -330,13 +343,22 @@ export default async function ReviewDetailPage({
   currentAuthUserId = authUser?.id ?? null;
 
   if (row.project_id) {
-    const { data: problemsData } = await supabase
-      .from('problems')
-      .select('id, description')
-      .eq('project_id', row.project_id)
-      .order('created_at', { ascending: true });
+    const [{ data: projectProblemsData }, { data: reviewProblemsData }] =
+      await Promise.all([
+        supabase
+          .from('problems')
+          .select('id, description')
+          .eq('project_id', row.project_id)
+          .is('review_id', null)
+          .order('created_at', { ascending: true }),
+        supabase
+          .from('problems')
+          .select('id, description')
+          .eq('review_id', params.reviewId)
+          .order('created_at', { ascending: true }),
+      ]);
 
-    problems = (problemsData ?? []).map((p) => {
+    const projectProblems = (projectProblemsData ?? []).map((p) => {
       const o = p as { id: unknown; description?: unknown };
       const id = String(o.id ?? '');
       return {
@@ -345,6 +367,17 @@ export default async function ReviewDetailPage({
         selected: relatedProblemIds.includes(id),
       };
     });
+
+    const reviewProblems = (reviewProblemsData ?? []).map((p) => {
+      const o = p as { id: unknown; description?: unknown };
+      return {
+        id: String(o.id ?? ''),
+        text: String(o.description ?? ''),
+        selected: true,
+      };
+    });
+
+    problems = [...projectProblems, ...reviewProblems];
 
     const { data: contributorsData } = await supabase
       .from('contributors')
@@ -356,6 +389,7 @@ export default async function ReviewDetailPage({
       id: String((c as Record<string, unknown>).id ?? ''),
       name: String((c as Record<string, unknown>).name ?? ''),
       role: String((c as Record<string, unknown>).role ?? ''),
+      email: String((c as Record<string, unknown>).email ?? '').trim() || null,
     }));
 
     try {
@@ -435,12 +469,13 @@ export default async function ReviewDetailPage({
       name: string;
       role: string;
       email: string;
+      userId: string | null;
     }> = [];
 
     if (reviewerIds.length > 0) {
       const { data: reviewerData } = await supabase
         .from('contributors')
-        .select('id, name, role, email')
+        .select('id, name, role, email, user_id')
         .in('id', reviewerIds);
       reviewerContributors = (reviewerData ?? []).map((c) => {
         const item = c as Record<string, unknown>;
@@ -449,6 +484,8 @@ export default async function ReviewDetailPage({
           name: String(item.name ?? ''),
           role: String(item.role ?? ''),
           email: String(item.email ?? ''),
+          userId:
+            item.user_id == null ? null : String(item.user_id),
         };
       });
     }
@@ -460,7 +497,7 @@ export default async function ReviewDetailPage({
     const rt = String(row.review_type ?? '').trim().toLowerCase();
     const hasDecisionMakerFlow = rt === 'compare';
     assignedReviewers = reviewerIds
-      .map((reviewerId, index) => {
+      .map((reviewerId, index): ReviewerAssignment | null => {
         const contributor = reviewerContributorById.get(reviewerId);
         if (!contributor) return null;
         const jobRole = String(contributor.role ?? '').trim();
@@ -468,10 +505,12 @@ export default async function ReviewDetailPage({
           id: contributor.id,
           name: contributor.name,
           role: jobRole,
+          email: contributor.email,
           isDecisionMaker: hasDecisionMakerFlow && index === 0,
-        } satisfies ReviewerAssignment;
+          userId: contributor.userId,
+        };
       })
-      .filter((item): item is ReviewerAssignment => Boolean(item));
+      .filter((item): item is ReviewerAssignment => item != null);
 
     const serviceSupabase = createServiceClient();
     const { data: feedbackRows, error: feedbackError } = await serviceSupabase

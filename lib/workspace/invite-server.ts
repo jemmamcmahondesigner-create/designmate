@@ -6,6 +6,7 @@ import {
   mapWorkspaceMemberRole,
 } from "@/lib/workspace/permissions";
 import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
+import { ensureWorkspaceMember } from "@/lib/workspace/ensureWorkspaceMember";
 import type { InviteApiResponse } from "@/types/invites";
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -126,13 +127,14 @@ export async function createWorkspaceInvite({
       .select("id")
       .eq("workspace_id", workspaceId)
       .eq("user_id", existingUser.id)
+      .limit(1)
       .maybeSingle();
 
     if (existingMember) {
       return { status: "already_member" };
     }
 
-    const { error: memberError } = await service.from("workspace_members").insert({
+    const { error: memberError } = await ensureWorkspaceMember(service, {
       workspace_id: workspaceId,
       user_id: existingUser.id,
       role: memberRole,
@@ -142,45 +144,40 @@ export async function createWorkspaceInvite({
     });
 
     if (memberError) {
-      return { status: "error", message: memberError.message };
+      return { status: "error", message: memberError };
     }
 
     const displayName =
+      name?.trim() ||
       (existingUser.user_metadata?.display_name as string | undefined)?.trim() ||
       (existingUser.user_metadata?.full_name as string | undefined)?.trim() ||
-      name?.trim() ||
       existingUser.email?.split("@")[0] ||
       "Team member";
 
-    const { data: existingContributor } = await service
+    const { data: existingProfiles } = await service
       .from("contributors")
       .select("id")
-      .eq("workspace_id", workspaceId)
       .eq("user_id", existingUser.id)
-      .maybeSingle();
+      .eq("workspace_id", workspaceId)
+      .is("project_id", null)
+      .order("created_at", { ascending: true })
+      .limit(1);
 
-    const jobRole = role?.trim() || null;
-    const roleFields = await resolveContributorRoleFields(service, jobRole);
+    if (!existingProfiles?.[0]) {
+      const jobRole = role?.trim() || "Reviewer";
+      const roleFields = await resolveContributorRoleFields(service, jobRole);
 
-    const contributorPayload = {
-      workspace_id: workspaceId,
-      user_id: existingUser.id,
-      name: displayName,
-      email: normalizedEmail,
-      role: roleFields.role,
-      role_id: roleFields.role_id,
-      permission_level: permissionLevel,
-      is_paid: isPaidPermissionLevel(permissionLevel),
-      project_id: null as string | null,
-    };
-
-    if (existingContributor?.id) {
-      await service
-        .from("contributors")
-        .update(contributorPayload)
-        .eq("id", existingContributor.id);
-    } else {
-      await service.from("contributors").insert(contributorPayload);
+      await service.from("contributors").insert({
+        name: displayName,
+        email: normalizedEmail,
+        role: roleFields.role,
+        role_id: roleFields.role_id,
+        permission_level: permissionLevel,
+        is_paid: isPaidPermissionLevel(permissionLevel),
+        project_id: null,
+        workspace_id: workspaceId,
+        user_id: existingUser.id,
+      });
     }
 
     return { status: "added", user_id: existingUser.id };
