@@ -7,6 +7,7 @@ import {
 } from "@/lib/workspace/permissions";
 import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
 import { ensureWorkspaceMember } from "@/lib/workspace/ensureWorkspaceMember";
+import { ensurePendingInviteContributor } from "@/lib/workspace/teammates";
 import type { InviteApiResponse } from "@/types/invites";
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -209,6 +210,13 @@ export async function createWorkspaceInvite({
   if (inviteError || !invite) {
     return { status: "error", message: inviteError?.message ?? "Could not create invite." };
   }
+
+  await ensurePendingInviteContributor(service, workspaceId, {
+    email: normalizedEmail,
+    invited_name: invitedName,
+    job_role: jobRole,
+    role: permissionLevel,
+  });
 
   try {
     await sendInviteEmail({

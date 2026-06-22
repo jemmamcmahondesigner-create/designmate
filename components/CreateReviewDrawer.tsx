@@ -705,21 +705,16 @@ export function CreateReviewDrawer({
 
   useEffect(() => {
     if (!createTeammateModalOpen) return;
-    if (!effectiveProjectId.trim()) {
-      setIncludeTeammateInProject(false);
-    } else {
-      setIncludeTeammateInProject(true);
-    }
-  }, [createTeammateModalOpen, effectiveProjectId]);
+    setIncludeTeammateInProject(Boolean(effectiveProjectId.trim()));
+    // Only set the default when the modal opens — not when projectId changes while open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createTeammateModalOpen]);
 
   useEffect(() => {
     if (!createProblemModalOpen) return;
-    if (!effectiveProjectId.trim()) {
-      setIncludeNewProblemInProject(false);
-    } else {
-      setIncludeNewProblemInProject(true);
-    }
-  }, [createProblemModalOpen, effectiveProjectId]);
+    setIncludeNewProblemInProject(Boolean(effectiveProjectId.trim()));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createProblemModalOpen]);
 
   useEffect(() => {
     if (!createTeammateModalOpen) return;
@@ -851,7 +846,7 @@ export function CreateReviewDrawer({
     if (!open || currentStep !== 2) return;
     let cancelled = false;
     const supabase = createSupabaseBrowserClient();
-    const q = reviewerQuery.trim();
+    const q = reviewerQuery.trim().toLowerCase();
     const projectContributorIds = new Set(
       teammateOptions
         .map((teammate) => String(teammate.id ?? "").trim())
@@ -859,40 +854,52 @@ export function CreateReviewDrawer({
     );
     void (async () => {
       const activeWorkspaceId = await getActiveWorkspaceId(supabase);
-      let baseQuery = supabase
-        .from("contributors")
-        .select("id, name, email, role, user_id")
-        .order("created_at", { ascending: true });
-      if (activeWorkspaceId) {
-        baseQuery = baseQuery
-          .eq("workspace_id", activeWorkspaceId)
-          .or("project_id.is.null,user_id.not.is.null");
+      if (!activeWorkspaceId) {
+        if (!cancelled) setAvailableTeammates([]);
+        return;
       }
-      const { data } =
-        q.length > 0
-          ? await baseQuery.ilike("name", `%${reviewerQuery.trim()}%`)
-          : await baseQuery;
+
+      const response = await fetch(
+        `/api/workspace/contributor-picker-options?${new URLSearchParams({
+          workspaceId: activeWorkspaceId,
+        }).toString()}`,
+      );
       if (cancelled) return;
-      if (!Array.isArray(data)) {
+      if (!response.ok) {
         setAvailableTeammates([]);
         return;
       }
-      const mapped = data.map((row) => {
-          const item = row as Record<string, unknown>;
-          return {
-            id: String(item.id ?? ""),
-            name: String(item.name ?? ""),
-            email:
-              item.email == null || String(item.email).trim() === ""
-                ? null
-                : String(item.email),
-            userId:
-              item.user_id == null || String(item.user_id).trim() === ""
-                ? null
-                : String(item.user_id),
-            avatarUrl: null,
-          } satisfies User;
+
+      const payload = (await response.json()) as {
+        options?: Array<{
+          id: string;
+          name: string;
+          email: string | null;
+          userId: string;
+          isPending?: boolean;
+        }>;
+      };
+
+      const mapped = (payload.options ?? [])
+        .map(
+          (option) =>
+            ({
+              id: option.id,
+              name: option.name,
+              email: option.email,
+              userId: option.userId?.trim() ? option.userId : null,
+              isPending: option.isPending ?? !option.userId?.trim(),
+              avatarUrl: null,
+            }) satisfies User,
+        )
+        .filter((person) => {
+          if (!q) return true;
+          return (
+            person.name.toLowerCase().includes(q) ||
+            (person.email ?? "").toLowerCase().includes(q)
+          );
         });
+
       mapped.sort((a, b) => {
         const aProject = projectContributorIds.has(a.id) ? 0 : 1;
         const bProject = projectContributorIds.has(b.id) ? 0 : 1;
@@ -1837,6 +1844,7 @@ export function CreateReviewDrawer({
                         <MenuItem
                           key={u.id}
                           label={u.name}
+                          labelSuffix={u.isPending ? "pending" : undefined}
                           avatarSrc={u.avatarUrl ?? undefined}
                           avatarName={u.name}
                           avatarContributorId={u.id}
@@ -1859,6 +1867,7 @@ export function CreateReviewDrawer({
                           <MenuItem
                             key={`project-${u.id}`}
                             label={u.name}
+                          labelSuffix={u.isPending ? "pending" : undefined}
                             avatarSrc={u.avatarUrl ?? undefined}
                             avatarName={u.name}
                             avatarContributorId={u.id}
@@ -1879,6 +1888,7 @@ export function CreateReviewDrawer({
                           <MenuItem
                             key={`workspace-${u.id}`}
                             label={u.name}
+                          labelSuffix={u.isPending ? "pending" : undefined}
                             avatarSrc={u.avatarUrl ?? undefined}
                             avatarName={u.name}
                             avatarContributorId={u.id}
@@ -1900,6 +1910,7 @@ export function CreateReviewDrawer({
                         <MenuItem
                           key={u.id}
                           label={u.name}
+                          labelSuffix={u.isPending ? "pending" : undefined}
                           avatarSrc={u.avatarUrl ?? undefined}
                           avatarName={u.name}
                           avatarContributorId={u.id}

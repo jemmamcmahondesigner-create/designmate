@@ -170,6 +170,12 @@
   text-overflow: ellipsis;
 }
 
+.itemLabelSuffix {
+  margin-left: 6px;
+  font-weight: 400;
+  color: #998c82;
+}
+
 .itemCheck {
   display: inline-flex;
   align-items: center;

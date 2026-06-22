@@ -98,23 +98,58 @@ export async function POST(request: Request) {
   const existingProfile = existingProfiles?.[0] ?? null;
 
   if (!existingProfile) {
-    const jobRole =
-      (typeof invite.job_role === "string" ? invite.job_role.trim() : "") ||
-      (user.user_metadata?.role as string | undefined)?.trim() ||
-      "Reviewer";
-    const roleFields = await resolveContributorRoleFields(service, jobRole);
+    const inviteEmail = String(invite.email ?? "").trim().toLowerCase();
+    const { data: pendingByEmail } = inviteEmail
+      ? await service
+          .from("contributors")
+          .select("id")
+          .eq("workspace_id", invite.workspace_id)
+          .is("project_id", null)
+          .is("user_id", null)
+          .ilike("email", inviteEmail)
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle()
+      : { data: null };
 
-    await service.from("contributors").insert({
-      name: displayName,
-      email: invite.email,
-      role: roleFields.role,
-      role_id: roleFields.role_id,
-      permission_level: permissionLevel,
-      is_paid: isPaidPermissionLevel(permissionLevel),
-      project_id: null,
-      workspace_id: invite.workspace_id,
-      user_id: user.id,
-    });
+    if (pendingByEmail?.id) {
+      const jobRole =
+        (typeof invite.job_role === "string" ? invite.job_role.trim() : "") ||
+        (user.user_metadata?.role as string | undefined)?.trim() ||
+        "Reviewer";
+      const roleFields = await resolveContributorRoleFields(service, jobRole);
+
+      await service
+        .from("contributors")
+        .update({
+          user_id: user.id,
+          name: displayName,
+          email: invite.email,
+          role: roleFields.role,
+          role_id: roleFields.role_id,
+          permission_level: permissionLevel,
+          is_paid: isPaidPermissionLevel(permissionLevel),
+        })
+        .eq("id", pendingByEmail.id);
+    } else {
+      const jobRole =
+        (typeof invite.job_role === "string" ? invite.job_role.trim() : "") ||
+        (user.user_metadata?.role as string | undefined)?.trim() ||
+        "Reviewer";
+      const roleFields = await resolveContributorRoleFields(service, jobRole);
+
+      await service.from("contributors").insert({
+        name: displayName,
+        email: invite.email,
+        role: roleFields.role,
+        role_id: roleFields.role_id,
+        permission_level: permissionLevel,
+        is_paid: isPaidPermissionLevel(permissionLevel),
+        project_id: null,
+        workspace_id: invite.workspace_id,
+        user_id: user.id,
+      });
+    }
   }
 
   const { error: metadataError } = await service.auth.admin.updateUserById(user.id, {

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
 import {
   isPaidPermissionLevel,
   mapInvitePermissionLevel,
@@ -13,6 +14,8 @@ export type WorkspaceContributorPickerOption = {
   role: string;
   userId: string;
   email: string | null;
+  /** True when the teammate has been invited but has not signed in yet. */
+  isPending?: boolean;
 };
 
 export type WorkspaceTeammate = {
@@ -179,6 +182,84 @@ export function buildWorkspaceTeammates(
   return teammates;
 }
 
+function mapProfileToPickerOption(
+  profile: Record<string, unknown>,
+  isPending: boolean,
+): WorkspaceContributorPickerOption {
+  const userId = String(profile.user_id ?? "").trim();
+  return {
+    id: String(profile.id ?? ""),
+    name: String(profile.name ?? ""),
+    role: String(profile.role ?? ""),
+    userId,
+    email:
+      profile.email == null || String(profile.email).trim() === ""
+        ? null
+        : String(profile.email).trim(),
+    isPending,
+  };
+}
+
+/** Workspace contributor row for a pending invite (no auth user yet). */
+export async function ensurePendingInviteContributor(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  invite: {
+    email: string;
+    invited_name?: string | null;
+    job_role?: string | null;
+    role?: string;
+  },
+): Promise<Record<string, unknown> | null> {
+  const email = String(invite.email ?? "").trim().toLowerCase();
+  if (!email) return null;
+
+  const { data: existing } = await supabase
+    .from("contributors")
+    .select("id, name, email, role, user_id, workspace_id, project_id, created_at")
+    .eq("workspace_id", workspaceId)
+    .is("project_id", null)
+    .ilike("email", email)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) return existing as Record<string, unknown>;
+
+  const invitedName =
+    typeof invite.invited_name === "string" ? invite.invited_name.trim() : "";
+  const displayName = invitedName || email.split("@")[0] || "Pending teammate";
+  const jobRole =
+    typeof invite.job_role === "string" && invite.job_role.trim()
+      ? invite.job_role.trim()
+      : "Reviewer";
+  const permissionLevel = mapInvitePermissionLevel(invite.role);
+  const roleFields = await resolveContributorRoleFields(supabase, jobRole);
+
+  const { data: inserted, error } = await supabase
+    .from("contributors")
+    .insert({
+      name: displayName,
+      email,
+      role: roleFields.role,
+      role_id: roleFields.role_id,
+      permission_level: permissionLevel,
+      is_paid: isPaidPermissionLevel(permissionLevel),
+      project_id: null,
+      workspace_id: workspaceId,
+      user_id: null,
+    })
+    .select("id, name, email, role, user_id, workspace_id, project_id, created_at")
+    .single();
+
+  if (error || !inserted) {
+    console.error("ensurePendingInviteContributor insert failed:", error);
+    return null;
+  }
+
+  return inserted as Record<string, unknown>;
+}
+
 function dedupeWorkspaceContributorProfiles(
   profiles: Array<Record<string, unknown>>,
   excludeUserIds: Set<string>,
@@ -203,30 +284,22 @@ function dedupeWorkspaceContributorProfiles(
   }
 
   return Array.from(profilesByUserId.values())
-    .map((profile) => {
-      const userId = String(profile.user_id ?? "").trim();
-      return {
-        id: String(profile.id ?? ""),
-        name: String(profile.name ?? ""),
-        role: String(profile.role ?? ""),
-        userId,
-        email:
-          profile.email == null || String(profile.email).trim() === ""
-            ? null
-            : String(profile.email).trim(),
-      };
-    })
+    .map((profile) => mapProfileToPickerOption(profile, false))
     .filter((row) => row.id && row.userId)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Active workspace members as deduped contributor profiles (one row per user_id). */
+/** Active workspace members plus invited-but-unsigned-in teammates. */
 export async function fetchWorkspaceContributorPickerOptions(
   supabase: SupabaseClient,
   workspaceId: string,
-  options?: { excludeUserIds?: Iterable<string> },
+  options?: {
+    excludeUserIds?: Iterable<string>;
+    excludeContributorIds?: Iterable<string>;
+  },
 ): Promise<WorkspaceContributorPickerOption[]> {
   const excludeUserIds = new Set(options?.excludeUserIds ?? []);
+  const excludeContributorIds = new Set(options?.excludeContributorIds ?? []);
 
   const { data: workspaceMembers } = await supabase
     .from("workspace_members")
@@ -240,17 +313,71 @@ export async function fetchWorkspaceContributorPickerOptions(
     )
     .filter(Boolean);
 
-  if (userIds.length === 0) return [];
+  const activeProfiles: Record<string, unknown>[] = [];
+  if (userIds.length > 0) {
+    const { data: profiles } = await supabase
+      .from("contributors")
+      .select("id, name, email, role, user_id, workspace_id, project_id, created_at")
+      .in("user_id", userIds)
+      .eq("workspace_id", workspaceId);
+    activeProfiles.push(...((profiles ?? []) as Record<string, unknown>[]));
+  }
 
-  const { data: profiles } = await supabase
+  const activeOptions = dedupeWorkspaceContributorProfiles(activeProfiles, excludeUserIds).filter(
+    (row) => !excludeContributorIds.has(row.id),
+  );
+
+  const activeEmails = new Set(
+    activeOptions
+      .map((row) => row.email?.trim().toLowerCase())
+      .filter((email): email is string => Boolean(email)),
+  );
+
+  const { data: pendingProfiles } = await supabase
     .from("contributors")
     .select("id, name, email, role, user_id, workspace_id, project_id, created_at")
-    .in("user_id", userIds)
-    .eq("workspace_id", workspaceId);
+    .eq("workspace_id", workspaceId)
+    .is("project_id", null)
+    .is("user_id", null);
 
-  return dedupeWorkspaceContributorProfiles(
-    (profiles ?? []) as Record<string, unknown>[],
-    excludeUserIds,
+  const pendingById = new Map<string, WorkspaceContributorPickerOption>();
+  for (const profile of (pendingProfiles ?? []) as Record<string, unknown>[]) {
+    const id = String(profile.id ?? "").trim();
+    if (!id || excludeContributorIds.has(id)) continue;
+    const email =
+      profile.email == null ? "" : String(profile.email).trim().toLowerCase();
+    if (email && activeEmails.has(email)) continue;
+    pendingById.set(id, mapProfileToPickerOption(profile, true));
+  }
+
+  const { data: pendingInvites } = await supabase
+    .from("workspace_invites")
+    .select("id, email, role, invited_name, job_role")
+    .eq("workspace_id", workspaceId)
+    .eq("status", "pending");
+
+  for (const invite of (pendingInvites ?? []) as Array<{
+    email?: string;
+    role?: string;
+    invited_name?: string | null;
+    job_role?: string | null;
+  }>) {
+    const email = String(invite.email ?? "").trim().toLowerCase();
+    if (!email || activeEmails.has(email)) continue;
+    const alreadyListed = Array.from(pendingById.values()).some(
+      (row) => row.email?.trim().toLowerCase() === email,
+    );
+    if (alreadyListed) continue;
+
+    const profile = await ensurePendingInviteContributor(supabase, workspaceId, invite);
+    if (!profile) continue;
+    const id = String(profile.id ?? "").trim();
+    if (!id || excludeContributorIds.has(id)) continue;
+    pendingById.set(id, mapProfileToPickerOption(profile, true));
+  }
+
+  return [...activeOptions, ...Array.from(pendingById.values())].sort((a, b) =>
+    a.name.localeCompare(b.name),
   );
 }
 

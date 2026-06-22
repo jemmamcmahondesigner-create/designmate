@@ -10,6 +10,7 @@ export type ReviewerPickerOption = {
   role: string;
   email?: string | null;
   userId: string;
+  isPending?: boolean;
 };
 
 type AssignedReviewerRef = {
@@ -46,12 +47,14 @@ export function useWorkspaceReviewerPickerOptions(
 
     void (async () => {
       const excludeUserIds = new Set<string>();
+      const excludeContributorIds = new Set<string>();
       const userIdMap = new Map<string, string>();
       const unresolvedContributorIds: string[] = [];
 
       for (const reviewer of assignedReviewers) {
         const contributorId = reviewer.id.trim();
         if (!contributorId) continue;
+        excludeContributorIds.add(contributorId);
 
         const knownUserId = String(reviewer.userId ?? '').trim();
         if (knownUserId) {
@@ -83,6 +86,9 @@ export function useWorkspaceReviewerPickerOptions(
       const params = new URLSearchParams({ workspaceId });
       if (excludeUserIds.size > 0) {
         params.set('excludeUserIds', Array.from(excludeUserIds).join(','));
+      }
+      if (excludeContributorIds.size > 0) {
+        params.set('excludeContributorIds', Array.from(excludeContributorIds).join(','));
       }
 
       const response = await fetch(

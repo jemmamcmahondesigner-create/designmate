@@ -343,3 +343,55 @@ export async function unlinkContributorFromProject(
 
   await supabase.from("contributors").delete().eq("id", id);
 }
+
+/** Workspace-level contributor for reviewer-only assignment (not linked to a project). */
+export async function ensureWorkspaceLevelContributor(
+  supabase: SupabaseClient,
+  input: {
+    workspaceId: string;
+    name: string;
+    email?: string | null;
+    role?: string | null;
+    permissionLevel?: string | null;
+    isPaid?: boolean;
+  },
+): Promise<LinkedProjectContributor | null> {
+  const workspaceId = input.workspaceId.trim();
+  const name = input.name.trim();
+  if (!workspaceId || !name) return null;
+
+  const normalizedEmail = input.email?.trim().toLowerCase() || "";
+  if (normalizedEmail) {
+    const { data: existing } = await supabase
+      .from("contributors")
+      .select(CONTRIBUTOR_LINK_SELECT)
+      .eq("workspace_id", workspaceId)
+      .ilike("email", normalizedEmail)
+      .is("project_id", null)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (existing) {
+      return mapContributorRow(existing as Record<string, unknown>);
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("contributors")
+    .insert({
+      project_id: null,
+      workspace_id: workspaceId,
+      user_id: null,
+      name,
+      email: input.email?.trim() || null,
+      role: input.role?.trim() || null,
+      permission_level: input.permissionLevel ?? "reviewer",
+      is_paid: input.isPaid ?? false,
+    })
+    .select(CONTRIBUTOR_LINK_SELECT)
+    .single();
+
+  if (error || !data) return null;
+  return mapContributorRow(data as Record<string, unknown>);
+}

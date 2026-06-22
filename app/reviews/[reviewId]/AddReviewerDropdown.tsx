@@ -61,7 +61,8 @@ export function AddReviewerDropdown({
       assignableContributors.filter(
         (contributor) =>
           search.trim() === '' ||
-          contributor.name.toLowerCase().includes(search.toLowerCase()),
+          contributor.name.toLowerCase().includes(search.toLowerCase()) ||
+          (contributor.email ?? '').toLowerCase().includes(search.toLowerCase()),
       ),
     [assignableContributors, search],
   );
@@ -188,6 +189,17 @@ export function AddReviewerDropdown({
                       }}
                     >
                       {contributor.name}
+                      {contributor.isPending ? (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            fontWeight: 400,
+                            color: '#998c82',
+                          }}
+                        >
+                          pending
+                        </span>
+                      ) : null}
                     </span>
                   </label>
                 ))

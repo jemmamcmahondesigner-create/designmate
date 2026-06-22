@@ -92,6 +92,8 @@ export interface MenuItemProps {
   destructive?: boolean;
   /** Optional styles for the label span (e.g. lifecycle / status tone colours). */
   labelStyle?: CSSProperties;
+  /** Muted suffix shown after the label (e.g. "pending"). */
+  labelSuffix?: string;
   onClick?: () => void;
   disabled?: boolean;
 }
@@ -109,6 +111,7 @@ export function MenuItem({
   active = false,
   destructive = false,
   labelStyle,
+  labelSuffix,
   onClick,
   disabled = false,
 }: MenuItemProps) {
@@ -180,6 +183,9 @@ export function MenuItem({
 
       <span className={styles.itemLabel} style={labelStyle}>
         {label}
+        {labelSuffix ? (
+          <span className={styles.itemLabelSuffix}>{labelSuffix}</span>
+        ) : null}
       </span>
 
       {active && !checkbox && (

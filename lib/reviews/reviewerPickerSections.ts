@@ -13,6 +13,7 @@ export type ReviewerPickerPerson = {
   email?: string | null;
   userId?: string | null;
   avatarUrl?: string | null;
+  isPending?: boolean;
 };
 
 /** Stable identity for deduping the same person across contributor rows. */

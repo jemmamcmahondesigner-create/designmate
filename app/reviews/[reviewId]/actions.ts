@@ -10,7 +10,7 @@ import {
 import { logTimelineEventServer } from "@/lib/timeline/logEventServer";
 import { buildArtifactUploadedPayloadFields } from "@/lib/timeline/artifactUploadedPayload";
 import { approvePendingAccessRequestsServer } from "@/lib/accessRequests/approvePendingAccessRequests";
-import { linkContributorToProject, unlinkContributorFromProject } from "@/lib/contributors/linkContributorToProject";
+import { linkContributorToProject, unlinkContributorFromProject, ensureWorkspaceLevelContributor } from "@/lib/contributors/linkContributorToProject";
 import { changeRequestCompletedEmailHtml } from "@/lib/emails/change-request-completed-email";
 import { sendResendEmail } from "@/lib/emails/send-resend-email";
 import {
@@ -486,6 +486,7 @@ export async function createTeammateFromReviewAction(input: {
   email: string | null;
   role: string | null;
   requireDecisionMaker: boolean;
+  /** When false, add as reviewer only — do not link to the project team. */
   includeInWorkspace?: boolean;
   reopenReview?: boolean;
 }): Promise<{ error: string | null; reviewersNotified?: boolean }> {
@@ -495,28 +496,42 @@ export async function createTeammateFromReviewAction(input: {
     return { error: "Name is required." };
   }
 
-  let workspaceId: string | null = null;
-  if (input.includeInWorkspace !== false) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    const activeWorkspaceId = getActiveWorkspaceIdFromUser(user);
-    workspaceId = activeWorkspaceId;
+  const includeInProjectTeam = input.includeInWorkspace !== false;
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const workspaceId = getActiveWorkspaceIdFromUser(user);
+
+  let contributorId: string | null = null;
+
+  if (includeInProjectTeam) {
+    const linkedContributor = await linkContributorToProject(supabase, {
+      projectId: input.projectId,
+      workspaceId,
+      name,
+      email: input.email?.trim() ? input.email.trim() : null,
+      role: input.role?.trim() ? input.role.trim() : null,
+    });
+    if (!linkedContributor) {
+      return { error: "Contributor was not created." };
+    }
+    contributorId = linkedContributor.id;
+  } else {
+    if (!workspaceId) {
+      return { error: "Contributor was not created." };
+    }
+    const workspaceContributor = await ensureWorkspaceLevelContributor(supabase, {
+      workspaceId,
+      name,
+      email: input.email?.trim() ? input.email.trim() : null,
+      role: input.role?.trim() ? input.role.trim() : null,
+    });
+    if (!workspaceContributor) {
+      return { error: "Contributor was not created." };
+    }
+    contributorId = workspaceContributor.id;
   }
-
-  const linkedContributor = await linkContributorToProject(supabase, {
-    projectId: input.projectId,
-    workspaceId,
-    name,
-    email: input.email?.trim() ? input.email.trim() : null,
-    role: input.role?.trim() ? input.role.trim() : null,
-  });
-
-  if (!linkedContributor) {
-    return { error: "Contributor was not created." };
-  }
-
-  const contributorId = linkedContributor.id;
 
   await approvePendingAccessRequestsServer(supabase, {
     contributorIds: [contributorId],
@@ -532,21 +547,25 @@ export async function createTeammateFromReviewAction(input: {
 
   if (assignResult.error) {
     console.error("[create-reviewer-error]", assignResult.error);
-    await unlinkContributorFromProject(supabase, contributorId);
+    if (includeInProjectTeam) {
+      await unlinkContributorFromProject(supabase, contributorId);
+    }
     return { error: assignResult.error };
   }
 
-  const currentContributor = await getEffectiveCurrentContributor(
-    supabase,
-    input.projectId || undefined
-  );
-  await logTimelineEventServer(supabase, {
-    projectId: input.projectId,
-    reviewId: input.reviewId,
-    actorId: currentContributor?.id ?? null,
-    eventType: "teammate_added",
-    payload: { teammate_name: name },
-  });
+  if (includeInProjectTeam) {
+    const currentContributor = await getEffectiveCurrentContributor(
+      supabase,
+      input.projectId || undefined
+    );
+    await logTimelineEventServer(supabase, {
+      projectId: input.projectId,
+      reviewId: input.reviewId,
+      actorId: currentContributor?.id ?? null,
+      eventType: "teammate_added",
+      payload: { teammate_name: name },
+    });
+  }
 
   return { error: null, reviewersNotified: assignResult.reviewersNotified };
 }

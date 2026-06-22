@@ -6723,6 +6723,7 @@ function RightColumn({
     role: string;
     email?: string | null;
     userId: string;
+    isPending?: boolean;
   }>;
   userIdByContributorId: Map<string, string>;
   requireDecisionMaker: boolean;
@@ -7993,6 +7994,11 @@ function RightColumn({
                                 <span className="min-w-0 flex-1">
                                   <span className="block truncate text-[13px] font-medium text-[#2e1c1c]">
                                     {contributor.name}
+                                    {contributor.isPending ? (
+                                      <span className="ml-1.5 font-normal text-[#998c82]">
+                                        pending
+                                      </span>
+                                    ) : null}
                                   </span>
                                   {contributor.role ? (
                                     <span className="block truncate text-[12px] text-[#998c82]">

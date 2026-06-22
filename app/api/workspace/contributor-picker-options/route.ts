@@ -12,6 +12,13 @@ export async function GET(request: Request) {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+  const excludeContributorRaw = new URL(request.url).searchParams.get(
+    "excludeContributorIds",
+  );
+  const excludeContributorIds = (excludeContributorRaw ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   if (!workspaceId) {
     return NextResponse.json(
@@ -45,7 +52,7 @@ export async function GET(request: Request) {
   const options = await fetchWorkspaceContributorPickerOptions(
     service,
     workspaceId,
-    { excludeUserIds },
+    { excludeUserIds, excludeContributorIds },
   );
 
   return NextResponse.json({ options });
