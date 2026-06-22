@@ -6,7 +6,7 @@ import { Button } from './Button';
 import { Icon } from './Icon';
 import { Tag, type TagVariant } from './Tag';
 import { Tooltip } from './Tooltip';
-import { getAvatarInlineStyle } from '@/lib/utils/avatarColour';
+import { avatarColourKey, getAvatarInlineStyle } from '@/lib/utils/avatarColour';
 import styles from './CommentThread.module.css';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -63,6 +63,8 @@ export interface CommentThreadProps {
   authorAvatarSrc?: string;
   /** Contributor id for deterministic avatar colour. */
   authorContributorId?: string;
+  /** Reviewer email — preferred avatar colour key (with authorContributorId). */
+  authorEmail?: string | null;
   timestamp?: string;
   body?: string;
   /** Option/artifact tags shown below the body */
@@ -94,6 +96,7 @@ export function CommentThread({
   authorName,
   authorAvatarSrc,
   authorContributorId,
+  authorEmail,
   timestamp,
   body,
   options = [],
@@ -148,8 +151,8 @@ export function CommentThread({
     className ?? '',
   ].filter(Boolean).join(' ');
 
-  const authorColourKey = (authorContributorId ?? authorName).trim() || authorName;
-  const headerAvatarStyle = getAvatarInlineStyle(authorColourKey, {
+  const headerColourKey = avatarColourKey(authorEmail, authorContributorId);
+  const headerAvatarStyle = getAvatarInlineStyle(headerColourKey, {
     ring: isDecisionRequired || isDecision,
   });
 

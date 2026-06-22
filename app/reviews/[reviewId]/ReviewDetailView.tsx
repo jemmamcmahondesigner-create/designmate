@@ -229,6 +229,7 @@ interface FeedbackThread {
   id: string;
   reviewerId: string;
   author: string;
+  authorEmail?: string | null;
   authorAvatarSrc?: string;
   timestamp: string;
   /** ISO timestamp for client-only relative display (avoids SSR hydration mismatch). */
@@ -2428,6 +2429,9 @@ export function ReviewDetailView({
       id: fid,
       reviewerId: entry.reviewerId,
       author: entry.reviewerName,
+      authorEmail:
+        assignedReviewers.find((reviewer) => reviewer.id === entry.reviewerId)?.email ??
+        null,
       timestamp: '',
       submittedAtIso: entry.submittedAt ?? null,
       type: entry.feedbackText ? 'Feedback' : 'Feedback',
@@ -6535,6 +6539,7 @@ function FeedbackThreadCommentCard({
       }
       authorName={thread.author}
       authorContributorId={thread.reviewerId}
+      authorEmail={thread.authorEmail}
       authorAvatarSrc={thread.authorAvatarSrc}
       timestamp={timestamp || undefined}
       body={thread.text}
