@@ -409,7 +409,7 @@ export function ContributorsSection({
                 marginBottom: 4,
               }}
             >
-              <div style={{ paddingBottom: 4 }}>
+              <div style={{ paddingBottom: 4, maxHeight: 280, overflowY: "auto" }}>
                 {availableContributors.length === 0 && (
                   <div style={{ padding: "8px 12px", fontSize: 13, color: "#998c82" }}>
                     No teammates found.

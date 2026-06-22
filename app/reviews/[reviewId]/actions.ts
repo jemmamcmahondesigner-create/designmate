@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getEffectiveCurrentContributor } from "@/lib/auth/effectiveContributor";
-import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
+import { getActiveWorkspaceId } from "@/lib/workspace/activeWorkspace";
 import {
   notifyReviewNeedsAttention,
 } from "@/lib/notifications/reviews";
@@ -323,6 +323,26 @@ function submissionBatchNumberForReviewer(
   return idx >= 0 ? idx + 1 : Math.max(1, sorted.length);
 }
 
+/** Workspace for reviewer creation — prefer the review project's workspace over auth metadata. */
+async function resolveWorkspaceIdForReviewTeammate(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  projectId: string,
+): Promise<string | null> {
+  const pid = projectId.trim();
+  if (pid) {
+    const { data: projectRow } = await supabase
+      .from("projects")
+      .select("workspace_id")
+      .eq("id", pid)
+      .maybeSingle();
+    const fromProject = String(
+      (projectRow as { workspace_id?: string | null } | null)?.workspace_id ?? "",
+    ).trim();
+    if (fromProject) return fromProject;
+  }
+  return getActiveWorkspaceId(supabase);
+}
+
 export async function assignReviewersAction(input: {
   reviewId: string;
   reviewerIds: string[];
@@ -502,12 +522,16 @@ export async function createTeammateFromReviewAction(input: {
   // triggered linkContributorToProject. Must be opt-in only.
   const addToProject = input.includeInWorkspace === true;
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const workspaceId = getActiveWorkspaceIdFromUser(user);
+  const workspaceId = await resolveWorkspaceIdForReviewTeammate(
+    supabase,
+    input.projectId,
+  );
+  if (!workspaceId) {
+    return { error: "No active workspace." };
+  }
 
   const jobRole = input.role?.trim() || null;
+  const roleFields = await resolveContributorRoleFields(supabase, jobRole);
 
   let contributorId: string | null = null;
 
@@ -517,21 +541,20 @@ export async function createTeammateFromReviewAction(input: {
       workspaceId,
       name,
       email: input.email?.trim() ? input.email.trim() : null,
-      role: jobRole,
+      role: roleFields.role,
+      permissionLevel: "reviewer",
     });
     if (!linkedContributor) {
       return { error: "Contributor was not created." };
     }
     contributorId = linkedContributor.id;
   } else {
-    if (!workspaceId) {
-      return { error: "Contributor was not created." };
-    }
     const workspaceContributor = await ensureWorkspaceLevelContributor(supabase, {
       workspaceId,
       name,
       email: input.email?.trim() ? input.email.trim() : null,
-      role: jobRole,
+      role: roleFields.role,
+      permissionLevel: "reviewer",
     });
     if (!workspaceContributor) {
       return { error: "Contributor was not created." };
@@ -540,7 +563,6 @@ export async function createTeammateFromReviewAction(input: {
   }
 
   if (contributorId) {
-    const roleFields = await resolveContributorRoleFields(supabase, jobRole);
     await supabase
       .from("contributors")
       .update({
@@ -548,8 +570,10 @@ export async function createTeammateFromReviewAction(input: {
         role_id: roleFields.role_id,
         permission_level: "reviewer",
         is_paid: false,
+        workspace_id: workspaceId,
       })
-      .eq("id", contributorId);
+      .eq("id", contributorId)
+      .eq("workspace_id", workspaceId);
   }
 
   await approvePendingAccessRequestsServer(supabase, {
