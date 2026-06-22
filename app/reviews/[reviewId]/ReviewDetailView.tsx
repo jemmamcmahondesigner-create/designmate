@@ -1259,9 +1259,15 @@ export function ReviewDetailView({
       }),
     [decisionSnapshotsProp],
   );
-  const canEditCoreDetails = canEditReviewDetails(
-    currentContributorPermissionLevel ?? null,
+  const isReviewCreator = Boolean(
+    reviewCreatorAuthUserId &&
+      currentAuthUserId &&
+      reviewCreatorAuthUserId === currentAuthUserId,
   );
+  const canEditCoreDetails =
+    canEditReviewDetails(currentContributorPermissionLevel ?? null) ||
+    canEditReviewDetails(workspacePermissionLevel ?? null) ||
+    isReviewCreator;
   const canEditReviewMenu =
     canEditReviewDetails(currentContributorPermissionLevel ?? null) ||
     canEditReviewDetails(workspacePermissionLevel ?? null);
@@ -2441,11 +2447,6 @@ export function ReviewDetailView({
     if (!currentContributorId) return null;
     return contributors.find((c) => c.id === currentContributorId)?.name ?? null;
   }, [contributors, currentContributorId]);
-  const isReviewCreator = Boolean(
-    reviewCreatorAuthUserId &&
-      currentAuthUserId &&
-      reviewCreatorAuthUserId === currentAuthUserId,
-  );
   const reviewIsCompletedOrClosed = normalizedDisplayStatus === 'complete';
   // Type-agnostic: adding a reviewer to a review that has already received
   // feedback re-opens it. Covers Approve (approved / needs-changes /

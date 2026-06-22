@@ -332,6 +332,7 @@ export default async function ReviewDetailPage({
   let currentContributorPermissionLevel: string | null = null;
   let workspacePermissionLevel: string | null = null;
   let currentAuthUserId: string | null = null;
+  let reviewOwnerName: string | null = row.owner_display_name ?? null;
   const reviewCreatorAuthUserId =
     (row as { creator_id?: string | null }).creator_id == null
       ? null
@@ -340,7 +341,9 @@ export default async function ReviewDetailPage({
   const {
     data: { user: authUser },
   } = await supabase.auth.getUser();
+  // Session auth user id — used for creator permission checks (reviews.creator_id).
   currentAuthUserId = authUser?.id ?? null;
+  let workspaceAuthUserId = currentAuthUserId;
 
   if (row.project_id) {
     const [{ data: projectProblemsData }, { data: reviewProblemsData }] =
@@ -427,38 +430,55 @@ export default async function ReviewDetailPage({
       ).trim();
       const devImpersonatedContributorId = await getDevImpersonatedContributorId();
       if (contributorAuthUserId) {
-        currentAuthUserId = contributorAuthUserId;
+        workspaceAuthUserId = contributorAuthUserId;
       } else if (devImpersonatedContributorId === currentContributorId) {
-        currentAuthUserId = null;
+        workspaceAuthUserId = null;
       }
     }
 
-    if (currentAuthUserId) {
-      const { data: projectRow } = await supabase
-        .from('projects')
-        .select('workspace_id')
-        .eq('id', row.project_id)
+    const { data: projectWorkspaceRow } = await supabase
+      .from('projects')
+      .select('workspace_id')
+      .eq('id', row.project_id)
+      .maybeSingle();
+    const projectWorkspaceId = String(
+      (projectWorkspaceRow as { workspace_id?: string | null } | null)?.workspace_id ?? '',
+    ).trim();
+
+    if (projectWorkspaceId && workspaceAuthUserId) {
+      const { data: member } = await supabase
+        .from('workspace_members')
+        .select('permission_level, role')
+        .eq('workspace_id', projectWorkspaceId)
+        .eq('user_id', workspaceAuthUserId)
         .maybeSingle();
-      const workspaceId = String(
-        (projectRow as { workspace_id?: string | null } | null)?.workspace_id ?? '',
+      const memberRow = member as {
+        permission_level?: string | null;
+        role?: string | null;
+      } | null;
+      const fromLevel = memberRow?.permission_level?.trim();
+      if (fromLevel) {
+        workspacePermissionLevel = fromLevel;
+      } else if (String(memberRow?.role ?? '').trim().toLowerCase() === 'admin') {
+        workspacePermissionLevel = 'admin';
+      }
+    }
+
+    if (reviewCreatorAuthUserId && projectWorkspaceId) {
+      const { data: creatorContributor } = await supabase
+        .from('contributors')
+        .select('name')
+        .eq('workspace_id', projectWorkspaceId)
+        .eq('user_id', reviewCreatorAuthUserId)
+        .is('project_id', null)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      const creatorName = String(
+        (creatorContributor as { name?: string | null } | null)?.name ?? '',
       ).trim();
-      if (workspaceId) {
-        const { data: member } = await supabase
-          .from('workspace_members')
-          .select('permission_level, role')
-          .eq('workspace_id', workspaceId)
-          .eq('user_id', currentAuthUserId)
-          .maybeSingle();
-        const memberRow = member as {
-          permission_level?: string | null;
-          role?: string | null;
-        } | null;
-        const fromLevel = memberRow?.permission_level?.trim();
-        if (fromLevel) {
-          workspacePermissionLevel = fromLevel;
-        } else if (String(memberRow?.role ?? '').trim().toLowerCase() === 'admin') {
-          workspacePermissionLevel = 'admin';
-        }
+      if (creatorName) {
+        reviewOwnerName = creatorName;
       }
     }
 
@@ -850,7 +870,7 @@ export default async function ReviewDetailPage({
       requireDecisionMaker={row.require_decision_maker ?? false}
       decisionMakerId={row.decision_owner_id}
       contactDisplayById={contactDisplayById}
-      reviewOwnerName={row.owner_display_name ?? null}
+      reviewOwnerName={reviewOwnerName}
       lastReminderSentAt={row.last_reminder_sent_at ?? null}
       reviewCreatedAt={row.created_at}
       reviewUpdatedAt={row.updated_at}
