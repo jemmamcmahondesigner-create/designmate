@@ -149,7 +149,9 @@ export function ContributorsSection({
   const canManageTeammates = canAddTeammates(workspacePermissionLevel);
   const [contributors, setContributors] =
     useState<ProjectContributor[]>(initialContributors);
-  const [allContributors, setAllContributors] = useState<ProjectContributor[]>([]);
+  const [allContributors, setAllContributors] = useState<
+    (ProjectContributor & { isPending?: boolean })[]
+  >([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedContributorIds, setSelectedContributorIds] = useState<string[]>(
@@ -203,6 +205,7 @@ export function ContributorsSection({
         role: string;
         userId: string;
         email?: string | null;
+        isPending?: boolean;
       }>;
     };
 
@@ -214,6 +217,7 @@ export function ContributorsSection({
         role: option.role.trim() ? option.role : null,
         userId: option.userId,
         avatarUrl: null,
+        isPending: option.isPending === true,
       })),
     );
   }, [contributors]);
@@ -460,6 +464,11 @@ export function ContributorsSection({
                       />
                       <span style={{ fontSize: 14, fontWeight: 500, color: "#2e1c1c", flex: 1 }}>
                         {contributor.name}
+                        {contributor.isPending ? (
+                          <span style={{ marginLeft: 6, fontWeight: 400, color: "#998c82" }}>
+                            pending
+                          </span>
+                        ) : null}
                       </span>
                       {alreadyOnProject ? (
                         <span style={{ fontSize: 12, color: "#998c82" }}>Already on project</span>

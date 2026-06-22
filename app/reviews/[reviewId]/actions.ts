@@ -11,6 +11,8 @@ import { logTimelineEventServer } from "@/lib/timeline/logEventServer";
 import { buildArtifactUploadedPayloadFields } from "@/lib/timeline/artifactUploadedPayload";
 import { approvePendingAccessRequestsServer } from "@/lib/accessRequests/approvePendingAccessRequests";
 import { linkContributorToProject, unlinkContributorFromProject, ensureWorkspaceLevelContributor } from "@/lib/contributors/linkContributorToProject";
+import { createServiceClient } from "@/lib/supabase/admin";
+import { mapWorkspaceMemberRole } from "@/lib/workspace/permissions";
 import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
 import { changeRequestCompletedEmailHtml } from "@/lib/emails/change-request-completed-email";
 import { sendResendEmail } from "@/lib/emails/send-resend-email";
@@ -343,6 +345,83 @@ async function resolveWorkspaceIdForReviewTeammate(
   return getActiveWorkspaceId(supabase);
 }
 
+/** Pending reviewers from the review picker need a workspace_members row for Settings → Teammates. */
+async function ensurePendingWorkspaceMemberForReviewReviewer(input: {
+  workspaceId: string;
+  contributorId: string;
+  email: string | null;
+  invitedByUserId: string | null;
+}): Promise<void> {
+  const admin = createServiceClient();
+  const workspaceId = input.workspaceId.trim();
+  const contributorId = input.contributorId.trim();
+  if (!workspaceId || !contributorId) return;
+
+  const { data: contributorRow } = await admin
+    .from("contributors")
+    .select("user_id, email")
+    .eq("id", contributorId)
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+
+  const linkedUserId = String(
+    (contributorRow as { user_id?: string | null } | null)?.user_id ?? "",
+  ).trim();
+  const inviteEmail = (
+    input.email?.trim() ||
+    String((contributorRow as { email?: string | null } | null)?.email ?? "").trim()
+  ).toLowerCase();
+
+  const memberRole = mapWorkspaceMemberRole("reviewer");
+  const permissionLevel = "reviewer" as const;
+
+  if (linkedUserId) {
+    const { error } = await admin.from("workspace_members").upsert(
+      {
+        workspace_id: workspaceId,
+        user_id: linkedUserId,
+        role: memberRole,
+        permission_level: permissionLevel,
+        status: "active",
+      },
+      { onConflict: "user_id,workspace_id", ignoreDuplicates: true },
+    );
+    if (error) {
+      console.error("[createTeammateFromReview] workspace_members upsert:", error.message);
+    }
+    return;
+  }
+
+  if (!inviteEmail) return;
+
+  const { data: existingPending } = await admin
+    .from("workspace_members")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .eq("status", "pending")
+    .ilike("invite_email", inviteEmail)
+    .maybeSingle();
+
+  if (existingPending) return;
+
+  const insertRow: Record<string, unknown> = {
+    workspace_id: workspaceId,
+    user_id: null,
+    invite_email: inviteEmail,
+    role: memberRole,
+    permission_level: permissionLevel,
+    status: "pending",
+  };
+  const invitedBy = input.invitedByUserId?.trim();
+  if (invitedBy) insertRow.invited_by = invitedBy;
+
+  const { error: insertError } = await admin.from("workspace_members").insert(insertRow);
+
+  if (insertError) {
+    console.error("[createTeammateFromReview] workspace_members insert:", insertError.message);
+  }
+}
+
 export async function assignReviewersAction(input: {
   reviewId: string;
   reviewerIds: string[];
@@ -575,6 +654,17 @@ export async function createTeammateFromReviewAction(input: {
       .eq("id", contributorId)
       .eq("workspace_id", workspaceId);
   }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  await ensurePendingWorkspaceMemberForReviewReviewer({
+    workspaceId,
+    contributorId: contributorId!,
+    email: input.email?.trim() || null,
+    invitedByUserId: user?.id ?? null,
+  });
 
   await approvePendingAccessRequestsServer(supabase, {
     contributorIds: [contributorId],
