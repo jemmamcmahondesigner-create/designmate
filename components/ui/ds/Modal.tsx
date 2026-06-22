@@ -8,6 +8,7 @@ import {
   type Ref,
 } from 'react';
 import { Icon } from './Icon';
+import { ModalPortalContext } from './ModalPortalContext';
 import styles from './Modal.module.css';
 
 export type ModalType = 'default' | 'destructive' | 'form' | 'information';
@@ -115,6 +116,7 @@ export function Modal({
   const dialogClass = [
     styles.dialog,
     styles[`size-${size}`],
+    type === 'form' ? styles.formDialog : '',
     type === 'destructive' ? styles.destructiveDialog : '',
     className ?? '',
   ]
@@ -173,11 +175,13 @@ export function Modal({
           </button>
         </div>
 
-        {/* Body — DS Select dropdowns use a portaled menu; keep this scrollable, not overflow:hidden. */}
+        {/* Body — DS Select auto-portals via ModalPortalContext; keep scrollable, not overflow:hidden. */}
         <div ref={bodyRef} className={styles.body}>
-          {children ?? (description && (
-            <p className={styles.description}>{description}</p>
-          ))}
+          <ModalPortalContext.Provider value={true}>
+            {children ?? (description && (
+              <p className={styles.description}>{description}</p>
+            ))}
+          </ModalPortalContext.Provider>
         </div>
 
         {/* Footer */}

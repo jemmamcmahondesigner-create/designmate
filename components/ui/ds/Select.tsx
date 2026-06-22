@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
+import { useInsideModal } from './ModalPortalContext';
 import styles from './Select.module.css';
 
 export type SelectSize = 'sm' | 'md' | 'lg';
@@ -90,6 +91,8 @@ export function Select({
   portaled = false,
   closeOnScroll = false,
 }: SelectProps) {
+  const insideModal = useInsideModal();
+  const effectivePortaled = portaled || insideModal;
   const autoId = useId();
   const id = idProp ?? autoId;
   const [open, setOpen] = useState(false);
@@ -145,7 +148,7 @@ export function Select({
 
   const updatePortalPosition = useCallback(() => {
     const trigger = triggerRef.current;
-    if (!trigger || !open || !portaled) return;
+    if (!trigger || !open || !effectivePortaled) return;
 
     const rect = trigger.getBoundingClientRect();
     const viewportPadding = 12;
@@ -181,11 +184,11 @@ export function Select({
         marginTop: 0,
       });
     }
-  }, [open, portaled]);
+  }, [open, effectivePortaled]);
 
   useLayoutEffect(() => {
     if (!open) return;
-    if (portaled) {
+    if (effectivePortaled) {
       updatePortalPosition();
       return;
     }
@@ -196,10 +199,10 @@ export function Select({
     const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
     const mh = Math.max(120, Math.min(240, Math.floor(spaceBelow)));
     setMenuMaxHeight(mh);
-  }, [open, portaled, displayOptions.length, searchTerm, updatePortalPosition]);
+  }, [open, effectivePortaled, displayOptions.length, searchTerm, updatePortalPosition]);
 
   useEffect(() => {
-    if (!open || !portaled) return;
+    if (!open || !effectivePortaled) return;
     const onScroll = (e: Event) => {
       if (closeOnScroll) {
         const target = e.target as Node;
@@ -219,7 +222,7 @@ export function Select({
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onResize);
     };
-  }, [open, portaled, closeOnScroll, updatePortalPosition]);
+  }, [open, effectivePortaled, closeOnScroll, updatePortalPosition]);
 
   const finishSelect = useCallback(
     (optValue: string, options?: { focusTrigger?: boolean }) => {
@@ -397,11 +400,11 @@ export function Select({
     .filter(Boolean)
     .join(' ');
 
-  const menuClassName = portaled
+  const menuClassName = effectivePortaled
     ? [styles.menu, styles.menuPortal].join(' ')
     : [styles.menu, styles.menuAttached].join(' ');
 
-  const menuStyle: CSSProperties = portaled
+  const menuStyle: CSSProperties = effectivePortaled
     ? { ...portalStyle, maxHeight: menuMaxHeight, marginTop: 0 }
     : { maxHeight: menuMaxHeight, marginTop: 0 };
 
@@ -444,7 +447,7 @@ export function Select({
   ) : null;
 
   const menuNode =
-    portaled && typeof document !== 'undefined' && menu
+    effectivePortaled && typeof document !== 'undefined' && menu
       ? createPortal(menu, document.body)
       : menu;
 
@@ -550,10 +553,10 @@ export function Select({
             aria-hidden="true"
           />
         </button>
-        {!portaled ? menuNode : null}
+        {!effectivePortaled ? menuNode : null}
       </div>
 
-      {portaled ? menuNode : null}
+      {effectivePortaled ? menuNode : null}
 
       {/* Helper / error text */}
       {hasError && (

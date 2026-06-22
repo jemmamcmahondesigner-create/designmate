@@ -11,6 +11,7 @@ import { logTimelineEventServer } from "@/lib/timeline/logEventServer";
 import { buildArtifactUploadedPayloadFields } from "@/lib/timeline/artifactUploadedPayload";
 import { approvePendingAccessRequestsServer } from "@/lib/accessRequests/approvePendingAccessRequests";
 import { linkContributorToProject, unlinkContributorFromProject, ensureWorkspaceLevelContributor } from "@/lib/contributors/linkContributorToProject";
+import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
 import { changeRequestCompletedEmailHtml } from "@/lib/emails/change-request-completed-email";
 import { sendResendEmail } from "@/lib/emails/send-resend-email";
 import {
@@ -486,7 +487,7 @@ export async function createTeammateFromReviewAction(input: {
   email: string | null;
   role: string | null;
   requireDecisionMaker: boolean;
-  /** When false, add as reviewer only — do not link to the project team. */
+  /** When true, link the new contributor to the project team; otherwise reviewer-only. */
   includeInWorkspace?: boolean;
   reopenReview?: boolean;
 }): Promise<{ error: string | null; reviewersNotified?: boolean }> {
@@ -496,22 +497,27 @@ export async function createTeammateFromReviewAction(input: {
     return { error: "Name is required." };
   }
 
-  const includeInProjectTeam = input.includeInWorkspace !== false;
+  // ROOT CAUSE (reviewer add flow): project membership was gated with opt-out
+  // semantics (`includeInWorkspace !== false`), so absent/undefined values still
+  // triggered linkContributorToProject. Must be opt-in only.
+  const addToProject = input.includeInWorkspace === true;
 
   const {
     data: { user },
   } = await supabase.auth.getUser();
   const workspaceId = getActiveWorkspaceIdFromUser(user);
 
+  const jobRole = input.role?.trim() || null;
+
   let contributorId: string | null = null;
 
-  if (includeInProjectTeam) {
+  if (addToProject) {
     const linkedContributor = await linkContributorToProject(supabase, {
       projectId: input.projectId,
       workspaceId,
       name,
       email: input.email?.trim() ? input.email.trim() : null,
-      role: input.role?.trim() ? input.role.trim() : null,
+      role: jobRole,
     });
     if (!linkedContributor) {
       return { error: "Contributor was not created." };
@@ -525,12 +531,25 @@ export async function createTeammateFromReviewAction(input: {
       workspaceId,
       name,
       email: input.email?.trim() ? input.email.trim() : null,
-      role: input.role?.trim() ? input.role.trim() : null,
+      role: jobRole,
     });
     if (!workspaceContributor) {
       return { error: "Contributor was not created." };
     }
     contributorId = workspaceContributor.id;
+  }
+
+  if (contributorId) {
+    const roleFields = await resolveContributorRoleFields(supabase, jobRole);
+    await supabase
+      .from("contributors")
+      .update({
+        role: roleFields.role,
+        role_id: roleFields.role_id,
+        permission_level: "reviewer",
+        is_paid: false,
+      })
+      .eq("id", contributorId);
   }
 
   await approvePendingAccessRequestsServer(supabase, {
@@ -547,13 +566,13 @@ export async function createTeammateFromReviewAction(input: {
 
   if (assignResult.error) {
     console.error("[create-reviewer-error]", assignResult.error);
-    if (includeInProjectTeam) {
+    if (addToProject) {
       await unlinkContributorFromProject(supabase, contributorId);
     }
     return { error: assignResult.error };
   }
 
-  if (includeInProjectTeam) {
+  if (addToProject) {
     const currentContributor = await getEffectiveCurrentContributor(
       supabase,
       input.projectId || undefined

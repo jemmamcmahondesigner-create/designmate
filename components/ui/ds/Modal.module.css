@@ -142,6 +142,11 @@
   gap: 12px;
 }
 
+/* Form modals: extra bottom padding so the last field clears the fixed footer when scrolled. */
+.formDialog .body {
+  padding-bottom: 48px;
+}
+
 .description {
   font-size: 14px;
   font-weight: 400;
