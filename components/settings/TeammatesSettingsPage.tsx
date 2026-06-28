@@ -29,7 +29,6 @@ import {
   Select,
   StatusPill,
   Table,
-  Tag,
   Tooltip,
   type ColumnDef,
   type TablePageSizeOption,
@@ -58,6 +57,7 @@ import {
   normalizeTeammatePermissionFields,
   toStoredPermissionLevel,
   type ContentPermissionLevel,
+  type WorkspacePermissionLevel,
 } from "@/lib/workspace/permissions";
 
 type Teammate = WorkspaceTeammate;
@@ -390,11 +390,14 @@ export function TeammatesSettingsPage({
       label: "Role",
       width: "flex",
       cellType: "custom",
-      render: (row) => (
-        <span className={teammateKebabStyles.roleCell}>
-          {row.roleName?.trim() ? row.roleName : <span style={EMPTY_CELL_STYLE}>—</span>}
-        </span>
-      ),
+      render: (row) => {
+        const jobRole = displayJobRoleName(row.roleName);
+        return (
+          <span className={teammateKebabStyles.roleCell}>
+            {jobRole ? jobRole : <span style={EMPTY_CELL_STYLE}>—</span>}
+          </span>
+        );
+      },
     },
     {
       key: "email",
@@ -417,32 +420,45 @@ export function TeammatesSettingsPage({
       label: "Permission",
       width: 180,
       cellType: "status",
-      render: (row) =>
-        row.isPending && !row.isPendingInvite ? (
-          <Tag label="Pending" variant="neutral" size="sm" />
-        ) : (
-          <div
-            style={{
-              display: "flex",
-              gap: 4,
-              alignItems: "center",
-              flexWrap: "wrap",
-            }}
-          >
-            <Tooltip
-              label={PERMISSION_TOOLTIPS[row.permissionLevel]}
-              position="top"
-              passThroughFocus
+      render: (row) => {
+        const { stored, content } = resolvePermissionDisplay(row);
+        if (stored === "admin") {
+          return (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                flexWrap: "nowrap",
+              }}
             >
-              <span className={teammateKebabStyles.cellPillWrap} tabIndex={0}>
-                {renderPermissionPill(row.permissionLevel)}
+              <Tooltip
+                label={PERMISSION_TOOLTIPS[content]}
+                position="top"
+                passThroughFocus
+              >
+                <span className={teammateKebabStyles.cellPillWrap} tabIndex={0}>
+                  {renderWorkspacePermissionPill(content)}
+                </span>
+              </Tooltip>
+              <span className={teammateKebabStyles.cellPillWrap}>
+                {renderWorkspacePermissionPill("admin")}
               </span>
-            </Tooltip>
-            {row.isAdmin ? (
-              <span className={teammateKebabStyles.cellPillWrap}>{renderAdminPill()}</span>
-            ) : null}
-          </div>
-        ),
+            </div>
+          );
+        }
+        return (
+          <Tooltip
+            label={PERMISSION_TOOLTIPS[content]}
+            position="top"
+            passThroughFocus
+          >
+            <span className={teammateKebabStyles.cellPillWrap} tabIndex={0}>
+              {renderWorkspacePermissionPill(stored)}
+            </span>
+          </Tooltip>
+        );
+      },
     },
     {
       key: "status",
@@ -475,9 +491,13 @@ export function TeammatesSettingsPage({
             />
           );
         }
+        const fallbackLabel =
+          typeof status === "string" && status.length > 0
+            ? status.charAt(0).toUpperCase() + status.slice(1)
+            : "Inactive";
         return (
           <StatusPill
-            label="Inactive"
+            label={fallbackLabel}
             size="md"
             labelTypography="body"
             className={[
@@ -756,6 +776,9 @@ export function TeammatesSettingsPage({
       ...updated,
       userId: updated.userId ?? editRow.userId ?? null,
       permissionLevel: form.permissionLevel,
+      workspacePermissionLevel: permission_level,
+      adminContentPermission: form.isAdmin ? form.permissionLevel : undefined,
+      workspaceMemberRole: mapWorkspaceMemberRole(permission_level),
       isAdmin: form.isAdmin,
       isPaid: isPaidPermissionLevel(permission_level),
     });
@@ -795,7 +818,9 @@ export function TeammatesSettingsPage({
 
         <div className={settingsTableLayoutStyles.tableShell}>
           <div className={settingsTableLayoutStyles.tableScroll}>
-            <div className={settingsTableLayoutStyles.tableScrollInner}>
+            <div
+              className={`${settingsTableLayoutStyles.tableScrollInner} ${teammateKebabStyles.teammatesTableScrollInner}`}
+            >
             <Table
               layout="auto"
               className={`${settingsTableLayoutStyles.tableBorderless} ${teammateKebabStyles.teammatesTable}`}
@@ -1255,25 +1280,56 @@ function sortRoleOptions(roles: RoleOption[]): RoleOption[] {
   return [...roles].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function teammateStatus(row: Teammate): "active" | "pending" | "inactive" {
+function teammateStatus(row: Teammate): "active" | "pending" | string {
+  const raw = row.memberStatus?.trim().toLowerCase();
+  if (raw === "active") return "active";
+  if (raw === "pending") return "pending";
+  if (row.isPendingInvite || row.isPending) return "pending";
   if (row.userId) return "active";
-  if (row.isPendingInvite) return "pending";
+  if (raw) return raw;
   return "inactive";
 }
 
+function displayJobRoleName(roleName: string | null | undefined): string | null {
+  const text = roleName?.trim();
+  if (!text || text.toLowerCase() === "viewer") return null;
+  return text;
+}
+
+function resolvePermissionDisplay(row: Teammate): {
+  stored: WorkspacePermissionLevel;
+  content: ContentPermissionLevel;
+} {
+  const stored =
+    row.workspacePermissionLevel ??
+    toStoredPermissionLevel(row.permissionLevel, row.isAdmin);
+  if (stored === "admin") {
+    return {
+      stored,
+      content: row.adminContentPermission ?? row.permissionLevel ?? "editor",
+    };
+  }
+  return {
+    stored,
+    content: stored === "editor" ? "editor" : "reviewer",
+  };
+}
+
 function mapTeammateRow(raw: Record<string, unknown>): Teammate {
-  const roleJoin = raw.contributor_roles as { name?: string } | null;
   const { contentPermissionLevel, isAdmin } = normalizeTeammatePermissionFields(
     raw.permission_level,
     raw.is_admin,
   );
   const storedLevel = toStoredPermissionLevel(contentPermissionLevel, isAdmin);
+  const roleText = raw.role == null ? null : String(raw.role).trim();
+  const roleName =
+    roleText && roleText.toLowerCase() !== "viewer" ? roleText : null;
   return {
     id: String(raw.id ?? ""),
     name: String(raw.name ?? ""),
     email: raw.email == null ? null : String(raw.email),
     roleId: raw.role_id == null ? null : String(raw.role_id),
-    roleName: roleJoin?.name ?? (raw.role == null ? null : String(raw.role)),
+    roleName,
     permissionLevel: contentPermissionLevel,
     isAdmin,
     isPaid: isPaidPermissionLevel(storedLevel),
@@ -1360,30 +1416,16 @@ function AdminAccessField({
   );
 }
 
-function labelPermission(value: ContentPermissionLevel) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+function labelWorkspacePermission(value: WorkspacePermissionLevel) {
+  if (value === "admin") return "Admin";
+  if (value === "editor") return "Editor";
+  return "Reviewer";
 }
 
-function renderPermissionPill(level: ContentPermissionLevel) {
+function renderWorkspacePermissionPill(level: WorkspacePermissionLevel) {
   return (
     <StatusPill
-      label={labelPermission(level)}
-      color="mushroom"
-      appearance="outline"
-      size="md"
-      labelTypography="body"
-      className={[
-        teammateKebabStyles.tablePillMd,
-        teammateKebabStyles.permissionPill,
-      ].join(" ")}
-    />
-  );
-}
-
-function renderAdminPill() {
-  return (
-    <StatusPill
-      label="Admin"
+      label={labelWorkspacePermission(level)}
       color="mushroom"
       appearance="outline"
       size="md"

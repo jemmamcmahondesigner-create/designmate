@@ -4,8 +4,10 @@ import {
   isPaidPermissionLevel,
   mapInvitePermissionLevel,
   normalizeTeammatePermissionFields,
+  normalizeWorkspacePermission,
   toStoredPermissionLevel,
   type ContentPermissionLevel,
+  type WorkspacePermissionLevel,
 } from "@/lib/workspace/permissions";
 
 export type WorkspaceContributorPickerOption = {
@@ -25,6 +27,12 @@ export type WorkspaceTeammate = {
   roleId: string | null;
   roleName: string | null;
   permissionLevel: ContentPermissionLevel;
+  /** From workspace_members.permission_level (admin | editor | reviewer). */
+  workspacePermissionLevel?: WorkspacePermissionLevel;
+  /** workspace_members.role — admin | member (internal; used for Admin flag content role). */
+  workspaceMemberRole?: "admin" | "member" | null;
+  /** Content permission when workspacePermissionLevel is admin (Editor or Reviewer pill). */
+  adminContentPermission?: ContentPermissionLevel;
   isAdmin: boolean;
   isPaid: boolean;
   isPending: boolean;
@@ -33,6 +41,8 @@ export type WorkspaceTeammate = {
   inviteCode?: string;
   memberId?: string;
   userId?: string | null;
+  /** From workspace_members.status (active | pending). */
+  memberStatus?: string | null;
 };
 
 export type PendingWorkspaceInviteRow = {
@@ -51,6 +61,7 @@ type WorkspaceMemberRow = {
   joined_at: string | null;
   invite_email: string | null;
   user_id: string | null;
+  permission_level?: string | null;
 };
 
 type ContributorRow = Record<string, unknown>;
@@ -83,99 +94,291 @@ function mapContributorToTeammate(item: ContributorRow): Omit<WorkspaceTeammate,
   };
 }
 
-function memberTeammatePermissions(memberRole: string) {
-  return normalizeTeammatePermissionFields(memberRole === "admin" ? "admin" : "reviewer");
+function memberPermissionsFromWorkspaceLevel(permissionLevelRaw: unknown) {
+  const stored = normalizeWorkspacePermission(permissionLevelRaw);
+  const { contentPermissionLevel, isAdmin } = normalizeTeammatePermissionFields(stored);
+  return {
+    stored,
+    contentPermissionLevel,
+    isAdmin,
+    isPaid: isPaidPermissionLevel(stored),
+  };
+}
+
+function isUuidLike(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value.trim(),
+  );
+}
+
+function displayNameForMember(
+  member: WorkspaceMemberRow,
+  contributor?: ContributorRow,
+): string {
+  const contributorName = String(contributor?.name ?? "").trim();
+  if (contributorName && !isUuidLike(contributorName)) {
+    return contributorName;
+  }
+  const inviteEmail = member.invite_email?.trim() || null;
+  if (inviteEmail) return inviteEmail;
+  const contributorEmail = String(contributor?.email ?? "").trim();
+  if (contributorEmail && !isUuidLike(contributorEmail)) {
+    return contributorEmail;
+  }
+  return member.status === "pending" || !member.user_id ? "Pending invite" : "Team member";
+}
+
+const INTERNAL_JOB_ROLES = new Set(["viewer"]);
+
+function isDisplayableJobRole(value: unknown): boolean {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  return !INTERNAL_JOB_ROLES.has(text.toLowerCase());
+}
+
+function jobRoleTextFromContributor(contributor: ContributorRow): string | null {
+  if (!isDisplayableJobRole(contributor.role)) return null;
+  return String(contributor.role).trim();
+}
+
+function contributorMatchesMember(
+  contributor: ContributorRow,
+  member: WorkspaceMemberRow,
+  memberEmails: Set<string>,
+): boolean {
+  const memberUserId = member.user_id == null ? "" : String(member.user_id).trim();
+  const contributorUserId = String(contributor.user_id ?? "").trim();
+  if (memberUserId && contributorUserId === memberUserId) {
+    return true;
+  }
+  const contributorEmail = String(contributor.email ?? "").trim().toLowerCase();
+  return Boolean(contributorEmail && memberEmails.has(contributorEmail));
+}
+
+function memberEmailKeys(
+  member: WorkspaceMemberRow,
+  contributors: ContributorRow[],
+): Set<string> {
+  const emails = new Set<string>();
+  const inviteEmail = member.invite_email?.trim().toLowerCase();
+  if (inviteEmail) emails.add(inviteEmail);
+
+  const memberUserId = member.user_id == null ? "" : String(member.user_id).trim();
+  if (memberUserId) {
+    for (const contributor of contributors) {
+      if (String(contributor.user_id ?? "").trim() !== memberUserId) continue;
+      const email = String(contributor.email ?? "").trim().toLowerCase();
+      if (email) emails.add(email);
+    }
+  }
+  return emails;
+}
+
+/** Job title from contributors.role across all workspace/project rows for the member. */
+export function resolveJobRoleDisplay(
+  member: WorkspaceMemberRow,
+  contributors: ContributorRow[],
+): string | null {
+  const emails = memberEmailKeys(member, contributors);
+  const matching = contributors.filter((contributor) =>
+    contributorMatchesMember(contributor, member, emails),
+  );
+  if (matching.length === 0) return null;
+
+  const validRoles = matching
+    .map((contributor) => ({
+      contributor,
+      role: jobRoleTextFromContributor(contributor),
+    }))
+    .filter((entry): entry is { contributor: ContributorRow; role: string } =>
+      entry.role != null,
+    );
+
+  if (validRoles.length === 0) return null;
+
+  validRoles.sort((left, right) => {
+    const timeDiff =
+      contributorCreatedAtMs(right.contributor) - contributorCreatedAtMs(left.contributor);
+    if (timeDiff !== 0) return timeDiff;
+    return String(right.contributor.id ?? "").localeCompare(String(left.contributor.id ?? ""));
+  });
+
+  return validRoles[0].role;
+}
+
+function resolveAdminContentPermission(
+  member: WorkspaceMemberRow,
+  contributor?: ContributorRow,
+): ContentPermissionLevel {
+  const memberRole = String(member.role ?? "").trim().toLowerCase();
+  if (memberRole === "admin") {
+    return "editor";
+  }
+  if (contributor) {
+    const stored = normalizeWorkspacePermission(contributor.permission_level);
+    if (stored === "editor" || stored === "reviewer") {
+      return stored;
+    }
+    if (stored === "admin") {
+      return normalizeTeammatePermissionFields(stored).contentPermissionLevel;
+    }
+  }
+  return "reviewer";
+}
+
+function contributorCreatedAtMs(contributor: ContributorRow): number {
+  const parsed = Date.parse(String(contributor.created_at ?? ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** One canonical contributor row per auth user (workspace profile, earliest created_at). */
+function buildContributorsByUserId(contributors: ContributorRow[]): Map<string, ContributorRow> {
+  const sorted = [...contributors].sort((left, right) => {
+    const timeDiff = contributorCreatedAtMs(left) - contributorCreatedAtMs(right);
+    if (timeDiff !== 0) return timeDiff;
+    return String(left.id ?? "").localeCompare(String(right.id ?? ""));
+  });
+
+  const byUserId = new Map<string, ContributorRow>();
+  for (const contributor of sorted) {
+    const userId = contributor.user_id;
+    if (userId == null || String(userId).trim() === "") continue;
+    const uid = String(userId);
+    const existing = byUserId.get(uid);
+    const isWorkspaceProfile = contributor.project_id == null;
+    const existingIsWorkspaceProfile = existing?.project_id == null;
+    if (!existing || (isWorkspaceProfile && !existingIsWorkspaceProfile)) {
+      byUserId.set(uid, contributor);
+    }
+  }
+  return byUserId;
+}
+
+function buildContributorsByEmail(contributors: ContributorRow[]): Map<string, ContributorRow> {
+  const sorted = [...contributors].sort((left, right) => {
+    const timeDiff = contributorCreatedAtMs(left) - contributorCreatedAtMs(right);
+    if (timeDiff !== 0) return timeDiff;
+    return String(left.id ?? "").localeCompare(String(right.id ?? ""));
+  });
+
+  const byEmail = new Map<string, ContributorRow>();
+  for (const contributor of sorted) {
+    const email =
+      contributor.email == null ? "" : String(contributor.email).trim().toLowerCase();
+    if (!email) continue;
+    const existing = byEmail.get(email);
+    const isWorkspaceProfile = contributor.project_id == null;
+    const existingIsWorkspaceProfile = existing?.project_id == null;
+    if (!existing || (isWorkspaceProfile && !existingIsWorkspaceProfile)) {
+      byEmail.set(email, contributor);
+    }
+  }
+  return byEmail;
+}
+
+function resolveContributorForMember(
+  member: WorkspaceMemberRow,
+  contributorsByUserId: Map<string, ContributorRow>,
+  contributorsByEmail: Map<string, ContributorRow>,
+): ContributorRow | undefined {
+  const userId = member.user_id == null ? "" : String(member.user_id).trim();
+  if (userId) {
+    return contributorsByUserId.get(userId);
+  }
+  const inviteEmail = member.invite_email?.trim().toLowerCase() || "";
+  if (inviteEmail) {
+    return contributorsByEmail.get(inviteEmail);
+  }
+  return undefined;
 }
 
 export function buildWorkspaceTeammates(
   members: WorkspaceMemberRow[],
   contributors: ContributorRow[],
 ): WorkspaceTeammate[] {
-  const contributorsByUserId = new Map<string, ContributorRow>();
-  const contributorsByEmail = new Map<string, ContributorRow>();
-
-  for (const contributor of contributors) {
-    const userId = contributor.user_id;
-    if (userId != null && String(userId).trim() !== "") {
-      const uid = String(userId);
-      const existing = contributorsByUserId.get(uid);
-      const isWorkspaceProfile = contributor.project_id == null;
-      const existingIsWorkspaceProfile = existing?.project_id == null;
-      if (!existing || (isWorkspaceProfile && !existingIsWorkspaceProfile)) {
-        contributorsByUserId.set(uid, contributor);
-      }
-    }
-    const email =
-      contributor.email == null ? "" : String(contributor.email).trim().toLowerCase();
-    if (email) {
-      const existingByEmail = contributorsByEmail.get(email);
-      const isWorkspaceProfile = contributor.project_id == null;
-      const existingIsWorkspaceProfile = existingByEmail?.project_id == null;
-      if (!existingByEmail || (isWorkspaceProfile && !existingIsWorkspaceProfile)) {
-        contributorsByEmail.set(email, contributor);
-      }
-    }
-  }
+  const contributorsByUserId = buildContributorsByUserId(contributors);
+  const contributorsByEmail = buildContributorsByEmail(contributors);
 
   const teammates: WorkspaceTeammate[] = [];
 
   for (const member of members) {
-    const isPending = member.status === "pending" || !member.user_id;
+    const memberStatus = String(member.status ?? "").trim().toLowerCase() || null;
+    const isPending = memberStatus === "pending" || !member.user_id;
+    const perms = memberPermissionsFromWorkspaceLevel(member.permission_level);
+    const contributor = resolveContributorForMember(
+      member,
+      contributorsByUserId,
+      contributorsByEmail,
+    );
+    const displayName = displayNameForMember(member, contributor);
+    const inviteEmail = member.invite_email?.trim() || null;
+    const jobRole = resolveJobRoleDisplay(member, contributors);
+    const workspaceMemberRole =
+      String(member.role ?? "").trim().toLowerCase() === "admin" ? "admin" : "member";
+    const adminContentPermission =
+      perms.stored === "admin"
+        ? resolveAdminContentPermission(member, contributor)
+        : undefined;
 
     if (isPending) {
-      const inviteEmail = member.invite_email?.trim() || null;
-      const pendingPerms = memberTeammatePermissions(member.role);
       teammates.push({
         id: `pending-${member.id}`,
         memberId: member.id,
-        name: inviteEmail ?? "Pending invite",
-        email: inviteEmail,
-        roleId: null,
-        roleName: null,
-        permissionLevel: pendingPerms.contentPermissionLevel,
-        isAdmin: pendingPerms.isAdmin,
-        isPaid: false,
+        name: displayName,
+        email: inviteEmail ?? (contributor?.email ? String(contributor.email) : null),
+        roleId: contributor?.role_id == null ? null : String(contributor.role_id),
+        roleName: jobRole,
+        permissionLevel: perms.contentPermissionLevel,
+        workspacePermissionLevel: perms.stored,
+        workspaceMemberRole,
+        adminContentPermission,
+        isAdmin: perms.isAdmin,
+        isPaid: perms.isPaid,
         isPending: true,
+        memberStatus,
+        userId: null,
       });
       continue;
     }
 
     const userId = String(member.user_id);
-    const contributor =
-      contributorsByUserId.get(userId) ??
-      (member.invite_email
-        ? contributorsByEmail.get(member.invite_email.trim().toLowerCase())
-        : undefined);
 
     if (contributor) {
       const mapped = mapContributorToTeammate(contributor);
       teammates.push({
         ...mapped,
+        name: displayName,
+        roleName: jobRole,
+        permissionLevel: perms.contentPermissionLevel,
+        workspacePermissionLevel: perms.stored,
+        workspaceMemberRole,
+        adminContentPermission,
+        isAdmin: perms.isAdmin,
+        isPaid: perms.isPaid,
         isPending: false,
+        memberStatus,
         memberId: member.id,
-        // Always hash avatars on auth user id from workspace_members, not contributor row.
         userId: String(member.user_id ?? userId),
       });
       continue;
     }
 
-    const memberPerms = memberTeammatePermissions(member.role);
-    const memberStored = toStoredPermissionLevel(
-      memberPerms.contentPermissionLevel,
-      memberPerms.isAdmin,
-    );
     teammates.push({
       id: `member-${member.id}`,
       memberId: member.id,
       userId: String(member.user_id),
-      name: "Team member",
-      email: member.invite_email,
+      name: displayName,
+      email: inviteEmail,
       roleId: null,
-      roleName: null,
-      permissionLevel: memberPerms.contentPermissionLevel,
-      isAdmin: memberPerms.isAdmin,
-      isPaid: isPaidPermissionLevel(memberStored),
+      roleName: jobRole,
+      permissionLevel: perms.contentPermissionLevel,
+      workspacePermissionLevel: perms.stored,
+      workspaceMemberRole,
+      adminContentPermission,
+      isAdmin: perms.isAdmin,
+      isPaid: perms.isPaid,
       isPending: false,
+      memberStatus,
     });
   }
 
@@ -236,6 +439,33 @@ export async function ensurePendingInviteContributor(
     if (!contributorProfileMatchesWorkspace(row, workspaceId)) {
       return null;
     }
+
+    const jobRole =
+      typeof invite.job_role === "string" && invite.job_role.trim()
+        ? invite.job_role.trim()
+        : null;
+    const existingRole = String(row.role ?? "").trim();
+    const shouldUpdateRole =
+      Boolean(jobRole) &&
+      (!existingRole || existingRole.toLowerCase() === "viewer");
+
+    if (shouldUpdateRole && jobRole) {
+      const roleFields = await resolveContributorRoleFields(supabase, jobRole);
+      const { data: updated, error: updateError } = await supabase
+        .from("contributors")
+        .update({
+          role: roleFields.role,
+          role_id: roleFields.role_id,
+        })
+        .eq("id", String(row.id ?? ""))
+        .select("id, name, email, role, user_id, workspace_id, project_id, created_at")
+        .maybeSingle();
+
+      if (!updateError && updated) {
+        return updated as Record<string, unknown>;
+      }
+    }
+
     return row;
   }
 
@@ -245,7 +475,7 @@ export async function ensurePendingInviteContributor(
   const jobRole =
     typeof invite.job_role === "string" && invite.job_role.trim()
       ? invite.job_role.trim()
-      : "Reviewer";
+      : null;
   const permissionLevel = mapInvitePermissionLevel(invite.role);
   const roleFields = await resolveContributorRoleFields(supabase, jobRole);
 
@@ -420,21 +650,24 @@ export function mapPendingWorkspaceInvites(
     const invitedName =
       typeof row.invited_name === "string" ? row.invited_name.trim() : "";
     const jobRole = typeof row.job_role === "string" ? row.job_role.trim() : "";
-    const { contentPermissionLevel, isAdmin } = normalizeTeammatePermissionFields(
-      mapInvitePermissionLevel(row.role),
-    );
+    const stored = mapInvitePermissionLevel(row.role);
+    const { contentPermissionLevel, isAdmin } = normalizeTeammatePermissionFields(stored);
+    const displayJobRole = isDisplayableJobRole(jobRole) ? jobRole : null;
     return {
       id: `invite-${row.id}`,
-      name: invitedName,
+      name: invitedName || email,
       email,
       roleId: null,
-      roleName: jobRole || null,
+      roleName: displayJobRole,
       permissionLevel: contentPermissionLevel,
+      workspacePermissionLevel: stored,
+      adminContentPermission: stored === "admin" ? contentPermissionLevel : undefined,
       isAdmin,
       isPaid: false,
       isPending: true,
       isPendingInvite: true,
       inviteCode: String(row.invite_code ?? ""),
+      memberStatus: "pending",
     };
   });
 }

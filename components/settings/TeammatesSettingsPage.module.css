@@ -96,7 +96,27 @@
 }
 
 .teammatesTable {
+  width: 100%;
+  min-width: 0;
+}
+
+.teammatesTableScrollInner {
+  width: 100%;
+  min-width: 0;
+}
+
+.teammatesTable :global(.body) :global(.table) {
   min-width: 800px;
+  width: max-content;
+}
+
+.teammatesTable :global(.footer) {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.adminTag {
+  flex-shrink: 0;
 }
 
 .teammatesTable :global(.table) {

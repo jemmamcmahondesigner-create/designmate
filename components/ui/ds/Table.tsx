@@ -165,7 +165,8 @@ export function Table<T extends { id: string }>({
 
   return (
     <div className={wrapClass}>
-      <table className={tableClass}>
+      <div className={styles.body}>
+        <table className={tableClass}>
         <colgroup>
           {columns.map((col) => (
             <col
@@ -311,6 +312,7 @@ export function Table<T extends { id: string }>({
           })}
         </tbody>
       </table>
+      </div>
 
       {showFooter ? (
         <div className={styles.footer}>

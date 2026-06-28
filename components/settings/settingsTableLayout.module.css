@@ -18,8 +18,7 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: hidden;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -44,9 +43,9 @@
   flex: 1 1 auto;
   border: none !important;
   border-radius: 0 !important;
-  overflow: visible !important;
-  width: max-content;
-  min-width: 100%;
+  overflow: hidden !important;
+  width: 100%;
+  min-width: 0;
   min-height: 100%;
 }
 

@@ -12,6 +12,20 @@
   background: var(--surface-page, #faf8f6);
 }
 
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.body .table {
+  width: max-content;
+  min-width: 100%;
+}
+
 .table {
   box-sizing: border-box;
   width: 100%;
@@ -320,6 +334,9 @@
   align-items: center;
   justify-content: flex-end;
   gap: 32px;
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
   margin-top: auto;
   padding: 4px 8px;
   background: var(--surface-app-header, #fff);
