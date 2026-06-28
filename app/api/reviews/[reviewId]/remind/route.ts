@@ -55,7 +55,12 @@ export async function POST(
   }
 
   const projectId = String(reviewRow.project_id ?? "").trim();
-  const access = await assertCanSendReviewReminder(supabase, reviewId, projectId);
+  const access = await assertCanSendReviewReminder(
+    adminSupabase,
+    reviewId,
+    projectId,
+    supabase,
+  );
   if (!access.allowed) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }

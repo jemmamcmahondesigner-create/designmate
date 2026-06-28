@@ -2,18 +2,19 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getEffectiveCurrentContributor } from "@/lib/auth/effectiveContributor";
 
 export async function assertCanSendReviewReminder(
-  supabase: SupabaseClient,
+  adminSupabase: SupabaseClient,
   reviewId: string,
   projectId: string,
+  sessionSupabase: SupabaseClient,
 ): Promise<{ allowed: true; contributorId: string } | { allowed: false }> {
-  const contributor = await getEffectiveCurrentContributor(supabase, projectId);
+  const contributor = await getEffectiveCurrentContributor(sessionSupabase, projectId);
   if (!contributor?.id) {
     return { allowed: false };
   }
 
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await sessionSupabase.auth.getUser();
   const authUserId = user?.id?.trim() ?? "";
 
   const perm = String(contributor.permissionLevel ?? "")
@@ -24,7 +25,7 @@ export async function assertCanSendReviewReminder(
   }
 
   if (authUserId) {
-    const { data: projectRow } = await supabase
+    const { data: projectRow } = await adminSupabase
       .from("projects")
       .select("workspace_id")
       .eq("id", projectId)
@@ -33,7 +34,7 @@ export async function assertCanSendReviewReminder(
       (projectRow as { workspace_id?: string | null } | null)?.workspace_id ?? "",
     ).trim();
     if (workspaceId) {
-      const { data: member } = await supabase
+      const { data: member } = await adminSupabase
         .from("workspace_members")
         .select("permission_level, role")
         .eq("workspace_id", workspaceId)
@@ -56,7 +57,7 @@ export async function assertCanSendReviewReminder(
     }
   }
 
-  const { data: review } = await supabase
+  const { data: review } = await adminSupabase
     .from("reviews")
     .select("owner_display_name, creator_id")
     .eq("id", reviewId)
@@ -79,7 +80,7 @@ export async function assertCanSendReviewReminder(
     return { allowed: true, contributorId: contributor.id };
   }
 
-  const { data: createdEvent } = await supabase
+  const { data: createdEvent } = await adminSupabase
     .from("timeline_events")
     .select("actor_id")
     .eq("review_id", reviewId)
