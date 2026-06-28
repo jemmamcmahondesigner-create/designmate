@@ -1584,10 +1584,17 @@ export function ReviewDetailView({
         error?: string;
       };
       if (res.status === 429) {
-        const rateLimitedAt =
-          data.last_sent_at ?? data.last_reminder_sent_at ?? lastReminderSentAt;
-        if (rateLimitedAt) setLastReminderSentAt(rateLimitedAt);
-        showToast('A reminder was already sent recently');
+        if (data.error === 'rate_limited') {
+          const rateLimitedAt =
+            data.last_sent_at ?? data.last_reminder_sent_at ?? lastReminderSentAt;
+          if (rateLimitedAt) setLastReminderSentAt(rateLimitedAt);
+          showToast('A reminder was already sent recently');
+          return false;
+        }
+        showToast({
+          message: 'Too many requests — please wait a moment and try again.',
+          sentiment: 'danger',
+        });
         return false;
       }
       if (!res.ok) {

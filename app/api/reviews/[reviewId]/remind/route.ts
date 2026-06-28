@@ -141,6 +141,10 @@ export async function POST(
     const email = row.email?.trim();
     if (!email) continue;
 
+    if (recipients.length > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
     const reviewerName =
       row.name?.trim() || email.split("@")[0] || "there";
     const html = getReviewReminderEmailHtml({
@@ -150,30 +154,46 @@ export async function POST(
       reviewUrl,
     });
 
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from,
-        to: [email],
-        subject,
-        html,
-      }),
-    });
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from,
+          to: [email],
+          subject,
+          html,
+        }),
+      });
 
-    if (!response.ok) {
-      const body = await response.text();
-      console.error("[review-remind] Resend API error:", response.status, body);
+      if (response.status === 429) {
+        console.error("[review-remind] Resend rate limit (429)");
+        return NextResponse.json(
+          { error: "Too many requests. Please wait a moment and try again." },
+          { status: 429 },
+        );
+      }
+
+      if (!response.ok) {
+        const body = await response.text();
+        console.error("[review-remind] Resend API error:", response.status, body);
+        return NextResponse.json(
+          { error: "Failed to send reminder email." },
+          { status: 500 },
+        );
+      }
+
+      recipients.push(email);
+    } catch (err) {
+      console.error("[review-remind] Resend send failed:", err);
       return NextResponse.json(
         { error: "Failed to send reminder email." },
         { status: 500 },
       );
     }
-
-    recipients.push(email);
   }
 
   if (pendingReviewerIds.length > 0 && recipients.length === 0) {
