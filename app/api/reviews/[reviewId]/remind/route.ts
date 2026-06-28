@@ -27,7 +27,9 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
-  const { data: review, error: reviewError } = await supabase
+  const adminSupabase = createServiceClient();
+
+  const { data: review, error: reviewError } = await adminSupabase
     .from("reviews")
     .select("id, title, review_focus, project_id, last_reminder_sent_at")
     .eq("id", reviewId)
@@ -58,7 +60,7 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  const { data: feedbackRows, error: feedbackError } = await supabase
+  const { data: feedbackRows, error: feedbackError } = await adminSupabase
     .from("reviewer_feedback")
     .select("reviewer_id, feedback_submitted_at, feedback_status")
     .eq("review_id", reviewId);
@@ -90,7 +92,7 @@ export async function POST(
     });
   }
 
-  const { data: projectRow } = await supabase
+  const { data: projectRow } = await adminSupabase
     .from("projects")
     .select("workspace_id")
     .eq("id", projectId)
@@ -99,8 +101,7 @@ export async function POST(
     (projectRow as { workspace_id?: string | null } | null)?.workspace_id ?? "",
   ).trim();
 
-  const admin = createServiceClient();
-  let contributorsQuery = admin
+  let contributorsQuery = adminSupabase
     .from("contributors")
     .select("id, email, name")
     .in("id", pendingReviewerIds);
@@ -180,7 +181,7 @@ export async function POST(
   let lastReminderSentAt = existingLastSent;
   if (recipients.length > 0) {
     const sentAt = new Date().toISOString();
-    const { error: updateError } = await supabase
+    const { error: updateError } = await adminSupabase
       .from("reviews")
       .update({ last_reminder_sent_at: sentAt })
       .eq("id", reviewId);
