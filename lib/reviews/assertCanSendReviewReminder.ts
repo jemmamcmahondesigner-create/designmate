@@ -7,7 +7,11 @@ export async function assertCanSendReviewReminder(
   projectId: string,
   sessionSupabase: SupabaseClient,
 ): Promise<{ allowed: true; contributorId: string } | { allowed: false }> {
-  const contributor = await getEffectiveCurrentContributor(sessionSupabase, projectId);
+  const contributor = await getEffectiveCurrentContributor(
+    sessionSupabase,
+    projectId,
+    adminSupabase,
+  );
   if (!contributor?.id) {
     return { allowed: false };
   }
