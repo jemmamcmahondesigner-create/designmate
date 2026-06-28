@@ -2,12 +2,13 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Alert } from "@/components/ui/ds";
+import { Alert, type AlertSentiment } from "@/components/ui/ds";
 
 export type ToastShowOptions = {
   message?: string;
   actionLabel?: string;
   onAction?: () => void;
+  sentiment?: AlertSentiment;
 };
 
 type Toast = {
@@ -15,6 +16,7 @@ type Toast = {
   message: string;
   actionLabel?: string;
   onAction?: () => void;
+  sentiment: AlertSentiment;
 };
 
 type ToastContextValue = {
@@ -35,6 +37,7 @@ function buildToast(messageOrOptions?: string | ToastShowOptions): Toast {
     message: opts.message?.trim() || DEFAULT_MESSAGE,
     actionLabel: opts.actionLabel,
     onAction: opts.onAction,
+    sentiment: opts.sentiment ?? "success",
   };
 }
 
@@ -69,6 +72,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           message={toast.message}
           actionLabel={toast.actionLabel}
           onAction={toast.onAction}
+          sentiment={toast.sentiment}
           onDone={showNextToast}
         />
       ) : null}
@@ -94,11 +98,13 @@ function ToastPortal({
   message,
   actionLabel,
   onAction,
+  sentiment,
   onDone,
 }: {
   message: string;
   actionLabel?: string;
   onAction?: () => void;
+  sentiment: AlertSentiment;
   onDone: () => void;
 }) {
   const [opacity, setOpacity] = useState(0);
@@ -147,7 +153,7 @@ function ToastPortal({
       }}
     >
       <Alert
-        sentiment="success"
+        sentiment={sentiment}
         prominence="low"
         title={message}
         actionLabel={actionLabel}

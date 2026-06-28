@@ -1591,7 +1591,10 @@ export function ReviewDetailView({
         return false;
       }
       if (!res.ok) {
-        showToast('Failed to send reminder — please try again');
+        showToast({
+          message: 'Failed to send reminder — please try again',
+          sentiment: 'danger',
+        });
         return false;
       }
       if (data.last_reminder_sent_at) {
@@ -1605,7 +1608,10 @@ export function ReviewDetailView({
       }
       return sent > 0;
     } catch {
-      showToast('Failed to send reminder — please try again');
+      showToast({
+        message: 'Failed to send reminder — please try again',
+        sentiment: 'danger',
+      });
       return false;
     } finally {
       setSendingReminder(false);

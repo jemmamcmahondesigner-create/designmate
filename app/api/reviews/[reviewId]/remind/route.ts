@@ -6,6 +6,7 @@ import { logReviewersNotifiedEvent } from "@/lib/reviews/reviewersNotifiedActivi
 import { isReminderRateLimited } from "@/lib/reviews/notify-review-creator";
 import { getEffectiveCurrentContributor } from "@/lib/auth/effectiveContributor";
 import { getAppOrigin } from "@/lib/workspace/invite-server";
+import { createServiceClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function POST(
@@ -89,10 +90,24 @@ export async function POST(
     });
   }
 
-  const { data: contributors, error: contributorsError } = await supabase
+  const { data: projectRow } = await supabase
+    .from("projects")
+    .select("workspace_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  const workspaceId = String(
+    (projectRow as { workspace_id?: string | null } | null)?.workspace_id ?? "",
+  ).trim();
+
+  const admin = createServiceClient();
+  let contributorsQuery = admin
     .from("contributors")
     .select("id, email, name")
     .in("id", pendingReviewerIds);
+  if (workspaceId) {
+    contributorsQuery = contributorsQuery.eq("workspace_id", workspaceId);
+  }
+  const { data: contributors, error: contributorsError } = await contributorsQuery;
 
   if (contributorsError) {
     return NextResponse.json({ error: contributorsError.message }, { status: 500 });
@@ -153,6 +168,13 @@ export async function POST(
     }
 
     recipients.push(email);
+  }
+
+  if (pendingReviewerIds.length > 0 && recipients.length === 0) {
+    return NextResponse.json(
+      { error: "Failed to send reminder email." },
+      { status: 500 },
+    );
   }
 
   let lastReminderSentAt = existingLastSent;
