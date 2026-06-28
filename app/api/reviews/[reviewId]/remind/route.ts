@@ -134,16 +134,19 @@ export async function POST(
 
   const from = process.env.RESEND_FROM?.trim() || DESIGN_TRACE_RESEND_FROM;
   const subject = `Reminder: your feedback is needed on ${reviewTitle}`;
-  const recipients: string[] = [];
+
+  const batchPayload: Array<{
+    from: string;
+    to: string[];
+    subject: string;
+    html: string;
+  }> = [];
+  const recipientEmails: string[] = [];
 
   for (const contributor of contributors ?? []) {
     const row = contributor as { id: string; email: string | null; name: string | null };
     const email = row.email?.trim();
     if (!email) continue;
-
-    if (recipients.length > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
 
     const reviewerName =
       row.name?.trim() || email.split("@")[0] || "there";
@@ -154,23 +157,37 @@ export async function POST(
       reviewUrl,
     });
 
+    batchPayload.push({
+      from,
+      to: [email],
+      subject,
+      html,
+    });
+    recipientEmails.push(email);
+  }
+
+  if (pendingReviewerIds.length > 0 && batchPayload.length === 0) {
+    return NextResponse.json(
+      { error: "Failed to send reminder email." },
+      { status: 500 },
+    );
+  }
+
+  const recipients: string[] = [];
+
+  if (batchPayload.length > 0) {
     try {
-      const response = await fetch("https://api.resend.com/emails", {
+      const response = await fetch("https://api.resend.com/emails/batch", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          from,
-          to: [email],
-          subject,
-          html,
-        }),
+        body: JSON.stringify(batchPayload),
       });
 
       if (response.status === 429) {
-        console.error("[review-remind] Resend rate limit (429)");
+        console.error("[review-remind] Resend batch rate limit (429)");
         return NextResponse.json(
           { error: "Too many requests. Please wait a moment and try again." },
           { status: 429 },
@@ -179,28 +196,21 @@ export async function POST(
 
       if (!response.ok) {
         const body = await response.text();
-        console.error("[review-remind] Resend API error:", response.status, body);
+        console.error("[review-remind] Resend batch API error:", response.status, body);
         return NextResponse.json(
           { error: "Failed to send reminder email." },
           { status: 500 },
         );
       }
 
-      recipients.push(email);
+      recipients.push(...recipientEmails);
     } catch (err) {
-      console.error("[review-remind] Resend send failed:", err);
+      console.error("[review-remind] Resend batch send failed:", err);
       return NextResponse.json(
         { error: "Failed to send reminder email." },
         { status: 500 },
       );
     }
-  }
-
-  if (pendingReviewerIds.length > 0 && recipients.length === 0) {
-    return NextResponse.json(
-      { error: "Failed to send reminder email." },
-      { status: 500 },
-    );
   }
 
   let lastReminderSentAt = existingLastSent;
