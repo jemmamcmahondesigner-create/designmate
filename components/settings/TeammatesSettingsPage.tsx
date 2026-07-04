@@ -307,7 +307,7 @@ export function TeammatesSettingsPage({
   };
 
   const resendInvite = async (row: Teammate) => {
-    if (!row.isPendingInvite || !row.email?.trim() || !activeWorkspaceId) return;
+    if (!isPendingMemberRow(row) || !row.email?.trim() || !activeWorkspaceId) return;
     setOpenMenuId(null);
     const result = await sendWorkspaceInvite({
       workspace_id: activeWorkspaceId,
@@ -323,13 +323,43 @@ export function TeammatesSettingsPage({
   };
 
   const cancelInvite = async (row: Teammate) => {
-    if (!row.isPendingInvite || !row.inviteCode) return;
+    if (!isPendingMemberRow(row)) return;
     setOpenMenuId(null);
-    const result = await cancelWorkspaceInvite(row.inviteCode);
-    if (!result.success) {
-      showToast(result.message ?? "Could not cancel invite.");
+
+    let inviteCode = row.inviteCode?.trim() || "";
+    if (!inviteCode && row.email?.trim() && activeWorkspaceId) {
+      const supabase = createSupabaseBrowserClient();
+      const { data } = await supabase
+        .from("workspace_invites")
+        .select("invite_code")
+        .eq("workspace_id", activeWorkspaceId)
+        .ilike("email", row.email.trim())
+        .eq("status", "pending")
+        .maybeSingle();
+      inviteCode = String(data?.invite_code ?? "").trim();
+    }
+
+    if (inviteCode) {
+      const result = await cancelWorkspaceInvite(inviteCode);
+      if (!result.success) {
+        showToast(result.message ?? "Could not cancel invite.");
+        return;
+      }
+    } else if (row.memberId) {
+      const supabase = createSupabaseBrowserClient();
+      const { error } = await supabase
+        .from("workspace_members")
+        .delete()
+        .eq("id", row.memberId);
+      if (error) {
+        showToast(error.message || "Could not cancel invite.");
+        return;
+      }
+    } else {
+      showToast("Could not cancel invite.");
       return;
     }
+
     setTeammates((prev) => prev.filter((item) => item.id !== row.id));
     setSelectedRowId((prev) => (prev === row.id ? null : prev));
     showToast("Invite cancelled");
@@ -528,13 +558,15 @@ export function TeammatesSettingsPage({
       cellType: "kebab",
       render: (row) => {
         const isOwnRow = isOwnTeammateRow(row.userId, currentUserId);
-        const showKebab = row.isPendingInvite
-          ? canManageTeammates
-          : !row.isPending &&
-            canShowTeammateKebabMenu(workspacePermissionLevel, {
-              rowUserId: row.userId ?? null,
-              currentUserId,
-            });
+        const isPendingRow = isPendingMemberRow(row);
+        const showKebab = isOwnRow
+          ? false
+          : isPendingRow
+            ? canManageTeammates
+            : canShowTeammateKebabMenu(workspacePermissionLevel, {
+                rowUserId: row.userId ?? null,
+                currentUserId,
+              });
 
         if (!showKebab) return null;
 
@@ -560,7 +592,7 @@ export function TeammatesSettingsPage({
               portal
               portalZIndex={100}
             >
-              {row.isPendingInvite ? (
+              {isPendingRow ? (
                 <>
                   <MenuItem
                     label="Resend invite"
@@ -1278,6 +1310,10 @@ function initialRoleFormValue(row: Teammate, options: RoleOption[]): string {
 
 function sortRoleOptions(roles: RoleOption[]): RoleOption[] {
   return [...roles].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function isPendingMemberRow(row: Teammate): boolean {
+  return row.memberStatus?.trim().toLowerCase() === "pending";
 }
 
 function teammateStatus(row: Teammate): "active" | "pending" | string {
