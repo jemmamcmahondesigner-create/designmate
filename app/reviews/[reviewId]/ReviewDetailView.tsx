@@ -24,6 +24,7 @@ import {
   useState,
   type KeyboardEvent,
   type LegacyRef,
+  type ReactNode,
   type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -132,6 +133,7 @@ import {
 } from '@/lib/reviews/reviewStatusDisplay';
 import { getAvatarInlineStyle, avatarColourKey } from '@/lib/utils/avatarColour';
 import { resolveArtifactPreviewFileType } from '@/lib/artifacts/resolveArtifactPreviewFileType';
+import { ArtifactSnapshotLightbox } from '@/components/reviews/ArtifactSnapshotLightbox';
 import { Warning } from 'phosphor-react';
 
 /** Toast after the remind API successfully emails pending reviewers. */
@@ -167,6 +169,10 @@ export interface ReviewArtifact {
   /** Original link (Figma etc.) used to drive the embed iframe. */
   linkUrl: string | null;
   mimeType?: string | null;
+  /** Captured Figma PNG URL from `artifacts.snapshot_url`. */
+  snapshotUrl?: string | null;
+  /** When the snapshot was captured (`artifacts.snapshot_captured_at`). */
+  snapshotCapturedAt?: string | null;
   /** Client-only AI description UX (not persisted). */
   descriptionAiState?: ArtifactDescriptionState;
   aiGenerated?: boolean;
@@ -1191,6 +1197,84 @@ function initialsFromName(name: string) {
   if (parts.length === 0) return '??';
   if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
   return `${parts[0].slice(0, 1)}${parts[parts.length - 1].slice(0, 1)}`.toUpperCase();
+}
+
+function FigmaSnapshotMediaChrome({
+  artifact,
+  children,
+}: {
+  artifact: ReviewArtifact;
+  children: (args: {
+    mediaViewMode: 'live' | 'snapshot';
+    previewOverlay: ReactNode;
+    onSnapshotImageClick?: () => void;
+    snapshotUrl?: string | null;
+  }) => ReactNode;
+}) {
+  const hasSnapshot = Boolean(
+    artifact.linkUrl?.toLowerCase().includes('figma.com') &&
+      String(artifact.snapshotUrl ?? '').trim(),
+  );
+  const [mediaViewMode, setMediaViewMode] = useState<'live' | 'snapshot'>(
+    hasSnapshot ? 'snapshot' : 'live',
+  );
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+
+  useEffect(() => {
+    if (hasSnapshot) setMediaViewMode('snapshot');
+  }, [hasSnapshot, artifact.snapshotUrl]);
+
+  const previewOverlay = hasSnapshot ? (
+    <div
+      role="group"
+      aria-label="Artifact preview mode"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: 2,
+        gap: 2,
+        borderRadius: 999,
+        border: '1px solid var(--border-default, #e4ddd3)',
+        background: 'var(--surface-card-default, #ffffff)',
+        boxShadow: '0 1px 2px rgba(41, 33, 28, 0.08)',
+      }}
+    >
+      <Button
+        label="Live"
+        size="sm"
+        variant={mediaViewMode === 'live' ? 'primary' : 'ghost'}
+        onClick={() => setMediaViewMode('live')}
+        style={{ borderRadius: 999 }}
+      />
+      <Button
+        label="Snapshot"
+        size="sm"
+        variant={mediaViewMode === 'snapshot' ? 'primary' : 'ghost'}
+        onClick={() => setMediaViewMode('snapshot')}
+        style={{ borderRadius: 999 }}
+      />
+    </div>
+  ) : null;
+
+  return (
+    <>
+      {children({
+        mediaViewMode: hasSnapshot ? mediaViewMode : 'live',
+        previewOverlay,
+        onSnapshotImageClick: hasSnapshot
+          ? () => setLightboxOpen(true)
+          : undefined,
+        snapshotUrl: artifact.snapshotUrl ?? null,
+      })}
+      {lightboxOpen && artifact.snapshotUrl ? (
+        <ArtifactSnapshotLightbox
+          src={artifact.snapshotUrl}
+          capturedAt={artifact.snapshotCapturedAt}
+          onClose={() => setLightboxOpen(false)}
+        />
+      ) : null}
+    </>
+  );
 }
 
 //  View 
@@ -4476,6 +4560,13 @@ export function ReviewDetailView({
               <section id="designs" className="flex flex-col gap-4 scroll-mt-6">
                 {artifacts.map((artifact) => (
                   <div key={artifact.id} id={`review-artifact-${artifact.id}`} className="scroll-mt-6">
+                  <FigmaSnapshotMediaChrome artifact={artifact}>
+                    {({
+                      mediaViewMode,
+                      previewOverlay,
+                      onSnapshotImageClick,
+                      snapshotUrl,
+                    }) => (
                   <ArtifactPreview
                     size="large"
                     fileType={resolveArtifactPreviewFileType({
@@ -4494,6 +4585,10 @@ export function ReviewDetailView({
                     description={artifact.description}
                     imageUrl={artifact.imageUrl ?? undefined}
                     linkUrl={artifact.linkUrl ?? undefined}
+                    snapshotUrl={snapshotUrl}
+                    mediaViewMode={mediaViewMode}
+                    onSnapshotImageClick={onSnapshotImageClick}
+                    previewOverlay={previewOverlay}
                     iterationOptions={["v1", "v2", "v3", "v4", "v5"]}
                     onArtifactNameChange={(name) =>
                       setArtifacts((prev) =>
@@ -4557,6 +4652,8 @@ export function ReviewDetailView({
                         : undefined
                     }
                   />
+                    )}
+                  </FigmaSnapshotMediaChrome>
                   </div>
                 ))}
               </section>

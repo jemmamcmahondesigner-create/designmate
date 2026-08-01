@@ -402,6 +402,14 @@ export interface ArtifactPreviewProps {
   compact?: boolean;
   /** Review detail: thumbnail and title open URL or fullscreen preview. */
   enableOpenInteraction?: boolean;
+  /** Captured Figma snapshot URL — used when `mediaViewMode` is `snapshot`. */
+  snapshotUrl?: string | null;
+  /** Live iframe vs captured snapshot for Figma artifacts. */
+  mediaViewMode?: 'live' | 'snapshot';
+  /** Called when the snapshot image is clicked (e.g. open lightbox). */
+  onSnapshotImageClick?: () => void;
+  /** Optional overlay rendered top-right inside the preview media area. */
+  previewOverlay?: ReactNode;
 
   className?: string;
 }
@@ -447,6 +455,10 @@ export function ArtifactPreview({
   showOptimiseButton = true,
   compact = false,
   enableOpenInteraction = false,
+  snapshotUrl = null,
+  mediaViewMode = 'live',
+  onSnapshotImageClick,
+  previewOverlay = null,
   className,
 }: ArtifactPreviewProps) {
   const nameRef = useRef<HTMLInputElement>(null);
@@ -455,6 +467,8 @@ export function ArtifactPreview({
   const [fullscreenPayload, setFullscreenPayload] =
     useState<ArtifactFullscreenPayload | null>(null);
   const lastOpenTriggerRef = useRef<HTMLElement | null>(null);
+  const showSnapshotMedia =
+    mediaViewMode === 'snapshot' && Boolean(String(snapshotUrl ?? '').trim());
 
   useEffect(() => {
     setIsUserEdited(!persistedAiGenerated);
@@ -465,7 +479,8 @@ export function ArtifactPreview({
     imageUrl,
     fileType,
   });
-  const canOpenPreview = enableOpenInteraction && openTarget != null;
+  const canOpenPreview =
+    enableOpenInteraction && openTarget != null && !showSnapshotMedia;
   const openPreview = useCallback(() => {
     if (!openTarget) return;
     if (openTarget.kind === 'external') {
@@ -638,9 +653,11 @@ export function ArtifactPreview({
   })();
 
   const isImagePreview =
-    Boolean(imageUrl) && isImagePreviewFileType(fileType);
-  const previewOpensOnMediaClick = canOpenPreview && !showGenericLinkCard;
-  const showOpenAction = openTarget != null;
+    (Boolean(imageUrl) && isImagePreviewFileType(fileType)) || showSnapshotMedia;
+  const previewOpensOnMediaClick =
+    (canOpenPreview && !showGenericLinkCard) ||
+    (showSnapshotMedia && Boolean(onSnapshotImageClick));
+  const showOpenAction = openTarget != null && !showSnapshotMedia;
   const showTrashAction = isEditable && Boolean(onMinimise);
   const interactivePreviewClass = [
     previewOpensOnMediaClick ? styles.previewInteractive : '',
@@ -648,6 +665,17 @@ export function ArtifactPreview({
   ]
     .filter(Boolean)
     .join(' ');
+
+  const handlePreviewMediaClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (showSnapshotMedia && onSnapshotImageClick) {
+      lastOpenTriggerRef.current = event.currentTarget;
+      onSnapshotImageClick();
+      return;
+    }
+    if (!canOpenPreview) return;
+    lastOpenTriggerRef.current = event.currentTarget;
+    openPreview();
+  };
 
   return (
     <div className={rootClass}>
@@ -700,21 +728,34 @@ export function ArtifactPreview({
                 ? {
                     role: 'button' as const,
                     tabIndex: 0,
-                    onClick: (event: MouseEvent<HTMLDivElement>) => {
-                      lastOpenTriggerRef.current = event.currentTarget;
-                      openPreview();
-                    },
+                    onClick: handlePreviewMediaClick,
                     onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault();
-                        lastOpenTriggerRef.current = event.currentTarget;
-                        openPreview();
+                        handlePreviewMediaClick(
+                          event as unknown as MouseEvent<HTMLDivElement>,
+                        );
                       }
                     },
                   }
                 : {})}
             >
-              {showGenericLinkCard ? (
+              {showSnapshotMedia ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={String(snapshotUrl)}
+                  alt="Artifact snapshot"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain',
+                    objectPosition: 'center',
+                    display: 'block',
+                    borderRadius: 0,
+                    background: '#c9c0b4',
+                  }}
+                />
+              ) : showGenericLinkCard ? (
                 <LinkOgPreviewCard
                   url={rawLink}
                   hostname={linkHostname}
@@ -730,6 +771,21 @@ export function ArtifactPreview({
                 resolvedPreviewNonLink
               )}
             </div>
+
+            {previewOverlay ? (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 10,
+                  right: 10,
+                  zIndex: 3,
+                }}
+                onClick={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                {previewOverlay}
+              </div>
+            ) : null}
 
             {showOpenAction || showTrashAction ? (
               <div

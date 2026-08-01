@@ -301,6 +301,51 @@ export default async function ReviewDetailPage({
     artifacts = applyArtifactVersionDisplay(artifacts, enriched);
   }
 
+  const snapshotArtifactIds = [
+    ...new Set(
+      artifacts
+        .map((artifact) => String(artifact.canonicalArtifactId ?? '').trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (snapshotArtifactIds.length > 0) {
+    const service = createServiceClient();
+    const { data: snapshotRows } = await service
+      .from('artifacts')
+      .select('id, snapshot_url, snapshot_captured_at')
+      .in('id', snapshotArtifactIds);
+
+    const snapshotById = new Map<
+      string,
+      { snapshotUrl: string | null; snapshotCapturedAt: string | null }
+    >();
+    for (const snapshotRow of snapshotRows ?? []) {
+      const item = snapshotRow as {
+        id?: string | null;
+        snapshot_url?: string | null;
+        snapshot_captured_at?: string | null;
+      };
+      const id = String(item.id ?? '').trim();
+      if (!id) continue;
+      const snapshotUrl = String(item.snapshot_url ?? '').trim() || null;
+      const snapshotCapturedAt =
+        String(item.snapshot_captured_at ?? '').trim() || null;
+      snapshotById.set(id, { snapshotUrl, snapshotCapturedAt });
+    }
+
+    artifacts = artifacts.map((artifact) => {
+      const canonicalId = String(artifact.canonicalArtifactId ?? '').trim();
+      if (!canonicalId) return artifact;
+      const snapshot = snapshotById.get(canonicalId);
+      if (!snapshot) return artifact;
+      return {
+        ...artifact,
+        snapshotUrl: snapshot.snapshotUrl,
+        snapshotCapturedAt: snapshot.snapshotCapturedAt,
+      };
+    });
+  }
+
   const reviewerIdsEarly = Array.isArray(row.reviewer_contributor_ids)
     ? (row.reviewer_contributor_ids as unknown[]).map((id) => String(id))
     : [];
