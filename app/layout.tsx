@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { ToastProvider } from "@/components/Toast";
+import { Analytics } from "@vercel/analytics/next";
 
 export const metadata: Metadata = {
   title: "DesignTrace",
@@ -19,6 +20,7 @@ export default function RootLayout({
     <html lang="en" className="h-full overflow-hidden">
       <body className="h-full overflow-hidden">
         <ToastProvider>{children}</ToastProvider>
+        <Analytics />
       </body>
     </html>
   );
