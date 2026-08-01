@@ -1231,28 +1231,50 @@ function FigmaSnapshotMediaChrome({
       style={{
         display: 'inline-flex',
         alignItems: 'center',
+        flexShrink: 0,
+        height: 28,
         padding: 2,
-        gap: 2,
         borderRadius: 999,
-        border: '1px solid var(--border-default, #e4ddd3)',
-        background: 'var(--surface-card-default, #ffffff)',
-        boxShadow: '0 1px 2px rgba(41, 33, 28, 0.08)',
+        background: 'rgba(255, 255, 255, 0.7)',
+        border: '1px solid rgba(0, 0, 0, 0.1)',
+        boxSizing: 'border-box',
       }}
     >
-      <Button
-        label="Live"
-        size="sm"
-        variant={mediaViewMode === 'live' ? 'primary' : 'ghost'}
-        onClick={() => setMediaViewMode('live')}
-        style={{ borderRadius: 999 }}
-      />
-      <Button
-        label="Snapshot"
-        size="sm"
-        variant={mediaViewMode === 'snapshot' ? 'primary' : 'ghost'}
-        onClick={() => setMediaViewMode('snapshot')}
-        style={{ borderRadius: 999 }}
-      />
+      {(
+        [
+          { key: 'snapshot' as const, label: 'Image' },
+          { key: 'live' as const, label: 'Live' },
+        ] as const
+      ).map((option) => {
+        const active = mediaViewMode === option.key;
+        return (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => setMediaViewMode(option.key)}
+            style={{
+              height: 24,
+              padding: '0 10px',
+              border: 'none',
+              borderRadius: 999,
+              fontSize: 12,
+              fontWeight: 500,
+              lineHeight: 1,
+              fontFamily: "'Plus Jakarta Sans', sans-serif",
+              cursor: 'pointer',
+              transition: 'all 200ms ease-in-out',
+              background: active
+                ? 'var(--brand-primary, #6b1e2e)'
+                : 'transparent',
+              color: active
+                ? '#ffffff'
+                : 'var(--text-secondary, #6b5e55)',
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   ) : null;
 

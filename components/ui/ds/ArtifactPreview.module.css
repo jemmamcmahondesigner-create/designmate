@@ -46,10 +46,19 @@
   background: transparent;
   padding: 0;
   margin: 0;
-  font: inherit;
-  color: inherit;
   text-align: left;
   cursor: pointer;
+  /* Keep typography in sync with `.readonlyName` (do not use `font: inherit`). */
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #6b5e55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .readonlyNameButton:hover {
@@ -506,9 +515,91 @@
 
 .readonlyHeader {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  width: 100%;
+  min-width: 0;
+}
+
+.readonlyHeaderMain {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.readonlyHeaderTrailing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.readonlyHeaderToggle {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.mediaViewToggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 28px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-sizing: border-box;
+}
+
+.mediaViewToggleThumb {
+  position: absolute;
+  top: 2px;
+  width: calc(50% - 2px);
+  height: calc(100% - 4px);
+  border-radius: 999px;
+  background: var(--brand-primary, #6b1e2e);
+  transition: all 200ms ease-in-out;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.mediaViewToggleOption {
+  position: relative;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 50%;
+  min-width: 0;
+  height: 24px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary, #6b5e55);
+  box-sizing: border-box;
+}
+
+.mediaViewToggleOptionActive {
+  color: #ffffff;
+}
+
+.mediaViewToggleLabel {
+  display: inline-block;
+  line-height: 1;
 }
 
 .readonlyName {
@@ -517,6 +608,9 @@
   line-height: 1.5;
   color: #6b5e55;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .readonlyDesc {

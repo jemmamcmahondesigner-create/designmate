@@ -408,7 +408,7 @@ export interface ArtifactPreviewProps {
   mediaViewMode?: 'live' | 'snapshot';
   /** Called when the snapshot image is clicked (e.g. open lightbox). */
   onSnapshotImageClick?: () => void;
-  /** Optional overlay rendered top-right inside the preview media area. */
+  /** Optional trailing control in the read-only header row (e.g. Live/Snapshot toggle). */
   previewOverlay?: ReactNode;
 
   className?: string;
@@ -467,12 +467,34 @@ export function ArtifactPreview({
   const [fullscreenPayload, setFullscreenPayload] =
     useState<ArtifactFullscreenPayload | null>(null);
   const lastOpenTriggerRef = useRef<HTMLElement | null>(null);
-  const showSnapshotMedia =
-    mediaViewMode === 'snapshot' && Boolean(String(snapshotUrl ?? '').trim());
+
+  const trimmedSnapshotUrl = String(snapshotUrl ?? '').trim();
+  const trimmedLinkUrl = String(linkUrl ?? '').trim();
+  const hasFigmaSnapshotToggle = Boolean(
+    trimmedSnapshotUrl && trimmedLinkUrl && isFigmaUrl(trimmedLinkUrl),
+  );
+  const [viewMode, setViewMode] = useState<'live' | 'snapshot'>(() =>
+    hasFigmaSnapshotToggle
+      ? mediaViewMode === 'live'
+        ? 'live'
+        : 'snapshot'
+      : 'live',
+  );
 
   useEffect(() => {
     setIsUserEdited(!persistedAiGenerated);
   }, [aiEditTrackingKey, persistedAiGenerated]);
+
+  useEffect(() => {
+    if (!hasFigmaSnapshotToggle) return;
+    // Re-seed to Image when snapshot availability changes; local clicks own viewMode after that.
+    setViewMode('snapshot');
+  }, [hasFigmaSnapshotToggle, trimmedSnapshotUrl]);
+
+  const showSnapshotMedia =
+    hasFigmaSnapshotToggle &&
+    viewMode === 'snapshot' &&
+    Boolean(trimmedSnapshotUrl);
 
   const openTarget = resolveArtifactOpenTarget({
     linkUrl,
@@ -489,6 +511,23 @@ export function ArtifactPreview({
     }
     setFullscreenPayload(openTarget);
   }, [openTarget]);
+
+  const handleOpenInNewTab = useCallback(() => {
+    if (hasFigmaSnapshotToggle) {
+      const url =
+        viewMode === 'snapshot' ? trimmedSnapshotUrl : trimmedLinkUrl;
+      if (!url) return;
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    openPreview();
+  }, [
+    hasFigmaSnapshotToggle,
+    openPreview,
+    trimmedLinkUrl,
+    trimmedSnapshotUrl,
+    viewMode,
+  ]);
 
   const isSmall = size === 'small';
   const isLarge = size === 'large';
@@ -657,7 +696,8 @@ export function ArtifactPreview({
   const previewOpensOnMediaClick =
     (canOpenPreview && !showGenericLinkCard) ||
     (showSnapshotMedia && Boolean(onSnapshotImageClick));
-  const showOpenAction = openTarget != null && !showSnapshotMedia;
+  /** Absolute image-corner open control — all artifact types with an open target. */
+  const showOpenAction = openTarget != null;
   const showTrashAction = isEditable && Boolean(onMinimise);
   const interactivePreviewClass = [
     previewOpensOnMediaClick ? styles.previewInteractive : '',
@@ -772,21 +812,6 @@ export function ArtifactPreview({
               )}
             </div>
 
-            {previewOverlay ? (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 10,
-                  right: 10,
-                  zIndex: 3,
-                }}
-                onClick={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-              >
-                {previewOverlay}
-              </div>
-            ) : null}
-
             {showOpenAction || showTrashAction ? (
               <div
                 className={styles.previewActionBar}
@@ -798,7 +823,7 @@ export function ArtifactPreview({
                     variant="default"
                     icon="open-tab"
                     label="Open artifact"
-                    onClick={() => openPreview()}
+                    onClick={handleOpenInNewTab}
                   />
                 ) : null}
                 {showTrashAction ? (
@@ -1019,27 +1044,93 @@ export function ArtifactPreview({
       {/* ── Read-only details footer (View Review) ── */}
       {showDetails && isLarge && isReadonly && !isArtifactHistory && (
         <div className={styles.detailsReadonly}>
-          <div className={styles.readonlyHeader}>
-            {canOpenPreview ? (
-              <button
-                type="button"
-                className={styles.readonlyNameButton}
-                onClick={(event) => {
-                  lastOpenTriggerRef.current = event.currentTarget;
-                  openPreview();
-                }}
-              >
-                {artifactName}
-              </button>
-            ) : (
-              <span className={styles.readonlyName}>{artifactName}</span>
-            )}
-            {iteration ? (
-              <Tag
-                label={displayVersionTagLabel(iteration)}
-                variant="default"
-                size="sm"
-              />
+          <div
+            className={styles.readonlyHeader}
+            style={{ height: '32px', marginBottom: 4 }}
+          >
+            <div className={styles.readonlyHeaderMain}>
+              {canOpenPreview ? (
+                <button
+                  type="button"
+                  className={[styles.readonlyName, styles.readonlyNameButton].join(' ')}
+                  onClick={(event) => {
+                    lastOpenTriggerRef.current = event.currentTarget;
+                    openPreview();
+                  }}
+                >
+                  {artifactName}
+                </button>
+              ) : (
+                <span className={styles.readonlyName}>{artifactName}</span>
+              )}
+              {iteration ? (
+                <Tag
+                  label={displayVersionTagLabel(iteration)}
+                  variant="default"
+                  size="sm"
+                />
+              ) : null}
+            </div>
+            {hasFigmaSnapshotToggle ? (
+              <div className={styles.readonlyHeaderTrailing}>
+                <div
+                  className={styles.mediaViewToggle}
+                  role="group"
+                  aria-label="Artifact preview mode"
+                >
+                  <div
+                    className={styles.mediaViewToggleThumb}
+                    style={{
+                      left: viewMode === 'live' ? '50%' : 2,
+                    }}
+                    aria-hidden
+                  />
+                  <button
+                    type="button"
+                    className={[
+                      styles.mediaViewToggleOption,
+                      viewMode === 'snapshot'
+                        ? styles.mediaViewToggleOptionActive
+                        : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    aria-pressed={viewMode === 'snapshot'}
+                    onClick={() => setViewMode('snapshot')}
+                  >
+                    <span
+                      className={styles.mediaViewToggleLabel}
+                      style={{ lineHeight: 1, marginTop: -1 }}
+                    >
+                      Image
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={[
+                      styles.mediaViewToggleOption,
+                      viewMode === 'live'
+                        ? styles.mediaViewToggleOptionActive
+                        : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    aria-pressed={viewMode === 'live'}
+                    onClick={() => setViewMode('live')}
+                  >
+                    <span
+                      className={styles.mediaViewToggleLabel}
+                      style={{ lineHeight: 1, marginTop: -1 }}
+                    >
+                      Live
+                    </span>
+                  </button>
+                </div>
+              </div>
+            ) : previewOverlay ? (
+              <div className={styles.readonlyHeaderTrailing}>
+                <div className={styles.readonlyHeaderToggle}>{previewOverlay}</div>
+              </div>
             ) : null}
           </div>
           {description && (
