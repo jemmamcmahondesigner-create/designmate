@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { triggerFigmaSnapshotsForReview } from "@/lib/figma/triggerFigmaSnapshotsForReview";
 import { logTimelineEventServer } from "@/lib/timeline/logEventServer";
 import { resolveProjectClientFields } from "@/lib/projects/resolveProjectClientFields";
 import { resolveReviewCompleteTarget } from "@/lib/projects/reviewCompleteOnProjectComplete";
@@ -206,6 +207,7 @@ export async function completeProjectAction(
           .update({ status: toStatus })
           .eq("id", id);
         if (reviewError) throw new Error(reviewError.message);
+        await triggerFigmaSnapshotsForReview(id, toStatus);
       })(),
     );
   }

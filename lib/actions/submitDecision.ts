@@ -9,6 +9,7 @@ import {
 } from '@/lib/reviews/artifactSelectionMatch';
 import { resolveBatchStartForNewSubmission } from '@/lib/reviews/changeRequestNumbering';
 import { notifyCreatorDecisionRecorded } from '@/lib/reviews/notify-review-creator';
+import { triggerFigmaSnapshotsForReview } from '@/lib/figma/triggerFigmaSnapshotsForReview';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { logTimelineEventServer } from '@/lib/timeline/logEventServer';
 
@@ -255,6 +256,8 @@ export async function submitDecisionAction(input: SubmitDecisionInput) {
     })
     .eq('id', reviewId);
   if (error) throw error;
+
+  await triggerFigmaSnapshotsForReview(reviewId, nextReviewStatus);
 
   if (isChangeDirection) {
     await supabase

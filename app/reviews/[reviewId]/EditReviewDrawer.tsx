@@ -3,7 +3,10 @@
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { logEditReviewSaveEventsAction } from "@/app/reviews/[reviewId]/actions";
+import {
+  logEditReviewSaveEventsAction,
+  triggerFigmaSnapshotsForReviewAction,
+} from "@/app/reviews/[reviewId]/actions";
 import { AddLinkModal } from "@/components/AddLinkModal";
 import { ArtifactCountIndicator } from "@/components/artifacts/ArtifactCountIndicator";
 import { UploadModal } from "@/components/UploadModal";
@@ -721,6 +724,8 @@ export function EditReviewDrawer({
         setError(reviewUpdateError.message);
         return;
       }
+
+      void triggerFigmaSnapshotsForReviewAction(reviewId, reviewStatus);
 
       if (canEditSetup) {
         const { data: currentVersionRows, error: versionQueryError } = await supabase

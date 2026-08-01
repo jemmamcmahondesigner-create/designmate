@@ -12,6 +12,7 @@ import { buildArtifactUploadedPayloadFields } from "@/lib/timeline/artifactUploa
 import { approvePendingAccessRequestsServer } from "@/lib/accessRequests/approvePendingAccessRequests";
 import { linkContributorToProject, unlinkContributorFromProject, ensureWorkspaceLevelContributor } from "@/lib/contributors/linkContributorToProject";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { triggerFigmaSnapshotsForReview } from "@/lib/figma/triggerFigmaSnapshotsForReview";
 import { mapWorkspaceMemberRole } from "@/lib/workspace/permissions";
 import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
 import { changeRequestCompletedEmailHtml } from "@/lib/emails/change-request-completed-email";
@@ -36,6 +37,14 @@ import { canEditReviewDetails } from "@/lib/reviews/workflow";
 import { resolveNextChangeRequestNumbers, resolveBatchStartForNewSubmission, formatChangeRequestDisplayLabel } from "@/lib/reviews/changeRequestNumbering";
 import { EDIT_REVIEW_DENIED_MESSAGE, normalizeWorkspacePermission } from "@/lib/workspace/permissions";
 import type { PostgrestError } from "@supabase/supabase-js";
+
+/** Client-callable wrapper for post-status snapshot scheduling. */
+export async function triggerFigmaSnapshotsForReviewAction(
+  reviewId: string,
+  newStatus: string,
+): Promise<void> {
+  await triggerFigmaSnapshotsForReview(reviewId, newStatus);
+}
 
 function dedupeIds(ids: string[]) {
   return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
@@ -124,6 +133,7 @@ async function maybeUpdateApproveReviewLifecycleStatus(
   if (prevNorm === nextStatus) return;
 
   await supabase.from("reviews").update({ status: nextStatus }).eq("id", reviewId);
+  await triggerFigmaSnapshotsForReview(reviewId, nextStatus);
   await logTimelineEventServer(supabase, {
     projectId,
     reviewId,
@@ -827,6 +837,7 @@ export async function removeReviewerAction(input: {
       .from("reviews")
       .update({ status: nextStatus })
       .eq("id", input.reviewId);
+    await triggerFigmaSnapshotsForReview(input.reviewId, nextStatus);
   }
 
   if (autoApproved && projectId) {
@@ -1368,6 +1379,7 @@ export async function submitReviewerFeedbackAction(input: {
           .from("reviews")
           .update({ status: nextAlignStatus })
           .eq("id", input.reviewId);
+        await triggerFigmaSnapshotsForReview(input.reviewId, nextAlignStatus);
         await logTimelineEventServer(supabase, {
           projectId,
           reviewId: input.reviewId,
@@ -1405,6 +1417,10 @@ export async function submitReviewerFeedbackAction(input: {
         .from("reviews")
         .update({ status: nextAlignOrFeedbackStatus })
         .eq("id", input.reviewId);
+      await triggerFigmaSnapshotsForReview(
+        input.reviewId,
+        nextAlignOrFeedbackStatus,
+      );
       await logTimelineEventServer(supabase, {
         projectId,
         reviewId: input.reviewId,
@@ -2195,6 +2211,8 @@ export async function updateReviewLifecycleStatusAction(input: {
     return { success: false, error: error.message };
   }
 
+  await triggerFigmaSnapshotsForReview(reviewId, next);
+
   if (normalizeLifecycleKey(current) !== normalizeLifecycleKey(next)) {
     const currentNorm = normalizeLifecycleKey(current);
     const nextNorm = normalizeLifecycleKey(next);
@@ -2291,6 +2309,8 @@ export async function reopenReviewAction(
     if (schemaMessage) return { success: false, error: schemaMessage };
     return { success: false, error: error.message };
   }
+
+  await triggerFigmaSnapshotsForReview(reviewId, reopenTarget);
 
   const actorName =
     contributor?.name?.trim() ||
@@ -2757,6 +2777,8 @@ export async function publishReviewAction(
   if (updateError) {
     return { error: updateError.message };
   }
+
+  await triggerFigmaSnapshotsForReview(reviewId, "in-review");
 
   const actorName =
     contributor?.name?.trim() ||
