@@ -395,6 +395,19 @@ export function SidebarSettingsMenu({
         >
           Subscription
         </button>
+
+        <button
+          type="button"
+          onMouseEnter={() => setHoveredHref("/settings")}
+          onMouseLeave={() => setHoveredHref(null)}
+          style={menuItemStyle(
+            activePath === "/settings",
+            hoveredHref === "/settings",
+          )}
+          onClick={() => navigate("/settings")}
+        >
+          Integrations
+        </button>
       </div>
 
       <div style={footerBlockStyle}>

@@ -39,7 +39,7 @@ export async function GET() {
   const authorizeUrl = new URL("https://www.figma.com/oauth");
   authorizeUrl.searchParams.set("client_id", clientId);
   authorizeUrl.searchParams.set("redirect_uri", redirectUri);
-  authorizeUrl.searchParams.set("scope", "file_read");
+  authorizeUrl.searchParams.set("scope", "file_content:read file_metadata:read file_versions:read");
   authorizeUrl.searchParams.set("state", workspaceId);
   authorizeUrl.searchParams.set("response_type", "code");
 
