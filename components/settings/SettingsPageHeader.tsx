@@ -8,7 +8,7 @@ function breadcrumbPageTitle(pathname: string): string {
   if (last === "profile") return "Your Profile";
   if (last === "subscription") return "Subscription";
   if (last === "clients") return "Groups";
-  if (!last || last === "settings") return "";
+  if (!last || last === "settings") return "Integrations";
   return last.charAt(0).toUpperCase() + last.slice(1);
 }
 
