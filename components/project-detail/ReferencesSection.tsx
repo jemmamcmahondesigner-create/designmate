@@ -25,6 +25,29 @@ function deriveFileType(filename: string): string {
   return "other";
 }
 
+function sourceTypeForStoragePath(
+  storagePath: string | null | undefined
+): "file" | "link" {
+  return storagePath != null && String(storagePath).trim() !== ""
+    ? "file"
+    : "link";
+}
+
+async function resolveProjectWorkspaceId(
+  supabase: ReturnType<typeof createSupabaseBrowserClient>,
+  projectId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("projects")
+    .select("workspace_id")
+    .eq("id", projectId)
+    .maybeSingle();
+  const workspaceId = String(
+    (data as { workspace_id?: string | null } | null)?.workspace_id ?? ""
+  ).trim();
+  return workspaceId === "" ? null : workspaceId;
+}
+
 interface ReferencesSectionProps {
   projectId: string;
   initialReferences: ProjectReference[];
@@ -145,10 +168,13 @@ export function ReferencesSection({
     const snap = undoReferenceSnapshotRef.current;
     if (!snap) return;
     const supabase = createSupabaseBrowserClient();
+    const workspaceId = await resolveProjectWorkspaceId(supabase, projectId);
     const { data, error } = await supabase
-      .from("project_references")
+      .from("sources")
       .insert({
         project_id: projectId,
+        workspace_id: workspaceId,
+        source_type: sourceTypeForStoragePath(snap.storage_path),
         label: snap.label,
         url: snap.url,
         file_name: snap.file_name,
@@ -189,11 +215,14 @@ export function ReferencesSection({
       .getPublicUrl(storagePath);
 
     const publicUrl = urlData.publicUrl;
+    const workspaceId = await resolveProjectWorkspaceId(supabase, projectId);
 
     const { data, error: dbError } = await supabase
-      .from("project_references")
+      .from("sources")
       .insert({
         project_id: projectId,
+        workspace_id: workspaceId,
+        source_type: sourceTypeForStoragePath(storagePath),
         label: file.name,
         url: publicUrl,
         file_name: file.name,
@@ -223,7 +252,7 @@ export function ReferencesSection({
     }
 
     const { error } = await supabase
-      .from("project_references")
+      .from("sources")
       .delete()
       .eq("id", row.id);
 

@@ -144,7 +144,7 @@ export default async function ProjectTimelinePage({
       .order("created_at", { ascending: true }),
     loadProjectContributorsForDisplay(supabase, params.id),
     supabase
-      .from("project_references")
+      .from("sources")
       .select("id, project_id, label, url, file_name, storage_path, file_type, created_at")
       .eq("project_id", params.id)
       .order("created_at", { ascending: true }),
