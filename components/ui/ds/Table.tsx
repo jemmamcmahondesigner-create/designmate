@@ -58,6 +58,8 @@ export type TableProps<T extends { id: string }> = {
   layout?: 'fixed' | 'auto';
   pagination?: TablePagination;
   isRowMuted?: (row: T) => boolean;
+  /** Extra class names for a data row’s `<tr>`. */
+  rowClassName?: (row: T) => string | undefined;
 };
 
 function pageSizeLabel(size: TablePageSizeOption): string {
@@ -128,6 +130,7 @@ export function Table<T extends { id: string }>({
   layout = 'fixed',
   pagination,
   isRowMuted,
+  rowClassName,
 }: TableProps<T>) {
   const wrapClass = [styles.wrap, className ?? ''].filter(Boolean).join(' ');
   const tableClass = [styles.table, layout === 'auto' ? styles.tableAuto : '']
@@ -257,6 +260,7 @@ export function Table<T extends { id: string }>({
               styles.row,
               selected ? styles.rowSelected : '',
               muted ? styles.rowMuted : '',
+              rowClassName?.(row) ?? '',
             ]
               .filter(Boolean)
               .join(' ');

@@ -61,6 +61,9 @@ const ARTIFACTS_TABLE_SCOPE = "artifacts-tab-table";
 const ARTIFACTS_TABLE_SECTION_ROW_STYLES = `
 .${ARTIFACTS_TABLE_SCOPE} tbody tr:has([data-artifact-section-heading]) {
   position: relative;
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
 }
 .${ARTIFACTS_TABLE_SCOPE} tbody tr:has([data-artifact-section-heading]) td {
   overflow: visible !important;
@@ -92,7 +95,7 @@ function renderArtifactSectionHeading(row: Extract<ArtifactsTableRow, { type: "s
     >
       <span
         style={{
-          fontSize: 16,
+          fontSize: 13,
           fontWeight: 600,
           color: SECTION_HEADING_COLOR,
           overflow: "visible",
@@ -159,6 +162,33 @@ function isCompareReviewType(rt: string | null | undefined): boolean {
   return raw === "compare" || raw === "comparison";
 }
 
+function historyReviewTypeKey(
+  rt: string | null | undefined,
+): "compare" | "approve" | "align" | "critique" | null {
+  const raw = String(rt ?? "").trim().toLowerCase();
+  if (raw === "compare" || raw === "comparison") return "compare";
+  if (raw === "approve" || raw === "approval") return "approve";
+  if (raw === "align" || raw === "alignment") return "align";
+  if (raw === "critique") return "critique";
+  return null;
+}
+
+function approveArtifactStatusPill(
+  reviewStatus: string | null | undefined,
+): { label: string; color: StatusPillColor } | null {
+  const status = String(reviewStatus ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-");
+  if (status === "approved" || status === "complete") {
+    return { label: "Approved", color: "green" };
+  }
+  if (status === "needs-changes" || status === "changes-needed") {
+    return { label: "Needs Changes", color: "brand" };
+  }
+  return null;
+}
+
 function versionLabelFor(
   versionId: string,
   versionLabelsByVersionId: Record<string, string>,
@@ -175,6 +205,8 @@ function VersionArtifactPanel({
   versionLabel: string;
 }) {
   const pill = mapReviewTypePill(v.reviewType);
+  const typeKey = historyReviewTypeKey(v.reviewType);
+  const approveStatus = approveArtifactStatusPill(v.reviewStatus);
   const previewFileType = resolveArtifactPreviewFileType({
     linkUrl: v.linkUrl,
     originalFileName: v.fileName,
@@ -190,6 +222,12 @@ function VersionArtifactPanel({
     created && !Number.isNaN(created.getTime())
       ? `Edited ${formatDistanceToNow(created, { addSuffix: true })}`
       : undefined;
+
+  const showFeedbackRow =
+    (typeKey === "approve" || typeKey === "compare") && v.feedbackCount > 0;
+  const showDecisionRow =
+    typeKey === "compare" && Boolean(v.decisionSummary?.trim());
+  const showArtifactStatusRow = typeKey === "approve" && approveStatus != null;
 
   const details = (
     <>
@@ -267,42 +305,57 @@ function VersionArtifactPanel({
           </div>
         }
       />
-      <DetailRow
-        label="Feedback"
-        value={
-          v.feedbackCount > 0 && v.reviewId ? (
-            <Link
-              href={`/reviews/${v.reviewId}?tab=activity`}
-              className="text-[13px] font-normal no-underline hover:underline"
-              style={{ color: TEXT_LINK }}
-            >
-              {v.feedbackCount} comments
-            </Link>
-          ) : (
-            <span className="text-[13px] font-normal" style={{ color: TEXT_DISABLED }}>
-              n/a
-            </span>
-          )
-        }
-      />
-      <DetailRow
-        label="Decision"
-        labelAlign="top"
-        value={
-          v.decisionSummary ? (
+      {showFeedbackRow ? (
+        <DetailRow
+          label="Feedback"
+          value={
+            v.reviewId ? (
+              <Link
+                href={`/reviews/${v.reviewId}?tab=activity`}
+                className="text-[13px] font-normal no-underline hover:underline"
+                style={{ color: TEXT_LINK }}
+              >
+                {v.feedbackCount} comments
+              </Link>
+            ) : (
+              <span
+                className="text-[13px] font-normal"
+                style={{ color: TEXT_SECONDARY }}
+              >
+                {v.feedbackCount} comments
+              </span>
+            )
+          }
+        />
+      ) : null}
+      {showArtifactStatusRow && approveStatus ? (
+        <DetailRow
+          label="Artifact Status"
+          value={
+            <StatusPill
+              label={approveStatus.label}
+              color={approveStatus.color}
+              appearance="filled"
+              prominence="high"
+              size="sm"
+            />
+          }
+        />
+      ) : null}
+      {showDecisionRow ? (
+        <DetailRow
+          label="Decision"
+          labelAlign="top"
+          value={
             <span
               className="text-[13px] font-normal leading-snug"
               style={{ color: TEXT_PRIMARY }}
             >
               {v.decisionSummary}
             </span>
-          ) : (
-            <span className="text-[13px] font-normal" style={{ color: TEXT_DISABLED }}>
-              No final decision yet
-            </span>
-          )
-        }
-      />
+          }
+        />
+      ) : null}
     </>
   );
 
@@ -324,6 +377,9 @@ function VersionArtifactPanel({
       description={v.description ?? ""}
       imageUrl={v.fileUrl ?? undefined}
       linkUrl={v.linkUrl ?? undefined}
+      snapshotUrl={v.snapshot_url ?? null}
+      snapshotCapturedAt={v.snapshot_captured_at ?? null}
+      mediaViewMode={v.snapshot_url ? "snapshot" : "live"}
       figmaFileMeta={null}
       iterationOptions={[]}
       artifactHistoryDetails={details}
@@ -609,7 +665,7 @@ export function ArtifactsTab({
       {
         key: "version",
         label: "Version",
-        width: 96,
+        width: 72,
         align: "right",
         cellType: "custom",
         render: (row, { selected }) => {
@@ -633,8 +689,18 @@ export function ArtifactsTab({
         key: "title",
         label: "Title",
         width: "flex",
-        cellType: "text-bold",
-        render: (row) => (isArtifactRow(row) ? row.versionRowTitle : null),
+        cellType: "custom",
+        render: (row, { selected }) =>
+          isArtifactRow(row) ? (
+            <span
+              className={artifactStyles.titleCell}
+              style={{
+                color: selected ? TEXT_LINK : TEXT_PRIMARY,
+              }}
+            >
+              {row.versionRowTitle}
+            </span>
+          ) : null,
       },
       {
         key: "status",
@@ -866,6 +932,9 @@ export function ArtifactsTab({
                 columns={artifactColumns}
                 rows={tableRows}
                 selectedRowId={selectedVersionId ?? undefined}
+                rowClassName={(row) =>
+                  row.type === "section" ? artifactStyles.sectionRow : undefined
+                }
                 onRowClick={(row) => {
                   if (!isArtifactRow(row)) return;
                   if (

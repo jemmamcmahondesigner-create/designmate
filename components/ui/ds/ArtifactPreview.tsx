@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { ArtifactFullscreenModal, type ArtifactFullscreenPayload } from '@/components/ArtifactFullscreenModal';
+import { ArtifactSnapshotLightbox } from '@/components/reviews/ArtifactSnapshotLightbox';
 import {
   openArtifactTarget,
   resolveArtifactOpenTarget,
@@ -404,7 +405,9 @@ export interface ArtifactPreviewProps {
   enableOpenInteraction?: boolean;
   /** Captured Figma snapshot URL — used when `mediaViewMode` is `snapshot`. */
   snapshotUrl?: string | null;
-  /** Live iframe vs captured snapshot for Figma artifacts. */
+  /** ISO timestamp for lightbox “Captured on …” (from `artifacts.snapshot_captured_at`). */
+  snapshotCapturedAt?: string | null;
+  /** Live iframe vs captured snapshot for Figma artifacts (initial value only). */
   mediaViewMode?: 'live' | 'snapshot';
   /** Called when the snapshot image is clicked (e.g. open lightbox). */
   onSnapshotImageClick?: () => void;
@@ -456,6 +459,7 @@ export function ArtifactPreview({
   compact = false,
   enableOpenInteraction = false,
   snapshotUrl = null,
+  snapshotCapturedAt = null,
   mediaViewMode = 'live',
   onSnapshotImageClick,
   previewOverlay = null,
@@ -466,6 +470,7 @@ export function ArtifactPreview({
   const [isUserEdited, setIsUserEdited] = useState(!persistedAiGenerated);
   const [fullscreenPayload, setFullscreenPayload] =
     useState<ArtifactFullscreenPayload | null>(null);
+  const [snapshotLightboxOpen, setSnapshotLightboxOpen] = useState(false);
   const lastOpenTriggerRef = useRef<HTMLElement | null>(null);
 
   const trimmedSnapshotUrl = String(snapshotUrl ?? '').trim();
@@ -473,6 +478,7 @@ export function ArtifactPreview({
   const hasFigmaSnapshotToggle = Boolean(
     trimmedSnapshotUrl && trimmedLinkUrl && isFigmaUrl(trimmedLinkUrl),
   );
+  // mediaViewMode is initial-only; local clicks own viewMode after mount.
   const [viewMode, setViewMode] = useState<'live' | 'snapshot'>(() =>
     hasFigmaSnapshotToggle
       ? mediaViewMode === 'live'
@@ -528,6 +534,15 @@ export function ArtifactPreview({
     trimmedSnapshotUrl,
     viewMode,
   ]);
+
+  const openSnapshotLightbox = useCallback(() => {
+    if (onSnapshotImageClick) {
+      onSnapshotImageClick();
+      return;
+    }
+    if (!trimmedSnapshotUrl) return;
+    setSnapshotLightboxOpen(true);
+  }, [onSnapshotImageClick, trimmedSnapshotUrl]);
 
   const isSmall = size === 'small';
   const isLarge = size === 'large';
@@ -694,10 +709,9 @@ export function ArtifactPreview({
   const isImagePreview =
     (Boolean(imageUrl) && isImagePreviewFileType(fileType)) || showSnapshotMedia;
   const previewOpensOnMediaClick =
-    (canOpenPreview && !showGenericLinkCard) ||
-    (showSnapshotMedia && Boolean(onSnapshotImageClick));
+    (canOpenPreview && !showGenericLinkCard) || showSnapshotMedia;
   /** Absolute image-corner open control — all artifact types with an open target. */
-  const showOpenAction = openTarget != null;
+  const showOpenAction = openTarget != null || hasFigmaSnapshotToggle;
   const showTrashAction = isEditable && Boolean(onMinimise);
   const interactivePreviewClass = [
     previewOpensOnMediaClick ? styles.previewInteractive : '',
@@ -707,15 +721,67 @@ export function ArtifactPreview({
     .join(' ');
 
   const handlePreviewMediaClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (showSnapshotMedia && onSnapshotImageClick) {
+    if (showSnapshotMedia) {
       lastOpenTriggerRef.current = event.currentTarget;
-      onSnapshotImageClick();
+      openSnapshotLightbox();
       return;
     }
     if (!canOpenPreview) return;
     lastOpenTriggerRef.current = event.currentTarget;
     openPreview();
   };
+
+  const mediaViewToggle = hasFigmaSnapshotToggle ? (
+    <div
+      className={styles.mediaViewToggle}
+      role="group"
+      aria-label="Artifact preview mode"
+    >
+      <div
+        className={styles.mediaViewToggleThumb}
+        style={{
+          left: viewMode === 'live' ? '50%' : 2,
+        }}
+        aria-hidden
+      />
+      <button
+        type="button"
+        className={[
+          styles.mediaViewToggleOption,
+          viewMode === 'snapshot' ? styles.mediaViewToggleOptionActive : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        aria-pressed={viewMode === 'snapshot'}
+        onClick={() => setViewMode('snapshot')}
+      >
+        <span
+          className={styles.mediaViewToggleLabel}
+          style={{ lineHeight: 1, marginTop: -1 }}
+        >
+          Image
+        </span>
+      </button>
+      <button
+        type="button"
+        className={[
+          styles.mediaViewToggleOption,
+          viewMode === 'live' ? styles.mediaViewToggleOptionActive : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        aria-pressed={viewMode === 'live'}
+        onClick={() => setViewMode('live')}
+      >
+        <span
+          className={styles.mediaViewToggleLabel}
+          style={{ lineHeight: 1, marginTop: -1 }}
+        >
+          Live
+        </span>
+      </button>
+    </div>
+  ) : null;
 
   return (
     <div className={rootClass}>
@@ -726,6 +792,16 @@ export function ArtifactPreview({
           lastOpenTriggerRef.current?.focus();
         }}
       />
+      {snapshotLightboxOpen && trimmedSnapshotUrl ? (
+        <ArtifactSnapshotLightbox
+          src={trimmedSnapshotUrl}
+          capturedAt={snapshotCapturedAt}
+          onClose={() => {
+            setSnapshotLightboxOpen(false);
+            lastOpenTriggerRef.current?.focus();
+          }}
+        />
+      ) : null}
       {/* ── Preview area ── */}
       <div
         className={[
@@ -1022,10 +1098,24 @@ export function ArtifactPreview({
           ].join(' ')}
         >
           <div className={styles.artifactHistoryHeaderBlock}>
-            <div className={styles.readonlyHeader}>
-              <span className={styles.readonlyName}>{artifactName}</span>
-              {artifactHistoryVersionTag ? (
-                <Tag label={artifactHistoryVersionTag} variant="default" size="sm" />
+            <div
+              className={styles.readonlyHeader}
+              style={{ height: '32px', marginBottom: 4 }}
+            >
+              <div className={styles.readonlyHeaderMain}>
+                <span className={styles.readonlyName}>{artifactName}</span>
+                {artifactHistoryVersionTag ? (
+                  <Tag
+                    label={artifactHistoryVersionTag}
+                    variant="default"
+                    size="sm"
+                  />
+                ) : null}
+              </div>
+              {mediaViewToggle ? (
+                <div className={styles.readonlyHeaderTrailing}>
+                  {mediaViewToggle}
+                </div>
               ) : null}
             </div>
             {description?.trim() ? (
@@ -1071,61 +1161,9 @@ export function ArtifactPreview({
                 />
               ) : null}
             </div>
-            {hasFigmaSnapshotToggle ? (
+            {mediaViewToggle ? (
               <div className={styles.readonlyHeaderTrailing}>
-                <div
-                  className={styles.mediaViewToggle}
-                  role="group"
-                  aria-label="Artifact preview mode"
-                >
-                  <div
-                    className={styles.mediaViewToggleThumb}
-                    style={{
-                      left: viewMode === 'live' ? '50%' : 2,
-                    }}
-                    aria-hidden
-                  />
-                  <button
-                    type="button"
-                    className={[
-                      styles.mediaViewToggleOption,
-                      viewMode === 'snapshot'
-                        ? styles.mediaViewToggleOptionActive
-                        : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                    aria-pressed={viewMode === 'snapshot'}
-                    onClick={() => setViewMode('snapshot')}
-                  >
-                    <span
-                      className={styles.mediaViewToggleLabel}
-                      style={{ lineHeight: 1, marginTop: -1 }}
-                    >
-                      Image
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className={[
-                      styles.mediaViewToggleOption,
-                      viewMode === 'live'
-                        ? styles.mediaViewToggleOptionActive
-                        : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                    aria-pressed={viewMode === 'live'}
-                    onClick={() => setViewMode('live')}
-                  >
-                    <span
-                      className={styles.mediaViewToggleLabel}
-                      style={{ lineHeight: 1, marginTop: -1 }}
-                    >
-                      Live
-                    </span>
-                  </button>
-                </div>
+                {mediaViewToggle}
               </div>
             ) : previewOverlay ? (
               <div className={styles.readonlyHeaderTrailing}>

@@ -4,6 +4,15 @@
   overflow-x: auto;
 }
 
+.sectionRow td {
+  background-color: #ede8e3 !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  max-height: 32px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
 .artifactsGroupedTable {
   display: flex;
   flex-direction: column;
@@ -26,11 +35,37 @@
 
 /*
  * Title is the only flexible column — must NOT use width: 100% (that steals the
- * entire table in table-layout: fixed). Table .row td max-width: 0 enables ellipsis.
+ * entire table in table-layout: fixed). Allow wrap / line-clamp instead of ellipsis.
  */
 .artifactsTable :global(table td:nth-child(2)),
 .artifactsTable :global(table th:nth-child(2)) {
   min-width: 0;
+  max-width: none;
+  white-space: normal;
+  overflow: visible;
+  height: auto;
+  max-height: none;
+}
+
+.artifactsTable :global(table td:nth-child(2) [class*="cellCustom"]) {
+  display: block;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  max-width: none;
+  min-width: 0;
+}
+
+.titleCell {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  word-break: break-word;
+  font-weight: 700;
+  line-height: 1.4;
+  max-width: 100%;
 }
 
 /* Fixed / hug columns — override Table max-width: 0 so colgroup widths are honoured. */
@@ -50,7 +85,8 @@
 
 .artifactsTable :global(table td:nth-child(1)),
 .artifactsTable :global(table th:nth-child(1)) {
-  min-width: 96px;
+  min-width: 72px;
+  width: 72px;
 }
 
 .artifactsTable :global(table td:nth-child(4)),

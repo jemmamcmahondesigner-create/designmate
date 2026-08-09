@@ -34,6 +34,10 @@ export type ProjectArtifactHistoryVersion = {
   decisionSummary: string | null;
   feedbackCount: number;
   reviewerPeople: { id: string; name: string; avatarUrl: string | null }[];
+  /** From parent `artifacts.snapshot_url`. */
+  snapshot_url?: string | null;
+  /** From parent `artifacts.snapshot_captured_at`. */
+  snapshot_captured_at?: string | null;
 };
 
 export type ProjectArtifactsTabPayload = {
@@ -119,7 +123,7 @@ export async function loadProjectArtifactsTab(
 
   const { data: artifactRows } = await supabase
     .from("artifacts")
-    .select("id, name")
+    .select("id, name, snapshot_url, snapshot_captured_at")
     .eq("project_id", pid)
     .order("name", { ascending: true });
 
@@ -128,6 +132,15 @@ export async function loadProjectArtifactsTab(
     return {
       id: String(o.id ?? ""),
       name: String(o.name ?? ""),
+      snapshot_url:
+        o.snapshot_url == null || String(o.snapshot_url).trim() === ""
+          ? null
+          : String(o.snapshot_url),
+      snapshot_captured_at:
+        o.snapshot_captured_at == null ||
+        String(o.snapshot_captured_at).trim() === ""
+          ? null
+          : String(o.snapshot_captured_at),
     };
   });
 
@@ -136,6 +149,18 @@ export async function loadProjectArtifactsTab(
   }
 
   const artifactIds = artifactsList.map((a) => a.id);
+  const snapshotByArtifactId = new Map(
+    artifactsList.map(
+      (a) =>
+        [
+          a.id,
+          {
+            snapshot_url: a.snapshot_url,
+            snapshot_captured_at: a.snapshot_captured_at,
+          },
+        ] as const,
+    ),
+  );
 
   const { data: versionRows } = await supabase
     .from("artifact_versions")
@@ -214,6 +239,7 @@ export async function loadProjectArtifactsTab(
     list.sort((a, b) => compareVersions(b.version_number, a.version_number));
     historyByArtifactId[aid] = list.map((v) => {
       const rt = v.reviews?.review_type ?? null;
+      const snapshot = snapshotByArtifactId.get(v.artifact_id);
       return {
         versionId: v.id,
         artifactId: v.artifact_id,
@@ -231,6 +257,8 @@ export async function loadProjectArtifactsTab(
         decisionSummary: decisionSummaryFromReview(v.reviews),
         feedbackCount: 0,
         reviewerPeople: [],
+        snapshot_url: snapshot?.snapshot_url ?? null,
+        snapshot_captured_at: snapshot?.snapshot_captured_at ?? null,
       };
     });
   }
