@@ -148,11 +148,6 @@ set requested_to = map.keep_id
 from _teammate_dup_contributors map
 where ar.requested_to = map.drop_id;
 
-update public.review_decision_snapshots rds
-set decision_owner_id = map.keep_id
-from _teammate_dup_contributors map
-where rds.decision_owner_id = map.drop_id;
-
 delete from public.contributors c
 using _teammate_dup_contributors map
 where c.id = map.drop_id;
