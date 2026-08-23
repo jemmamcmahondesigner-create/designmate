@@ -1788,7 +1788,10 @@ export function ReviewDetailView({
           const rateLimitedAt =
             data.last_sent_at ?? data.last_reminder_sent_at ?? lastReminderSentAt;
           if (rateLimitedAt) setLastReminderSentAt(rateLimitedAt);
-          showToast('A reminder was already sent recently');
+          showToast({
+            message: 'A reminder was already sent recently',
+            sentiment: 'warning',
+          });
           return false;
         }
         showToast({
@@ -1809,7 +1812,10 @@ export function ReviewDetailView({
       }
       const sent = typeof data.sent === 'number' ? data.sent : 0;
       if (sent === 0) {
-        showToast('No pending reviewers to remind');
+        showToast({
+          message: 'No pending reviewers to remind',
+          sentiment: 'warning',
+        });
       } else {
         showToast(REMINDER_SUCCESS_TOAST);
       }
@@ -1827,6 +1833,7 @@ export function ReviewDetailView({
 
   const [showFeedbackDrawer, setShowFeedbackDrawer] = useState(false);
   const pendingRevalidation = useRef(false);
+  const isReviewPausedRef = useRef(false);
   const [feedbackSavedAlertVisible, setFeedbackSavedAlertVisible] = useState(false);
   const [feedbackDrawerIsNew, setFeedbackDrawerIsNew] = useState(true);
   const [feedbackDrawerTargetReviewerId, setFeedbackDrawerTargetReviewerId] = useState<string | null>(null);
@@ -1849,6 +1856,7 @@ export function ReviewDetailView({
     allFeedbackRowsProp.length > 0 ? allFeedbackRowsProp : feedbackEntries;
   const openSubmitFeedbackDrawer = useCallback(
     (options?: SubmitFeedbackDrawerOpenOptions) => {
+      if (isReviewPausedRef.current || normStatus(rawStatus) === 'paused') return;
       const creatorNeedsOnBehalfSelection = Boolean(
         reviewCreatorAuthUserId &&
           currentAuthUserId &&
@@ -1917,6 +1925,7 @@ export function ReviewDetailView({
       currentContributorId,
       assignedReviewers,
       changeRequests,
+      rawStatus,
     ],
   );
   const flushPendingRevalidation = useCallback(() => {
@@ -1934,7 +1943,6 @@ export function ReviewDetailView({
   }, [showFeedbackDrawer, router]);
   const [showFinalDecisionDrawer, setShowFinalDecisionDrawer] = useState(false);
   const [finalDecisionChangeDirection, setFinalDecisionChangeDirection] = useState(false);
-  const [reviewDetailsSaveErrorToast, setReviewDetailsSaveErrorToast] = useState<string | null>(null);
   const [showEditTypeModal, setShowEditTypeModal] = useState(false);
   const lastSavedReviewFocusRef = useRef(reviewFocusProp);
   const lastSavedArtifactDescriptionsRef = useRef<Record<string, string>>(
@@ -2080,6 +2088,7 @@ export function ReviewDetailView({
   const displayRawStatus = headerStatusOverride ?? rawStatus;
   const normalizedDisplayStatus = normStatus(displayRawStatus);
   const isReviewPaused = normalizedDisplayStatus === 'paused';
+  isReviewPausedRef.current = isReviewPaused;
   const isReviewDraft = normalizedDisplayStatus === 'draft';
   const resolvedStatusKey =
     normalizedDisplayStatus === 'changes-needed' ? 'needs-changes' : normalizedDisplayStatus;
@@ -2105,7 +2114,7 @@ export function ReviewDetailView({
     try {
       const result = await publishReviewAction(reviewId);
       if (result.error) {
-        showToast(result.error);
+        showToast({ message: result.error, sentiment: 'danger' });
         return;
       }
       showToast('Review published');
@@ -2137,13 +2146,17 @@ export function ReviewDetailView({
       });
       if (!result.success) {
         setHeaderStatusOverride(null);
+        showToast({
+          message: result.error ?? 'Could not update review status',
+          sentiment: 'danger',
+        });
         return;
       }
       setLifecycleToast('Review status updated');
       bumpActivityLog();
       router.refresh();
     },
-    [reviewId, router, bumpActivityLog],
+    [reviewId, router, bumpActivityLog, showToast],
   );
 
   const handleMarkCompleteConfirm = useCallback(async () => {
@@ -2151,7 +2164,10 @@ export function ReviewDetailView({
     try {
       const result = await markCompleteAction(reviewId);
       if (!result.success) {
-        showToast(result.error ?? 'Could not mark review as complete');
+        showToast({
+          message: result.error ?? 'Could not mark review as complete',
+          sentiment: 'danger',
+        });
         return;
       }
       setShowCompleteModal(false);
@@ -2182,7 +2198,10 @@ export function ReviewDetailView({
       setShowReopenModal(false);
       setNotifyOnReopen(true);
       if (!result.success) {
-        showToast(result.error ?? 'Could not reopen review');
+        showToast({
+          message: result.error ?? 'Could not reopen review',
+          sentiment: 'danger',
+        });
         return;
       }
       setHeaderStatusOverride(reopenReviewStatusForType(normalizedReviewType));
@@ -2748,7 +2767,7 @@ export function ReviewDetailView({
     onFinishSaving();
     setReopenReviewSubmitting(false);
     if (error) {
-      showToast(error);
+      showToast({ message: error, sentiment: 'danger' });
       return;
     }
     onSuccess();
@@ -2864,7 +2883,7 @@ export function ReviewDetailView({
       setReopenReviewSubmitting(false);
     }
     if (error) {
-      showToast(error);
+      showToast({ message: error, sentiment: 'danger' });
       return;
     }
     if (reviewersNotified) {
@@ -2976,7 +2995,10 @@ export function ReviewDetailView({
     try {
       const result = await deleteReviewAction(reviewId);
       if (!result.success) {
-        showToast(result.error ?? 'Could not delete review');
+        showToast({
+          message: result.error ?? 'Could not delete review',
+          sentiment: 'danger',
+        });
         return;
       }
       setShowDeleteModal(false);
@@ -3189,7 +3211,7 @@ export function ReviewDetailView({
       });
       setRemoveReviewerSubmitting(false);
       if (error) {
-        showToast(error);
+        showToast({ message: error, sentiment: 'danger' });
         return;
       }
       showToast(autoApproved ? 'Reviewer removed. Review returned to Approved.' : 'Reviewer removed.');
@@ -3204,7 +3226,10 @@ export function ReviewDetailView({
         changeRequestIds,
       });
       if (!result.success) {
-        showToast(result.error ?? 'Could not mark change request as completed.');
+        showToast({
+          message: result.error ?? 'Could not mark change request as completed.',
+          sentiment: 'danger',
+        });
         return;
       }
       router.refresh();
@@ -3218,7 +3243,10 @@ export function ReviewDetailView({
         changeRequestIds,
       });
       if (!result.success) {
-        showToast(result.error ?? 'Could not reopen change request.');
+        showToast({
+          message: result.error ?? 'Could not reopen change request.',
+          sentiment: 'danger',
+        });
         return;
       }
       router.refresh();
@@ -3545,8 +3573,7 @@ export function ReviewDetailView({
       .update({ tradeoffs: serializeTradeoffsForReview(nextTradeoffs) })
       .eq('id', reviewId);
     if (error) {
-      setReviewDetailsSaveErrorToast(error.message);
-      window.setTimeout(() => setReviewDetailsSaveErrorToast(null), 3000);
+      showToast({ message: error.message, sentiment: 'danger' });
       return false;
     }
     if (event) {
@@ -3575,8 +3602,7 @@ export function ReviewDetailView({
       .update({ related_problem_ids: nextProblems.map((problem) => problem.id) })
       .eq('id', reviewId);
     if (error) {
-      setReviewDetailsSaveErrorToast(error.message);
-      window.setTimeout(() => setReviewDetailsSaveErrorToast(null), 3000);
+      showToast({ message: error.message, sentiment: 'danger' });
       return false;
     }
     return true;
@@ -3589,8 +3615,7 @@ export function ReviewDetailView({
     if (next === (lastSavedArtifactDescriptionsRef.current[artifactId] ?? '')) return;
     const saveResult = await persistArtifactDescription(artifactId, next);
     if (!saveResult.success) {
-      setReviewDetailsSaveErrorToast(saveResult.error);
-      window.setTimeout(() => setReviewDetailsSaveErrorToast(null), 3000);
+      showToast({ message: saveResult.error, sentiment: 'danger' });
     }
   }
 
@@ -3646,8 +3671,7 @@ export function ReviewDetailView({
     if (!noChangesSuggested) {
       const saveResult = await persistArtifactDescription(artifactId, result.description);
       if (!saveResult.success) {
-        setReviewDetailsSaveErrorToast(saveResult.error);
-        window.setTimeout(() => setReviewDetailsSaveErrorToast(null), 3000);
+        showToast({ message: saveResult.error, sentiment: 'danger' });
       }
     }
   }
@@ -3661,12 +3685,10 @@ export function ReviewDetailView({
       reviewFocus: next,
     });
     if (!result.success) {
-      setReviewDetailsSaveErrorToast(result.error ?? 'Could not save review details');
-      window.setTimeout(() => {
-        setReviewDetailsSaveErrorToast((prev) =>
-          prev === (result.error ?? 'Could not save review details') ? null : prev
-        );
-      }, 3000);
+      showToast({
+        message: result.error ?? 'Could not save review details',
+        sentiment: 'danger',
+      });
       return;
     }
     lastSavedReviewFocusRef.current = next;
@@ -4123,7 +4145,8 @@ export function ReviewDetailView({
                                 isActivePreference &&
                                 isOwnPreference &&
                                 !reviewIsCompletedOrClosed &&
-                                !compareDirectionApproved;
+                                !compareDirectionApproved &&
+                                !isReviewPaused;
                               return (
                                 <div
                                   key={
@@ -4280,6 +4303,7 @@ export function ReviewDetailView({
                                 const isChangesNeededCard = card.status === 'changes-needed';
                                 const showUpdateFeedbackKebab =
                                   !isChangesNeededCard &&
+                                  !isReviewPaused &&
                                   (entry.reviewerId === currentContributorId ||
                                     isReviewCreator);
                                 const showChangeRequestKebab =
@@ -5384,26 +5408,6 @@ export function ReviewDetailView({
             title="Feedback saved"
             dismissible={false}
           />
-        </div>
-      ) : null}
-      {reviewDetailsSaveErrorToast ? (
-        <div
-          style={{
-            position: 'fixed',
-            right: 24,
-            bottom: feedbackSavedAlertVisible ? 88 : 24,
-            background: '#fceaea',
-            border: '1px solid #e07070',
-            color: '#8a1f1f',
-            borderRadius: 8,
-            padding: '10px 12px',
-            fontSize: 13,
-            zIndex: 1200,
-          }}
-          role="status"
-          aria-live="polite"
-        >
-          {reviewDetailsSaveErrorToast}
         </div>
       ) : null}
 
@@ -7061,7 +7065,7 @@ function RightColumn({
   };
   const headerIconDimmedStyle: React.CSSProperties = {
     ...headerIconOnlyButtonStyle,
-    opacity: reviewClosed ? 0.45 : 1,
+    opacity: reviewClosed || isReviewPaused ? 0.45 : 1,
   };
   const handleMakeDecision = () => {
     if (normalizedReviewType === 'compare' && !isDecisionMaker) return;
@@ -7269,11 +7273,19 @@ function RightColumn({
                       label={
                         reviewClosed
                           ? 'This review has been closed'
-                          : 'Add additional feedback'
+                          : isReviewPaused
+                            ? 'This review is paused'
+                            : 'Add additional feedback'
                       }
                       position="bottom"
                     >
-                      <span style={{ display: 'inline-flex' }}>
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          pointerEvents:
+                            reviewClosed || isReviewPaused ? 'none' : undefined,
+                        }}
+                      >
                         <Button
                           type="button"
                           label="Add feedback"
@@ -7284,10 +7296,8 @@ function RightColumn({
                           iconOnly
                           iconName="plus"
                           style={headerIconDimmedStyle}
-                          disabled={reviewClosed}
-                          onClick={
-                            reviewClosed ? undefined : () => onOpenSubmitFeedbackDrawer()
-                          }
+                          disabled={reviewClosed || isReviewPaused}
+                          onClick={() => onOpenSubmitFeedbackDrawer()}
                         />
                       </span>
                     </Tooltip>
@@ -7297,11 +7307,19 @@ function RightColumn({
                       label={
                         reviewClosed
                           ? 'This review has been closed'
-                          : 'Edit your feedback'
+                          : isReviewPaused
+                            ? 'This review is paused'
+                            : 'Edit your feedback'
                       }
                       position="bottom"
                     >
-                      <span style={{ display: 'inline-flex' }}>
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          pointerEvents:
+                            reviewClosed || isReviewPaused ? 'none' : undefined,
+                        }}
+                      >
                         <Button
                           type="button"
                           label="Edit feedback"
@@ -7312,23 +7330,19 @@ function RightColumn({
                           iconOnly
                           iconName="edit"
                           style={headerIconDimmedStyle}
-                          disabled={reviewClosed}
-                          onClick={
-                            reviewClosed
-                              ? undefined
-                              : () => {
-                                  const entry = feedback.find(
-                                    (thread) =>
-                                      thread.reviewerId === currentContributorId &&
-                                      thread.status === 'submitted',
-                                  );
-                                  if (!entry) return;
-                                  onOpenSubmitFeedbackDrawer({
-                                    prefill: true,
-                                    feedbackEntryId: entry.id,
-                                  });
-                                }
-                          }
+                          disabled={reviewClosed || isReviewPaused}
+                          onClick={() => {
+                            const entry = feedback.find(
+                              (thread) =>
+                                thread.reviewerId === currentContributorId &&
+                                thread.status === 'submitted',
+                            );
+                            if (!entry) return;
+                            onOpenSubmitFeedbackDrawer({
+                              prefill: true,
+                              feedbackEntryId: entry.id,
+                            });
+                          }}
                         />
                       </span>
                     </Tooltip>
@@ -7636,6 +7650,7 @@ function RightColumn({
                           label={submitFeedbackLabel}
                           fullWidth
                           className="w-full"
+                          disabled={isReviewPaused}
                           onClick={() => onOpenSubmitFeedbackDrawer()}
                         />
                       </Tooltip>

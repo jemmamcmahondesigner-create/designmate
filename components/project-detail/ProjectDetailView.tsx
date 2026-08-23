@@ -1,6 +1,5 @@
 "use client";
 
-import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
   useCallback,
@@ -10,6 +9,7 @@ import {
   useState
 } from "react";
 import { Button, NotificationBadge, ReviewCard } from "@/components/ui/ds";
+import { FixedToastPortal } from "@/components/FixedToastPortal";
 import { useNewReviewDrawer } from "@/components/NewReviewDrawerProvider";
 import type {
   ProjectContributor,
@@ -83,71 +83,6 @@ function contributorsToTeammateUsers(rows: ProjectContributor[]): User[] {
     userId: c.userId ?? null,
     avatarUrl: c.avatarUrl ?? null
   }));
-}
-
-function FixedSuccessToastPortal({
-  message,
-  onDone
-}: {
-  message: string;
-  onDone: () => void;
-}) {
-  const [opacity, setOpacity] = useState(0);
-  const [transition, setTransition] = useState("opacity 200ms ease");
-  const [mounted, setMounted] = useState(false);
-  const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    let innerRaf = 0;
-    const outerRaf = requestAnimationFrame(() => {
-      innerRaf = requestAnimationFrame(() => setOpacity(1));
-    });
-    const startFadeOut = window.setTimeout(() => {
-      setTransition("opacity 500ms ease");
-      setOpacity(0);
-    }, 3500);
-    const remove = window.setTimeout(() => {
-      onDoneRef.current();
-    }, 4000);
-    return () => {
-      cancelAnimationFrame(outerRaf);
-      cancelAnimationFrame(innerRaf);
-      window.clearTimeout(startFadeOut);
-      window.clearTimeout(remove);
-    };
-  }, []);
-
-  if (!mounted || typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className="fixed z-50"
-      style={{
-        bottom: 24,
-        left: 24,
-        backgroundColor: "#ebf6ee",
-        border: "1px solid #7dc98f",
-        borderRadius: 8,
-        padding: "12px 16px",
-        fontSize: 13,
-        fontWeight: 500,
-        color: "#256b38",
-        boxShadow: "0px 4px 12px rgba(41,33,28,0.12)",
-        opacity,
-        transition,
-        maxWidth: 360
-      }}
-      role="status"
-    >
-      {message}
-    </div>,
-    document.body
-  );
 }
 
 export type ProjectDetailTab = "overview" | "timeline" | "artifacts";
@@ -787,7 +722,7 @@ export function ProjectDetailView({
         </div>
       </div>
       {successToast ? (
-        <FixedSuccessToastPortal
+        <FixedToastPortal
           key={successToast}
           message={successToast}
           onDone={() => setSuccessToast(null)}

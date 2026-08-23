@@ -1925,6 +1925,37 @@ function assertCanEditReview(contributor: { permissionLevel: string | null } | n
   return { ok: true as const };
 }
 
+/** Matches client canEditCoreDetails: project contributor, workspace permission, or review creator. */
+async function assertCanEditReviewLifecycle(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  contributor: { permissionLevel: string | null; id?: string } | null,
+  reviewCreatorAuthUserId: string | null,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (canEditReviewDetails(contributor?.permissionLevel ?? null)) {
+    return { ok: true };
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const authUserId = user?.id?.trim() ?? "";
+  const creatorId = String(reviewCreatorAuthUserId ?? "").trim();
+  if (authUserId && creatorId && authUserId === creatorId) {
+    return { ok: true };
+  }
+
+  // Workspace-level contributor (no project_id filter) may still be editor/admin.
+  const workspaceContributor = await getEffectiveCurrentContributor(
+    supabase,
+    undefined,
+  );
+  if (canEditReviewDetails(workspaceContributor?.permissionLevel ?? null)) {
+    return { ok: true };
+  }
+
+  return { ok: false, error: EDIT_REVIEW_DENIED_MESSAGE };
+}
+
 async function notifyReviewerChangeRequestCompleted(input: {
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
   reviewId: string;
@@ -2183,7 +2214,7 @@ export async function updateReviewLifecycleStatusAction(input: {
   const supabase = await createSupabaseServerClient();
   const { data: review } = await supabase
     .from("reviews")
-    .select("id, project_id, status, review_type, title")
+    .select("id, project_id, status, review_type, title, creator_id")
     .eq("id", reviewId)
     .maybeSingle();
   if (!review) return { success: false, error: "Review not found." };
@@ -2191,11 +2222,22 @@ export async function updateReviewLifecycleStatusAction(input: {
   const projectId = String((review as Record<string, unknown>).project_id ?? "");
   const reviewType = String((review as Record<string, unknown>).review_type ?? "");
   const reviewTitle = String((review as Record<string, unknown>).title ?? "Review");
-  const contributor = await getEffectiveCurrentContributor(
+  const reviewCreatorAuthUserId =
+    (review as Record<string, unknown>).creator_id == null
+      ? null
+      : String((review as Record<string, unknown>).creator_id);
+  let contributor = await getEffectiveCurrentContributor(
     supabase,
     projectId || undefined
   );
-  const gate = assertCanEditReview(contributor);
+  if (!contributor) {
+    contributor = await getEffectiveCurrentContributor(supabase, undefined);
+  }
+  const gate = await assertCanEditReviewLifecycle(
+    supabase,
+    contributor,
+    reviewCreatorAuthUserId,
+  );
   if (!gate.ok) return { success: false, error: gate.error };
 
   const current = String((review as Record<string, unknown>).status ?? "draft");
@@ -2218,6 +2260,8 @@ export async function updateReviewLifecycleStatusAction(input: {
     const nextNorm = normalizeLifecycleKey(next);
     const reopenTarget = reopenReviewStatusForType(reviewType);
     const isReviewReopen = currentNorm === "complete" && nextNorm === reopenTarget;
+    const isPause = nextNorm === "paused";
+    const isReactivate = currentNorm === "paused" && nextNorm === "in-review";
 
     let openChangeRequestCount = 0;
     if (nextNorm === "complete") {
@@ -2229,11 +2273,17 @@ export async function updateReviewLifecycleStatusAction(input: {
       openChangeRequestCount = count ?? 0;
     }
 
-    await logTimelineEventServer(supabase, {
+    const eventType = isPause
+      ? ("review_paused" as const)
+      : isReactivate
+        ? ("review_reactivated" as const)
+        : ("status_changed" as const);
+
+    const timelineResult = await logTimelineEventServer(supabase, {
       projectId,
       reviewId,
       actorId: contributor?.id ?? null,
-      eventType: "status_changed",
+      eventType,
       payload: {
         review_title: reviewTitle,
         review_id: reviewId,
@@ -2243,12 +2293,20 @@ export async function updateReviewLifecycleStatusAction(input: {
         from_status: current,
         to_status: next,
         status_transition_trigger: "manual",
+        actor_name: contributor?.name ?? undefined,
         ...(isReviewReopen ? { review_reopened: true } : {}),
         ...(nextNorm === "complete"
           ? { open_change_request_count: openChangeRequestCount }
           : {}),
       },
     });
+    if (!timelineResult.ok) {
+      console.error(
+        "[updateReviewLifecycleStatusAction] timeline failed:",
+        timelineResult.error,
+        eventType,
+      );
+    }
   }
 
   revalidatePath(`/reviews/${reviewId}`);

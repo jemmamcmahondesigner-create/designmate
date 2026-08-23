@@ -22,7 +22,9 @@ export function includeInProjectTimeline(event: ProjectTimelineEventLike): boole
     t === "review_created" ||
     t === "concept_selected" ||
     t === "decision_recorded" ||
-    t === "decision_made"
+    t === "decision_made" ||
+    t === "review_paused" ||
+    t === "review_reactivated"
   ) {
     return true;
   }

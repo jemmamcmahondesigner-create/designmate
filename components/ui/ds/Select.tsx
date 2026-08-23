@@ -12,7 +12,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
-import { useInsideModal } from './ModalPortalContext';
+import { useInsideOverlay } from './ModalPortalContext';
 import styles from './Select.module.css';
 
 export type SelectSize = 'sm' | 'md' | 'lg';
@@ -61,7 +61,8 @@ export interface SelectProps {
   /**
    * When true, menu is portaled to document.body with position fixed from trigger
    * getBoundingClientRect() — use inside overflow:hidden containers (e.g. modals).
-   * When false, menu is position:absolute; top:100% under the trigger wrapper.
+   * Also auto-enabled inside Drawer/Modal via OverlayPortalContext.
+   * When false (and not inside an overlay), menu is position:absolute under the trigger.
    */
   portaled?: boolean;
   /** When portaled, close the menu on scroll outside the trigger/menu (e.g. drawer body). */
@@ -91,8 +92,8 @@ export function Select({
   portaled = false,
   closeOnScroll = false,
 }: SelectProps) {
-  const insideModal = useInsideModal();
-  const effectivePortaled = portaled || insideModal;
+  const insideOverlay = useInsideOverlay();
+  const effectivePortaled = portaled || insideOverlay;
   const autoId = useId();
   const id = idProp ?? autoId;
   const [open, setOpen] = useState(false);

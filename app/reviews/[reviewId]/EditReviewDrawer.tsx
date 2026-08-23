@@ -870,7 +870,10 @@ export function EditReviewDrawer({
           "[EditReviewDrawer] activity log failed:",
           timelineResult.error,
         );
-        showToast("Changes saved, but activity log could not be updated.");
+        showToast({
+          message: "Changes saved, but activity log could not be updated.",
+          sentiment: "warning",
+        });
       }
 
       /*

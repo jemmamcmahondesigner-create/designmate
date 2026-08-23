@@ -319,8 +319,6 @@ export function RelatedArtifactSelect({
           open={open}
           onClose={() => setOpen(false)}
           anchorRef={triggerRef}
-          portal
-          portalZIndex={9999}
           align="left"
           aria-label="Related artifact options"
           className={styles.menuShell}

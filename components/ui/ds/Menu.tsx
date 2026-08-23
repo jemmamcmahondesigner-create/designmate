@@ -18,6 +18,7 @@ import { Button } from './Button';
 import { Checkbox } from './Checkbox';
 import { FilterPanel } from './FilterPanel';
 import { Icon, type IconName } from './Icon';
+import { useInsideOverlay } from './ModalPortalContext';
 import { getAvatarInlineStyle, avatarColourKey } from '@/lib/utils/avatarColour';
 import styles from './Menu.module.css';
 
@@ -285,9 +286,10 @@ export interface MenuProps {
   anchorRef?: RefObject<HTMLElement>;
   /** Menu alignment relative to its nearest positioned ancestor */
   align?: 'left' | 'right';
-  /** Render to `document.body` with fixed positioning (avoids overflow clipping, e.g. tables) */
+  /** Render to `document.body` with fixed positioning (avoids overflow clipping, e.g. tables).
+   *  Also auto-enabled inside Drawer/Modal via OverlayPortalContext. */
   portal?: boolean;
-  /** z-index when `portal` is true (default 100) */
+  /** z-index when portaled (default 10000 — above Drawer 400 and Modal 510) */
   portalZIndex?: number;
   /** Optional id for the menu list element (aria-controls target) */
   id?: string;
@@ -321,6 +323,8 @@ export function Menu({
   className,
 }: MenuProps) {
   const isSectionsType = type === 'sections';
+  const insideOverlay = useInsideOverlay();
+  const effectivePortal = portal || insideOverlay;
   const menuRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const [portalStyle, setPortalStyle] = useState<CSSProperties>({});
@@ -416,7 +420,7 @@ export function Menu({
   }, [open]);
 
   const updatePortalPosition = useCallback(() => {
-    if (!open || !portal || isSectionsType) return;
+    if (!open || !effectivePortal || isSectionsType) return;
     const el = anchorRef?.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
@@ -426,7 +430,7 @@ export function Menu({
     const below = window.innerHeight - rect.bottom - gap - pad;
     const above = rect.top - gap - pad;
     const openUp = below < h && above > below;
-    const z = portalZIndex ?? 100;
+    const z = portalZIndex ?? 10000;
     const next: CSSProperties = {
       position: 'fixed',
       zIndex: z,
@@ -452,10 +456,10 @@ export function Menu({
       }
     }
     setPortalStyle(next);
-  }, [open, portal, isSectionsType, align, portalZIndex, anchorRef]);
+  }, [open, effectivePortal, isSectionsType, align, portalZIndex, anchorRef]);
 
   useLayoutEffect(() => {
-    if (!open || !portal || isSectionsType) return;
+    if (!open || !effectivePortal || isSectionsType) return;
     updatePortalPosition();
     const raf = requestAnimationFrame(() => updatePortalPosition());
     const el = menuRef.current;
@@ -472,11 +476,11 @@ export function Menu({
       window.removeEventListener('scroll', updatePortalPosition, true);
       window.removeEventListener('resize', updatePortalPosition);
     };
-  }, [open, portal, isSectionsType, updatePortalPosition, children, footerAction, footerSlot]);
+  }, [open, effectivePortal, isSectionsType, updatePortalPosition, children, footerAction, footerSlot]);
 
   if (!open) return null;
 
-  const usePortalLayout = portal && !isSectionsType;
+  const usePortalLayout = effectivePortal && !isSectionsType;
 
   const rootClassResolved = [
     styles.menu,

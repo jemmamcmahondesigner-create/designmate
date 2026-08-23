@@ -116,7 +116,8 @@
 }
 
 /* ─── Body ──────────────────────────────────────────────────────────────────── */
-/* DS Select uses a portaled menu (see Select.tsx) so dropdowns clear this footer; keep body scrollable, not overflow:hidden. */
+/* Select/Menu auto-portal via OverlayPortalContext so dropdowns clear this footer;
+   keep body scrollable, not overflow:hidden. */
 
 .body {
   flex: 1 1 0;

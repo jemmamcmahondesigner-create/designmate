@@ -96,5 +96,6 @@ export async function resolveCanonicalTimelineActor(
   if (match) {
     return { contributorId: match.contributorId, name: match.name };
   }
-  return { contributorId: trimmed, name: null };
+  // Never pass through unresolved ids (e.g. auth.users id) — FK is contributors(id).
+  return { contributorId: null, name: null };
 }

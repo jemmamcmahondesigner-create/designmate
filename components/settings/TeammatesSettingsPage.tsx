@@ -315,7 +315,7 @@ export function TeammatesSettingsPage({
       permission_level: toStoredPermissionLevel(row.permissionLevel, row.isAdmin),
     });
     if (result.status === "error") {
-      showToast(result.message);
+      showToast({ message: result.message, sentiment: "danger" });
       return;
     }
     showToast(`Invite resent to ${row.email.trim()}`);
@@ -342,7 +342,10 @@ export function TeammatesSettingsPage({
     if (inviteCode) {
       const result = await cancelWorkspaceInvite(inviteCode);
       if (!result.success) {
-        showToast(result.message ?? "Could not cancel invite.");
+        showToast({
+          message: result.message ?? "Could not cancel invite.",
+          sentiment: "danger",
+        });
         return;
       }
     } else if (row.memberId) {
@@ -352,11 +355,14 @@ export function TeammatesSettingsPage({
         .delete()
         .eq("id", row.memberId);
       if (error) {
-        showToast(error.message || "Could not cancel invite.");
+        showToast({
+          message: error.message || "Could not cancel invite.",
+          sentiment: "danger",
+        });
         return;
       }
     } else {
-      showToast("Could not cancel invite.");
+      showToast({ message: "Could not cancel invite.", sentiment: "danger" });
       return;
     }
 

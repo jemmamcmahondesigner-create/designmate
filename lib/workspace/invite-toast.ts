@@ -1,10 +1,11 @@
 import type { InviteApiResponse } from "@/types/invites";
+import type { ToastShowOptions } from "@/components/Toast";
 
 export function inviteToastMessage(
   result: InviteApiResponse,
   fallbackName: string,
   fallbackEmail: string,
-): string {
+): string | ToastShowOptions {
   switch (result.status) {
     case "invited":
       return `Invite sent to ${fallbackEmail}`;
@@ -13,8 +14,14 @@ export function inviteToastMessage(
     case "already_member":
       return `${fallbackName} is already in this workspace`;
     case "error":
-      return result.message;
+      return {
+        message: result.message,
+        sentiment: "danger",
+      };
     default:
-      return "Could not process invite.";
+      return {
+        message: "Could not process invite.",
+        sentiment: "danger",
+      };
   }
 }

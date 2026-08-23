@@ -1,6 +1,5 @@
 "use client";
 
-import { createPortal } from "react-dom";
 import {
   Fragment,
   useCallback,
@@ -155,36 +154,6 @@ const TEAMMATE_PERMISSION_SELECT_OPTIONS = [
   { value: "reviewer", label: "Reviewer" },
   { value: "editor", label: "Editor" },
 ] as const;
-
-function DrawerArtifactToastPortal({ message }: { message: string }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  if (!mounted || typeof document === "undefined") return null;
-  return createPortal(
-    <div
-      className="fixed z-[301]"
-      style={{
-        bottom: 24,
-        left: 24,
-        backgroundColor: "#ebf6ee",
-        border: "1px solid #7dc98f",
-        borderRadius: 8,
-        padding: "12px 16px",
-        fontSize: 13,
-        fontWeight: 500,
-        color: "#256b38",
-        boxShadow: "0px 4px 12px rgba(41,33,28,0.12)",
-        maxWidth: 360
-      }}
-      role="status"
-    >
-      {message}
-    </div>,
-    document.body
-  );
-}
 
 type ArtifactDraft = {
   localKey: string;
@@ -424,7 +393,6 @@ export function CreateReviewDrawer({
   /** Blocks Create until Step 3 has settled (avoids Next→Create click carry-over when focus already filled). */
   const createArmedRef = useRef(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [artifactToast, setArtifactToast] = useState<string | null>(null);
   const [hoveredChipId, setHoveredChipId] = useState<string | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [createTeammateModalOpen, setCreateTeammateModalOpen] = useState(false);
@@ -521,12 +489,12 @@ export function CreateReviewDrawer({
     if (reviewType !== "compare" || artifacts.length >= 2) return;
     reviewTypeIsAiSuggested.current = false;
     setReviewType("approve");
-    setArtifactToast(
-      "Compare requires at least 2 artifacts. Review type changed to Approve.",
-    );
-    const timer = window.setTimeout(() => setArtifactToast(null), 4000);
-    return () => window.clearTimeout(timer);
-  }, [artifacts.length, reviewType]);
+    showToast({
+      message:
+        "Compare requires at least 2 artifacts. Review type changed to Approve.",
+      sentiment: "warning",
+    });
+  }, [artifacts.length, reviewType, showToast]);
   useEffect(() => {
     figmaMetaMapRef.current = figmaMetaMap;
   }, [figmaMetaMap]);
@@ -584,8 +552,7 @@ export function CreateReviewDrawer({
         .filter(Boolean);
       if (names.length > 0) void runReviewTitleGeneration(names);
     }, 0);
-    setArtifactToast("Artifact added");
-    setTimeout(() => setArtifactToast(null), 3000);
+    showToast({ message: "Artifact added", sentiment: "success" });
     setTimeout(() => {
       drawerBodyRef.current?.scrollTo({
         top: drawerBodyRef.current.scrollHeight,
@@ -1165,10 +1132,7 @@ export function CreateReviewDrawer({
   const selectedProjectName =
     projectMenuOptions.find((p) => p.id === selectedRelatedProjectId)?.name ?? "";
 
-  // Title AI still uses a two-bucket surface; focus AI gets the real ReviewType.
-  function reviewTypeForTitleAi(rt: ReviewType): "Approval" | "Comparison" {
-    return rt === "compare" ? "Comparison" : "Approval";
-  }
+  // Title AI and focus AI both receive the real ReviewType.
 
   /** Auto-generate review title from artifact names (Step 1 → Step 2 wiring). */
   async function runReviewTitleGeneration(names: string[]) {
@@ -1186,7 +1150,7 @@ export function CreateReviewDrawer({
     setReviewTitleGenerating(true);
     const result = await generateReviewTitle({
       artifactNames: names,
-      reviewType: reviewTypeForTitleAi(reviewTypeRef.current),
+      reviewType: reviewTypeRef.current,
       artifactContext,
       priorReviewsExist,
     });
@@ -1779,7 +1743,6 @@ export function CreateReviewDrawer({
                   <Select
                     label="Project"
                     required
-                    portaled
                     closeOnScroll
                     options={projectMenuOptions.map((p) => ({
                       value: p.id,
@@ -1822,7 +1785,6 @@ export function CreateReviewDrawer({
               <div className="flex flex-col gap-2">
                 <Select
                   label="Review type"
-                  portaled
                   closeOnScroll
                   options={REVIEW_TYPE_OPTIONS.map((o) => ({
                     value: o.value,
@@ -2747,7 +2709,6 @@ export function CreateReviewDrawer({
       <Select
         label="Role"
         size="sm"
-        portaled
         placeholder="Select"
         options={[...TEAMMATE_ROLE_SELECT_OPTIONS]}
         value={newTeammateRole || undefined}
@@ -2756,7 +2717,6 @@ export function CreateReviewDrawer({
       <Select
         label="Permission Level"
         size="sm"
-        portaled
         placeholder="Select"
         options={[...TEAMMATE_PERMISSION_SELECT_OPTIONS]}
         value={newTeammatePermissionLevel}
@@ -2934,7 +2894,6 @@ export function CreateReviewDrawer({
       <Select
         label="Select risk level"
         size="sm"
-        portaled
         options={[
           { value: "High", label: "High" },
           { value: "Medium", label: "Medium" },
@@ -2949,7 +2908,6 @@ export function CreateReviewDrawer({
         <Select
           label="Related artifact"
           size="sm"
-          portaled
           searchable={false}
           creatable={false}
           placeholder="Select an artifact"
@@ -2962,9 +2920,6 @@ export function CreateReviewDrawer({
         />
       ) : null}
     </Modal>
-    {artifactToast ? (
-      <DrawerArtifactToastPortal key={artifactToast} message={artifactToast} />
-    ) : null}
     <DiscardChangesModal
       open={discardOpen}
       onKeepEditing={() => setDiscardOpen(false)}

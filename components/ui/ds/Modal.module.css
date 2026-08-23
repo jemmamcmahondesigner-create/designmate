@@ -129,7 +129,7 @@
 }
 
 /* ─── Body ──────────────────────────────────────────────────────────────────── */
-/* DS Select: use portaled menu inside modals (see Select portaled prop) or inline menu outside. */
+/* DS Select/Menu: auto-portal via OverlayPortalContext inside modals; keep body scrollable. */
 
 .body {
   flex: 1 1 auto;

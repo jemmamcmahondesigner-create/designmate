@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type CSSProperties, type Ref } from 'react';
 import { Icon } from './Icon';
+import { OverlayPortalContext } from './ModalPortalContext';
 import styles from './Drawer.module.css';
 
 export type DrawerType = 'detail' | 'edit' | 'create' | 'filter';
@@ -145,9 +146,11 @@ export function Drawer({
 
         <div className={styles.divider} />
 
-        {/* Body */}
+        {/* Body — Select/Menu auto-portal via OverlayPortalContext; keep scrollable, not overflow:hidden. */}
         <div ref={bodyRef} className={styles.body}>
-          {children}
+          <OverlayPortalContext.Provider value={true}>
+            {children}
+          </OverlayPortalContext.Provider>
         </div>
 
         {/* Footer */}

@@ -8,7 +8,7 @@ import {
   type Ref,
 } from 'react';
 import { Icon } from './Icon';
-import { ModalPortalContext } from './ModalPortalContext';
+import { OverlayPortalContext } from './ModalPortalContext';
 import styles from './Modal.module.css';
 
 export type ModalType = 'default' | 'destructive' | 'form' | 'information';
@@ -175,13 +175,13 @@ export function Modal({
           </button>
         </div>
 
-        {/* Body — DS Select auto-portals via ModalPortalContext; keep scrollable, not overflow:hidden. */}
+        {/* Body — Select/Menu auto-portal via OverlayPortalContext; keep scrollable, not overflow:hidden. */}
         <div ref={bodyRef} className={styles.body}>
-          <ModalPortalContext.Provider value={true}>
+          <OverlayPortalContext.Provider value={true}>
             {children ?? (description && (
               <p className={styles.description}>{description}</p>
             ))}
-          </ModalPortalContext.Provider>
+          </OverlayPortalContext.Provider>
         </div>
 
         {/* Footer */}

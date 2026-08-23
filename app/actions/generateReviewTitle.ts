@@ -7,14 +7,32 @@ const MODEL =
   process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5';
 
 const SYSTEM_PROMPT =
-  "Generate a concise design review title (maximum 60 characters, no quotes or punctuation at the end). Prefer the Figma frame or section name over generic terms like 'Concept 1'. Do not include the review type name in the title. Return only the title string.";
+  "Generate a concise design review title (maximum 60 characters, no quotes or punctuation at the end). Prefer the Figma frame or section name over generic terms like 'Concept 1'. Do not include the review type name in the title. Match the review-type framing given in the user message. Align and critique titles must NOT use approval or sign-off language. Return only the title string.";
 
 export type SuggestedReviewType = 'align' | 'critique' | 'compare' | 'approve';
+
+export type ReviewTitleReviewType =
+  | 'approve'
+  | 'compare'
+  | 'align'
+  | 'critique';
+
+/** Same framing the product shows under the Review type select (and generateReviewFocus). */
+const REVIEW_TYPE_TITLE_FRAMING: Record<ReviewTitleReviewType, string> = {
+  align:
+    'Share early direction for high-level input. Reviewers indicate if the work is heading in the right direction. Do NOT use approval, sign-off, or decision language.',
+  compare:
+    'Present multiple options for stakeholders to choose between. Ask reviewers to weigh options and indicate a preference.',
+  critique:
+    'Request detailed feedback on specific aspects of the work. Reviewers summarise their comments from Figma or other tools. This is not a decision point — do NOT use approval, sign-off, or preference language.',
+  approve:
+    'Reviewers sign off on individual artifacts or request changes before work progresses. Frame as seeking sign-off/approval on the work.',
+};
 
 export type GenerateReviewTitleInput = {
   /** Figma frame or section labels (preferred) or user-typed artifact names as fallback. */
   artifactNames: string[];
-  reviewType: 'Approval' | 'Comparison';
+  reviewType: ReviewTitleReviewType;
   /** Per-artifact context used to deterministically derive `suggestedReviewType`. */
   artifactContext?: {
     /** Stored version label (e.g. `v1`, `v2.1`). */
@@ -77,9 +95,14 @@ export async function generateReviewTitle(
     .filter(Boolean)
     .join(', ');
 
+  const typeFraming =
+    REVIEW_TYPE_TITLE_FRAMING[input.reviewType] ??
+    REVIEW_TYPE_TITLE_FRAMING.approve;
+
   const userPrompt = `Generate a concise design review title (maximum 60 characters, no quotes or punctuation at the end). Use the following context:
 - Figma frame or section labels: ${namesLine || '(none)'}
 - Review type: ${input.reviewType}
+- Review type framing (follow this; match tone and purpose exactly): ${typeFraming}
 Prefer the Figma frame or section name over generic terms like 'Concept 1'. Do not include the review type name in the title. Return only the title string.`;
 
   const client = new Anthropic({ apiKey });

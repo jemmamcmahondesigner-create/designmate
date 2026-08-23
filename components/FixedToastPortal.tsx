@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Alert } from "@/components/ui/ds";
 
+/**
+ * Fixed-corner success toast. Matches `Toast.tsx` visually (DS Alert,
+ * sentiment="success") while keeping a local mount API for call sites that
+ * need left/right placement and their own dismiss lifecycle.
+ */
 export function FixedToastPortal({
   message,
   onDone,
@@ -56,22 +62,21 @@ export function FixedToastPortal({
       style={{
         bottom: 24,
         ...horizontal,
-        backgroundColor: "#ebf6ee",
-        border: "1px solid #7dc98f",
-        borderRadius: 8,
-        padding: "12px 16px",
-        fontSize: 13,
-        fontWeight: 500,
-        color: "#256b38",
-        boxShadow: "0px 4px 12px rgba(41,33,28,0.12)",
         opacity,
         transition,
-        maxWidth: 360,
+        width: "fit-content",
+        maxWidth: "min(360px, calc(100vw - 48px))",
       }}
       role="status"
     >
-      {message}
+      <Alert
+        sentiment="success"
+        prominence="low"
+        title={message}
+        dismissible={false}
+        className="w-full"
+      />
     </div>,
-    document.body
+    document.body,
   );
 }
