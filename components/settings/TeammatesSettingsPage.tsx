@@ -688,6 +688,15 @@ export function TeammatesSettingsPage({
     if (!form.email.trim()) return;
     setFormError(null);
     setNameError(null);
+    const inviteEmail = form.email.trim().toLowerCase();
+    const alreadyActive = teammates.some((row) => {
+      const email = row.email?.trim().toLowerCase();
+      return email === inviteEmail && !row.isPending && !row.isPendingInvite;
+    });
+    if (alreadyActive) {
+      setFormError(`${form.name.trim() || form.email.trim()} is already a member of this workspace.`);
+      return;
+    }
     if (!activeWorkspaceId) {
       setFormError("No workspace found. Complete onboarding to add teammates.");
       return;
@@ -719,6 +728,12 @@ export function TeammatesSettingsPage({
 
       if (result.status === "error") {
         setFormError(result.message);
+        return;
+      }
+
+      if (result.status === "already_member") {
+        setFormError(`${form.name.trim() || form.email.trim()} is already a member of this workspace.`);
+        showToast(inviteToastMessage(result, form.name.trim(), form.email.trim()));
         return;
       }
 

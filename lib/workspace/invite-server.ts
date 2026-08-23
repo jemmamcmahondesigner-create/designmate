@@ -1,12 +1,10 @@
 import { createServiceClient } from "@/lib/supabase/admin";
 import { DESIGN_TRACE_RESEND_FROM, getInviteEmailHtml } from "@/lib/emails/invite-email";
 import {
-  isPaidPermissionLevel,
   mapInvitePermissionLevel,
   mapWorkspaceMemberRole,
 } from "@/lib/workspace/permissions";
-import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
-import { ensureWorkspaceMember } from "@/lib/workspace/ensureWorkspaceMember";
+import { claimOrCreateWorkspaceMembership } from "@/lib/workspace/claimWorkspaceMembership";
 import { ensurePendingInviteContributor } from "@/lib/workspace/teammates";
 import type { InviteApiResponse } from "@/types/invites";
 
@@ -108,7 +106,6 @@ export async function createWorkspaceInvite({
   const service = createServiceClient();
   const normalizedEmail = normalizeInviteEmail(email);
   const permissionLevel = mapInvitePermissionLevel(permissionLevelInput ?? role);
-  const memberRole = mapWorkspaceMemberRole(permissionLevel);
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();
 
   const { data: workspace } = await service
@@ -122,32 +119,53 @@ export async function createWorkspaceInvite({
   }
 
   const existingUser = await findAuthUserByEmail(normalizedEmail);
+  const { data: memberByEmail } = await service
+    .from("workspace_members")
+    .select("id, user_id, status")
+    .eq("workspace_id", workspaceId)
+    .ilike("invite_email", normalizedEmail)
+    .order("joined_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  const { data: contributorByEmail } = await service
+    .from("contributors")
+    .select("id, user_id")
+    .eq("workspace_id", workspaceId)
+    .is("project_id", null)
+    .ilike("email", normalizedEmail)
+    .not("user_id", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  const memberUserId =
+    (existingUser &&
+      (
+        await service
+          .from("workspace_members")
+          .select("id, user_id, status")
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", existingUser.id)
+          .limit(1)
+          .maybeSingle()
+      ).data) ||
+    null;
+
+  const activeMemberExists =
+    (memberUserId &&
+      String(memberUserId.status ?? "").toLowerCase() === "active" &&
+      memberUserId.user_id) ||
+    (memberByEmail &&
+      String(memberByEmail.status ?? "").toLowerCase() === "active" &&
+      memberByEmail.user_id) ||
+    Boolean(contributorByEmail?.user_id);
+
+  if (activeMemberExists) {
+    return { status: "already_member" };
+  }
+
   if (existingUser) {
-    const { data: existingMember } = await service
-      .from("workspace_members")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", existingUser.id)
-      .limit(1)
-      .maybeSingle();
-
-    if (existingMember) {
-      return { status: "already_member" };
-    }
-
-    const { error: memberError } = await ensureWorkspaceMember(service, {
-      workspace_id: workspaceId,
-      user_id: existingUser.id,
-      role: memberRole,
-      permission_level: permissionLevel,
-      status: "active",
-      invite_email: normalizedEmail,
-    });
-
-    if (memberError) {
-      return { status: "error", message: memberError };
-    }
-
     const displayName =
       name?.trim() ||
       (existingUser.user_metadata?.display_name as string | undefined)?.trim() ||
@@ -155,30 +173,20 @@ export async function createWorkspaceInvite({
       existingUser.email?.split("@")[0] ||
       "Team member";
 
-    const { data: existingProfiles } = await service
-      .from("contributors")
-      .select("id")
-      .eq("user_id", existingUser.id)
-      .eq("workspace_id", workspaceId)
-      .is("project_id", null)
-      .order("created_at", { ascending: true })
-      .limit(1);
+    const claim = await claimOrCreateWorkspaceMembership({
+      workspaceId,
+      userId: existingUser.id,
+      email: normalizedEmail,
+      displayName,
+      jobRole: role?.trim() || null,
+      fallbackPermissionLevel: permissionLevel,
+    });
 
-    if (!existingProfiles?.[0]) {
-      const jobRole = role?.trim() || "Reviewer";
-      const roleFields = await resolveContributorRoleFields(service, jobRole);
-
-      await service.from("contributors").insert({
-        name: displayName,
-        email: normalizedEmail,
-        role: roleFields.role,
-        role_id: roleFields.role_id,
-        permission_level: permissionLevel,
-        is_paid: isPaidPermissionLevel(permissionLevel),
-        project_id: null,
-        workspace_id: workspaceId,
-        user_id: existingUser.id,
-      });
+    if (!claim.ok) {
+      if (claim.message.includes("already an active member")) {
+        return { status: "already_member" };
+      }
+      return { status: "error", message: claim.message };
     }
 
     return { status: "added", user_id: existingUser.id };

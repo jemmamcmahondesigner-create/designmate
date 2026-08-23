@@ -25,6 +25,38 @@ export async function ensureWorkspaceMember(
     return { error: "workspace_id and user_id are required." };
   }
 
+  const inviteEmail = input.invite_email?.trim().toLowerCase() || "";
+  if (inviteEmail) {
+    const { data: pendingByEmail } = await supabase
+      .from("workspace_members")
+      .select("id, user_id, status")
+      .eq("workspace_id", workspaceId)
+      .ilike("invite_email", inviteEmail)
+      .order("joined_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    const pendingUserId = String(
+      (pendingByEmail as { user_id?: string | null } | null)?.user_id ?? "",
+    ).trim();
+    const pendingStatus = String(
+      (pendingByEmail as { status?: string | null } | null)?.status ?? "",
+    ).trim().toLowerCase();
+
+    if (pendingByEmail?.id && (!pendingUserId || pendingUserId === userId || pendingStatus === "pending")) {
+      const { error } = await supabase
+        .from("workspace_members")
+        .update({
+          user_id: userId,
+          status: input.status ?? "active",
+          invite_email: inviteEmail,
+          joined_at: input.joined_at ?? new Date().toISOString(),
+        })
+        .eq("id", pendingByEmail.id);
+      return { error: error?.message ?? null };
+    }
+  }
+
   const { error } = await supabase.from("workspace_members").upsert(
     {
       workspace_id: workspaceId,

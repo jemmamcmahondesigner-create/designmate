@@ -1,13 +1,8 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
-import {
-  isPaidPermissionLevel,
-  mapInvitePermissionLevel,
-  mapWorkspaceMemberRole,
-} from "@/lib/workspace/permissions";
-import { ensureWorkspaceMember } from "@/lib/workspace/ensureWorkspaceMember";
-import { resolveContributorRoleFields } from "@/lib/workspace/resolveContributorRoleFields";
+import { claimOrCreateWorkspaceMembership } from "@/lib/workspace/claimWorkspaceMembership";
+import { normalizeInviteEmail } from "@/lib/workspace/invite-server";
 
 export async function POST(request: Request) {
   let body: { invite_code?: string };
@@ -51,112 +46,36 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Invite has expired." }, { status: 404 });
   }
 
-  const { data: existingMember } = await service
-    .from("workspace_members")
-    .select("id")
-    .eq("workspace_id", invite.workspace_id)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  const permissionLevel = mapInvitePermissionLevel(invite.role);
-  const memberRole = mapWorkspaceMemberRole(permissionLevel);
-
-  if (!existingMember) {
-    const { error: memberError } = await ensureWorkspaceMember(service, {
-      workspace_id: invite.workspace_id,
-      user_id: user.id,
-      role: memberRole,
-      permission_level: permissionLevel,
-      status: "active",
-      invite_email: invite.email,
-    });
-
-    if (memberError) {
-      return NextResponse.json({ message: memberError }, { status: 400 });
-    }
-  }
-
-  await service.from("workspace_invites").update({ status: "accepted" }).eq("id", invite.id);
-
+  const inviteEmail = normalizeInviteEmail(String(invite.email ?? user.email ?? ""));
   const displayName =
     (typeof invite.invited_name === "string" ? invite.invited_name.trim() : "") ||
     (user.user_metadata?.display_name as string | undefined)?.trim() ||
     (user.user_metadata?.full_name as string | undefined)?.trim() ||
     user.email?.split("@")[0] ||
-    invite.email ||
+    inviteEmail ||
     "Team member";
 
-  const { data: existingProfiles } = await service
-    .from("contributors")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("workspace_id", invite.workspace_id)
-    .is("project_id", null)
-    .order("created_at", { ascending: true })
-    .limit(1);
+  const result = await claimOrCreateWorkspaceMembership({
+    workspaceId: invite.workspace_id,
+    userId: user.id,
+    email: inviteEmail || user.email || null,
+    displayName,
+    jobRole:
+      (typeof invite.job_role === "string" ? invite.job_role.trim() : "") ||
+      (user.user_metadata?.role as string | undefined)?.trim() ||
+      null,
+  });
 
-  const existingProfile = existingProfiles?.[0] ?? null;
-
-  if (!existingProfile) {
-    const inviteEmail = String(invite.email ?? "").trim().toLowerCase();
-    const { data: pendingByEmail } = inviteEmail
-      ? await service
-          .from("contributors")
-          .select("id")
-          .eq("workspace_id", invite.workspace_id)
-          .is("project_id", null)
-          .is("user_id", null)
-          .ilike("email", inviteEmail)
-          .order("created_at", { ascending: true })
-          .limit(1)
-          .maybeSingle()
-      : { data: null };
-
-    if (pendingByEmail?.id) {
-      const jobRole =
-        (typeof invite.job_role === "string" ? invite.job_role.trim() : "") ||
-        (user.user_metadata?.role as string | undefined)?.trim() ||
-        "Reviewer";
-      const roleFields = await resolveContributorRoleFields(service, jobRole);
-
-      await service
-        .from("contributors")
-        .update({
-          user_id: user.id,
-          name: displayName,
-          email: invite.email,
-          role: roleFields.role,
-          role_id: roleFields.role_id,
-          permission_level: permissionLevel,
-          is_paid: isPaidPermissionLevel(permissionLevel),
-        })
-        .eq("id", pendingByEmail.id);
-    } else {
-      const jobRole =
-        (typeof invite.job_role === "string" ? invite.job_role.trim() : "") ||
-        (user.user_metadata?.role as string | undefined)?.trim() ||
-        "Reviewer";
-      const roleFields = await resolveContributorRoleFields(service, jobRole);
-
-      await service.from("contributors").insert({
-        name: displayName,
-        email: invite.email,
-        role: roleFields.role,
-        role_id: roleFields.role_id,
-        permission_level: permissionLevel,
-        is_paid: isPaidPermissionLevel(permissionLevel),
-        project_id: null,
-        workspace_id: invite.workspace_id,
-        user_id: user.id,
-      });
-    }
+  if (!result.ok) {
+    const status = result.message.includes("already an active member") ? 409 : 400;
+    return NextResponse.json({ message: result.message }, { status });
   }
 
   const { error: metadataError } = await service.auth.admin.updateUserById(user.id, {
     user_metadata: {
       ...user.user_metadata,
-      active_workspace_id: invite.workspace_id,
-      workspace_id: invite.workspace_id,
+      active_workspace_id: result.workspaceId,
+      workspace_id: result.workspaceId,
       onboarding_complete: true,
     },
   });
@@ -165,5 +84,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: metadataError.message }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, workspace_id: invite.workspace_id });
+  return NextResponse.json({ success: true, workspace_id: result.workspaceId });
 }

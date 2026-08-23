@@ -28,6 +28,46 @@ export async function fetchInviteDetails(inviteCode: string): Promise<InviteDeta
   return (await response.json()) as InviteDetails;
 }
 
+export async function joinWorkspaceByCode(input: {
+  invite_code?: string;
+  workspace_id?: string;
+}): Promise<{
+  success: boolean;
+  workspace_id?: string;
+  workspace_name?: string;
+  permission_level?: "admin" | "editor" | "reviewer";
+  already_member?: boolean;
+  message?: string;
+}> {
+  const response = await fetch("/api/workspace/join", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const data = (await response.json()) as {
+    success?: boolean;
+    workspace_id?: string;
+    workspace_name?: string;
+    permission_level?: "admin" | "editor" | "reviewer";
+    already_member?: boolean;
+    message?: string;
+  };
+
+  if (!response.ok) {
+    return { success: false, message: data.message ?? "Could not join workspace." };
+  }
+
+  return {
+    success: Boolean(data.success),
+    workspace_id: data.workspace_id,
+    workspace_name: data.workspace_name,
+    permission_level: data.permission_level,
+    already_member: data.already_member,
+    message: data.message,
+  };
+}
+
 export async function acceptWorkspaceInvite(inviteCode: string): Promise<{
   success: boolean;
   workspace_id?: string;

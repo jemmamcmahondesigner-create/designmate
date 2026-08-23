@@ -36,6 +36,7 @@ import {
   normalizeWorkspaceNameKey,
   parseWorkspaceCreateError,
 } from "@/lib/workspace/workspaceCreateErrors";
+import { joinWorkspaceByCode } from "@/lib/workspace/invite-client";
 import { generateInviteCode } from "@/lib/workspace/utils";
 import { getAvatarInlineStyle, avatarColourKey } from "@/lib/utils/avatarColour";
 
@@ -943,15 +944,9 @@ export function ProfilePageClient({
         return;
       }
 
-      const { error: joinError } = await ensureWorkspaceMember(supabase, {
-        workspace_id: workspace.id,
-        user_id: userId,
-        role: "member",
-        permission_level: "reviewer",
-        status: "active",
-      });
-      if (joinError) {
-        reportJoinWorkspaceError(joinError);
+      const joinResult = await joinWorkspaceByCode({ workspace_id: workspace.id });
+      if (!joinResult.success) {
+        reportJoinWorkspaceError(joinResult.message ?? joinNotFoundMessage);
         return;
       }
 

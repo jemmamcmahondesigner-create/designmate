@@ -30,6 +30,7 @@ import {
 import {
   acceptWorkspaceInvite,
   fetchInviteDetails,
+  joinWorkspaceByCode,
   INVITE_CODE_STORAGE_KEY,
 } from "@/lib/workspace/invite-client";
 import { InputLockIcon } from "@/components/auth/InputLockIcon";
@@ -391,47 +392,19 @@ export function OnboardingFlow({
     [name, role, company, designType, workEnv, designContext, activeWorkspaceId, inviteEmail, email],
   );
 
-  const joinWorkspace = useCallback(
-    async (inviteCode: string) => {
-      const supabase = createSupabaseBrowserClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      const currentUserId = user?.id;
-      if (!currentUserId) return { ok: false as const };
+  const joinWorkspace = useCallback(async (inviteCode: string) => {
+    const result = await joinWorkspaceByCode({ invite_code: inviteCode.trim() });
+    if (!result.success || !result.workspace_id) {
+      return { ok: false as const };
+    }
 
-      const { data: workspace } = await supabase
-        .from("workspaces")
-        .select("id, name")
-        .eq("invite_code", inviteCode.trim())
-        .single();
-
-      if (!workspace) return { ok: false as const };
-
-      const { error: memberError } = await ensureWorkspaceMember(supabase, {
-        workspace_id: workspace.id,
-        user_id: currentUserId,
-        role: "member",
-        permission_level: "reviewer",
-        status: "active",
-      });
-
-      if (memberError) {
-        return { ok: false as const };
-      }
-
-      await supabase.auth.updateUser({
-        data: {
-          active_workspace_id: workspace.id,
-          workspace_id: workspace.id,
-        },
-      });
-
-      setActiveWorkspaceId(workspace.id);
-      return { ok: true as const, workspace };
-    },
-    [],
-  );
+    setActiveWorkspaceId(result.workspace_id);
+    return {
+      ok: true as const,
+      workspace: { id: result.workspace_id, name: result.workspace_name ?? "" },
+      permissionLevel: result.permission_level ?? "reviewer",
+    };
+  }, []);
 
   const handleCreateWorkspace = async () => {
     if (!userId || !workspaceName.trim()) return;
@@ -514,7 +487,10 @@ export function OnboardingFlow({
     }
 
     try {
-      await persistProfile();
+      await persistProfile({
+        workspaceId: result.workspace.id,
+        permissionLevel: result.permissionLevel,
+      });
       router.push("/projects");
     } finally {
       setSubmitting(false);

@@ -66,6 +66,34 @@ export async function ensureContributorProfile(
     return { error: error?.message ?? null };
   }
 
+  if (emailValue) {
+    const { data: byEmail } = await supabase
+      .from("contributors")
+      .select("id, user_id")
+      .eq("workspace_id", activeWorkspaceId)
+      .is("project_id", null)
+      .ilike("email", emailValue)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    const existingEmailUserId = String(
+      (byEmail as { user_id?: string | null } | null)?.user_id ?? "",
+    ).trim();
+
+    if (byEmail?.id && existingEmailUserId && existingEmailUserId !== userId) {
+      return { error: "A teammate with this email already exists." };
+    }
+
+    if (byEmail?.id) {
+      const { error } = await supabase
+        .from("contributors")
+        .update(contributorUpdates)
+        .eq("id", String(byEmail.id));
+      return { error: error?.message ?? null };
+    }
+  }
+
   const { error } = await supabase.from("contributors").insert({
     workspace_id: activeWorkspaceId,
     project_id: null as string | null,
