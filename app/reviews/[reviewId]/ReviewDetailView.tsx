@@ -17,6 +17,7 @@
  */
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -133,6 +134,11 @@ import {
 } from '@/lib/reviews/reviewStatusDisplay';
 import { getAvatarInlineStyle, avatarColourKey } from '@/lib/utils/avatarColour';
 import { resolveArtifactPreviewFileType } from '@/lib/artifacts/resolveArtifactPreviewFileType';
+import {
+  classifySourcePreview,
+  useSourcePreview,
+  type SourcePreviewTarget,
+} from '@/lib/sources/useSourcePreview';
 import { ArtifactSnapshotLightbox } from '@/components/reviews/ArtifactSnapshotLightbox';
 import { Warning } from 'phosphor-react';
 
@@ -373,6 +379,15 @@ export interface ReviewDetailViewProps {
   activeTabIndex?: number;
   /** Tradeoffs from `reviews.tradeoffs` jsonb (e.g. create-review AI). */
   tradeoffs?: Tradeoff[];
+  /** Sources linked via `review_sources` for this review (read-only appendix). */
+  citedSources?: Array<{
+    id: string;
+    label: string;
+    file_name: string | null;
+    url: string | null;
+    storage_path: string | null;
+    file_type: string | null;
+  }>;
 }
 
 //  Mock fallbacks (fields not yet in the database) 
@@ -981,6 +996,84 @@ function reviewDetailsAttributionLine(input: {
   return `${label} ${owner}${dateLabel ? `, ${dateLabel}` : ''}`;
 }
 
+function ReviewDetailsAttributionMeta({
+  ownerName,
+  createdAt,
+  updatedAt,
+  citedSources,
+}: {
+  ownerName: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  citedSources: SourcePreviewTarget[];
+}) {
+  const { openSource, preview } = useSourcePreview();
+  const labeledSources = citedSources.filter((source) => source.label.trim());
+
+  return (
+    <div className="flex flex-col gap-1">
+      <p
+        style={{
+          margin: 0,
+          fontSize: 12,
+          color: COLOURS.textSecondary,
+          lineHeight: 1.5,
+        }}
+      >
+        {reviewDetailsAttributionLine({
+          ownerName,
+          createdAt,
+          updatedAt,
+        })}
+      </p>
+      {labeledSources.length > 0 ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: 12,
+            color: COLOURS.textSecondary,
+            lineHeight: 1.5,
+          }}
+        >
+          Sources:{' '}
+          {labeledSources.map((source, index) => {
+            const label = source.label.trim();
+            const kind = classifySourcePreview(source);
+            const clickable = kind !== 'none';
+            return (
+              <Fragment key={source.id}>
+                {index > 0 ? ', ' : null}
+                {clickable ? (
+                  <button
+                    type="button"
+                    onClick={() => openSource(source)}
+                    className="hover:underline"
+                    style={{
+                      margin: 0,
+                      padding: 0,
+                      border: 0,
+                      background: 'transparent',
+                      color: COLOURS.textHeading,
+                      cursor: 'pointer',
+                      font: 'inherit',
+                      lineHeight: 'inherit',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ) : (
+                  <span style={{ color: COLOURS.textHeading }}>{label}</span>
+                )}
+              </Fragment>
+            );
+          })}
+        </p>
+      ) : null}
+      {preview}
+    </div>
+  );
+}
+
 function resolveTradeoffArtifactLabel(
   tradeoff: Tradeoff,
   artifacts: ReviewArtifact[],
@@ -1336,6 +1429,7 @@ export function ReviewDetailView({
   reviewUpdatedAt = null,
   activeTabIndex = 0,
   tradeoffs: tradeoffsProp = [],
+  citedSources = [],
 }: ReviewDetailViewProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -4522,13 +4616,12 @@ export function ReviewDetailView({
                         size="md"
                       />
                     </div>
-                    <p style={{ margin: 0, fontSize: 12, color: '#6b5e55' }}>
-                      {reviewDetailsAttributionLine({
-                        ownerName: reviewOwnerName,
-                        createdAt: reviewCreatedAt,
-                        updatedAt: reviewUpdatedAt,
-                      })}
-                    </p>
+                    <ReviewDetailsAttributionMeta
+                      ownerName={reviewOwnerName}
+                      createdAt={reviewCreatedAt}
+                      updatedAt={reviewUpdatedAt}
+                      citedSources={citedSources}
+                    />
                   </>
                 ) : reviewFocus.trim() ? (
                   <>
@@ -4543,13 +4636,12 @@ export function ReviewDetailView({
                     >
                       {reviewFocus}
                     </p>
-                    <p style={{ margin: 0, fontSize: 12, color: '#6b5e55' }}>
-                      {reviewDetailsAttributionLine({
-                        ownerName: reviewOwnerName,
-                        createdAt: reviewCreatedAt,
-                        updatedAt: reviewUpdatedAt,
-                      })}
-                    </p>
+                    <ReviewDetailsAttributionMeta
+                      ownerName={reviewOwnerName}
+                      createdAt={reviewCreatedAt}
+                      updatedAt={reviewUpdatedAt}
+                      citedSources={citedSources}
+                    />
                   </>
                 ) : (
                   <>
@@ -4568,13 +4660,12 @@ export function ReviewDetailView({
                         No details have been provided for this review.
                       </span>
                     </div>
-                    <p style={{ margin: 0, fontSize: 12, color: '#6b5e55' }}>
-                      {reviewDetailsAttributionLine({
-                        ownerName: reviewOwnerName,
-                        createdAt: reviewCreatedAt,
-                        updatedAt: reviewUpdatedAt,
-                      })}
-                    </p>
+                    <ReviewDetailsAttributionMeta
+                      ownerName={reviewOwnerName}
+                      createdAt={reviewCreatedAt}
+                      updatedAt={reviewUpdatedAt}
+                      citedSources={citedSources}
+                    />
                   </>
                 )}
               </section>

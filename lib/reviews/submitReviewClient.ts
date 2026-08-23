@@ -40,6 +40,8 @@ export type SubmitReviewInput = {
   sendNotification: boolean;
   reviewFocus: string | null;
   relatedProblemIds: string[];
+  /** Project source IDs to link via `review_sources` after the review row exists. */
+  relatedSourceIds: string[];
   /** Problems created for this review only (not yet in `problems` until submit). */
   reviewSpecificProblems?: Array<{ id: string; description: string }>;
   reviewerContributorIds: string[];
@@ -371,6 +373,19 @@ export async function submitReviewClient(
       if (problemInsertError) {
         return { error: problemInsertError.message };
       }
+    }
+  }
+
+  if (input.relatedSourceIds.length > 0) {
+    const sourceRows = input.relatedSourceIds.map((sourceId) => ({
+      review_id: input.reviewId,
+      source_id: sourceId,
+    }));
+    const { error: reviewSourcesError } = await supabase
+      .from("review_sources")
+      .insert(sourceRows);
+    if (reviewSourcesError) {
+      return { error: reviewSourcesError.message };
     }
   }
 

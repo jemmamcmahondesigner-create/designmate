@@ -26,6 +26,7 @@ export function includeInProjectTimeline(event: ProjectTimelineEventLike): boole
   ) {
     return true;
   }
+  if (t === "source_added" || t === "source_deleted") return true;
   if (t === "project_updated") return true;
   if (t === "status_changed") {
     const payload = (event.payload ?? {}) as Record<string, unknown>;

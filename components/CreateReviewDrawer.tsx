@@ -10,7 +10,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties
 } from "react";
 import { useRouter } from "next/navigation";
 import { AddLinkModal } from "@/components/AddLinkModal";
@@ -60,6 +59,8 @@ import {
   type ContentPermissionLevel,
 } from "@/lib/workspace/permissions";
 import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
+import { uploadProjectSourceFile } from "@/lib/sources/uploadProjectSourceFile";
+import type { Source } from "@/lib/sources/uploadProjectSourceFile";
 import { linkContributorToProject } from "@/lib/contributors/linkContributorToProject";
 import {
   flatReviewerPickerList,
@@ -251,51 +252,6 @@ function artifactTypeLabelForApi(
   return "File";
 }
 
-const clamp3TextStyle: CSSProperties = {
-  display: "-webkit-box",
-  WebkitLineClamp: 3,
-  WebkitBoxOrient: "vertical",
-  overflow: "hidden",
-};
-
-/** 3-line clamp; tooltip only when content overflows the clamp box. */
-function Step3ClampText({
-  text,
-  textStyle,
-}: {
-  text: string;
-  textStyle: CSSProperties;
-}) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [overflow, setOverflow] = useState(false);
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setOverflow(el.scrollHeight > el.clientHeight);
-  }, [text]);
-
-  const inner = (
-    <span
-      ref={ref}
-      style={{
-        ...clamp3TextStyle,
-        ...textStyle,
-      }}
-    >
-      {text}
-    </span>
-  );
-
-  return overflow ? (
-    <Tooltip label={text} position="top">
-      {inner}
-    </Tooltip>
-  ) : (
-    inner
-  );
-}
-
 /** First sentence of `desc`, trimmed, max `maxLen` chars; empty if no usable text. */
 function firstSentenceForTitle(desc: string, maxLen: number): string {
   const t = desc.trim();
@@ -416,6 +372,8 @@ export function CreateReviewDrawer({
   const drawerBodyRef = useRef<HTMLDivElement>(null);
   const reviewerBlockRef = useRef<HTMLDivElement>(null);
   const problemsSelectRef = useRef<HTMLDivElement>(null);
+  const sourcesSelectRef = useRef<HTMLDivElement>(null);
+  const sourceFileInputRef = useRef<HTMLInputElement>(null);
 
   const [showDraftWarningModal, setShowDraftWarningModal] = useState(false);
   const [addLinkModalOpen, setAddLinkModalOpen] = useState(false);
@@ -445,6 +403,14 @@ export function CreateReviewDrawer({
   );
   const [sendNotification, setSendNotification] = useState(true);
   const [relatedProblems, setRelatedProblems] = useState<string[]>([]);
+  const [availableSources, setAvailableSources] = useState<Source[]>([]);
+  const [relatedSources, setRelatedSources] = useState<string[]>([]);
+  const [hoveredSourceRowId, setHoveredSourceRowId] = useState<string | null>(
+    null
+  );
+  const [hoveredProblemRowId, setHoveredProblemRowId] = useState<string | null>(
+    null
+  );
   const [reviewFocus, setReviewFocus] = useState("");
   const [step1SubmitAttempted, setStep1SubmitAttempted] = useState(false);
   const [step2SubmitAttempted, setStep2SubmitAttempted] = useState(false);
@@ -453,7 +419,10 @@ export function CreateReviewDrawer({
   const [reviewerMenuOpen, setReviewerMenuOpen] = useState(false);
   const [problemsMenuOpen, setProblemsMenuOpen] = useState(false);
   const [problemsSelectOpen, setProblemsSelectOpen] = useState(false);
+  const [sourcesSelectOpen, setSourcesSelectOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  /** Blocks Create until Step 3 has settled (avoids Next→Create click carry-over when focus already filled). */
+  const createArmedRef = useRef(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [artifactToast, setArtifactToast] = useState<string | null>(null);
   const [hoveredChipId, setHoveredChipId] = useState<string | null>(null);
@@ -517,6 +486,7 @@ export function CreateReviewDrawer({
   const notifyFieldId = `${uid}-notify`;
   const problemsFieldId = `${uid}-problems`;
   const problemsLabelId = `${uid}-problems-label`;
+  const sourcesFieldId = `${uid}-sources`;
   const focusFieldId = `${uid}-focus`;
   const createTeammateNameFieldId = `${uid}-create-teammate-name`;
   const createTeammateEmailFieldId = `${uid}-create-teammate-email`;
@@ -638,13 +608,19 @@ export function CreateReviewDrawer({
     setSendNotification(true);
     setShowDraftWarningModal(false);
     setRelatedProblems([]);
+    setRelatedSources([]);
+    setAvailableSources([]);
+    setHoveredSourceRowId(null);
+    setHoveredProblemRowId(null);
     setReviewSpecificProblemIds([]);
     setReviewFocus("");
     setReviewerQuery("");
     setReviewerMenuOpen(false);
     setProblemsMenuOpen(false);
     setProblemsSelectOpen(false);
+    setSourcesSelectOpen(false);
     setSubmitting(false);
+    createArmedRef.current = false;
     setToastMessage(null);
     setHoveredChipId(null);
     setAddLinkModalOpen(false);
@@ -754,6 +730,21 @@ export function CreateReviewDrawer({
     }
   }, [open, reset]);
 
+  useEffect(() => {
+    if (currentStep !== 3) {
+      createArmedRef.current = false;
+      return;
+    }
+    createArmedRef.current = false;
+    const timer = window.setTimeout(() => {
+      createArmedRef.current = true;
+    }, 400);
+    return () => {
+      window.clearTimeout(timer);
+      createArmedRef.current = false;
+    };
+  }, [currentStep]);
+
   // Detect body overflow to conditionally show footer drop-shadow
   useEffect(() => {
     const el = drawerBodyRef.current;
@@ -771,6 +762,7 @@ export function CreateReviewDrawer({
     artifacts.length > 0 ||
     reviewers.length > 0 ||
     relatedProblems.length > 0 ||
+    relatedSources.length > 0 ||
     reviewFocus.trim() !== "" ||
     (!projectScoped && selectedRelatedProjectId.trim() !== "") ||
     !sendNotification;
@@ -822,16 +814,20 @@ export function CreateReviewDrawer({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setProblemsSelectOpen(false);
+      if (e.key === "Escape") {
+        setProblemsSelectOpen(false);
+        setSourcesSelectOpen(false);
+      }
     }
-    if (problemsSelectOpen) {
+    if (problemsSelectOpen || sourcesSelectOpen) {
       document.addEventListener("keydown", onKey);
       return () => document.removeEventListener("keydown", onKey);
     }
-  }, [problemsSelectOpen]);
+  }, [problemsSelectOpen, sourcesSelectOpen]);
 
   useEffect(() => {
     setRelatedProblems([]);
+    setRelatedSources([]);
   }, [reviewerPoolKey]);
 
   useEffect(() => {
@@ -921,26 +917,71 @@ export function CreateReviewDrawer({
     let cancelled = false;
     const supabase = createSupabaseBrowserClient();
     void (async () => {
-      const { data } = await supabase
-        .from("problems")
-        .select("id, description")
-        .eq("project_id", projectId)
-        .is("review_id", null)
-        .order("created_at", { ascending: true });
+      const [{ data: problemData }, { data: sourceData }] = await Promise.all([
+        supabase
+          .from("problems")
+          .select("id, description")
+          .eq("project_id", projectId)
+          .is("review_id", null)
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("sources")
+          .select(
+            "id, project_id, label, url, file_name, storage_path, file_type, created_at"
+          )
+          .eq("project_id", projectId)
+          .order("created_at", { ascending: true }),
+      ]);
       if (cancelled) return;
-      if (!Array.isArray(data)) {
+      if (!Array.isArray(problemData)) {
         setAvailableProblems([]);
-        return;
+      } else {
+        setAvailableProblems(
+          problemData.map((row) => {
+            const item = row as Record<string, unknown>;
+            return {
+              id: String(item.id ?? ""),
+              description: String(item.description ?? ""),
+            } satisfies ProjectProblem;
+          })
+        );
       }
-      setAvailableProblems(
-        data.map((row) => {
-          const item = row as Record<string, unknown>;
-          return {
-            id: String(item.id ?? ""),
-            description: String(item.description ?? ""),
-          } satisfies ProjectProblem;
-        })
-      );
+      if (!Array.isArray(sourceData)) {
+        setAvailableSources([]);
+      } else {
+        setAvailableSources(
+          sourceData.map((row) => {
+            const item = row as Record<string, unknown>;
+            const url = item.url;
+            const fileName = item.file_name;
+            const storagePath = item.storage_path;
+            const fileType = item.file_type;
+            const createdAt = item.created_at;
+            return {
+              id: String(item.id ?? ""),
+              project_id: String(item.project_id ?? ""),
+              label: String(item.label ?? ""),
+              url: url == null || String(url).trim() === "" ? null : String(url),
+              file_name:
+                fileName == null || String(fileName).trim() === ""
+                  ? null
+                  : String(fileName),
+              storage_path:
+                storagePath == null || String(storagePath).trim() === ""
+                  ? null
+                  : String(storagePath),
+              file_type:
+                fileType == null || String(fileType).trim() === ""
+                  ? null
+                  : String(fileType),
+              created_at:
+                createdAt == null || String(createdAt).trim() === ""
+                  ? new Date(0).toISOString()
+                  : String(createdAt),
+            } satisfies Source;
+          })
+        );
+      }
     })();
     return () => {
       cancelled = true;
@@ -1124,8 +1165,8 @@ export function CreateReviewDrawer({
   const selectedProjectName =
     projectMenuOptions.find((p) => p.id === selectedRelatedProjectId)?.name ?? "";
 
-  // Map ReviewType → the API surface used by the AI server actions.
-  function reviewTypeForAi(rt: ReviewType): "Approval" | "Comparison" {
+  // Title AI still uses a two-bucket surface; focus AI gets the real ReviewType.
+  function reviewTypeForTitleAi(rt: ReviewType): "Approval" | "Comparison" {
     return rt === "compare" ? "Comparison" : "Approval";
   }
 
@@ -1145,7 +1186,7 @@ export function CreateReviewDrawer({
     setReviewTitleGenerating(true);
     const result = await generateReviewTitle({
       artifactNames: names,
-      reviewType: reviewTypeForAi(reviewTypeRef.current),
+      reviewType: reviewTypeForTitleAi(reviewTypeRef.current),
       artifactContext,
       priorReviewsExist,
     });
@@ -1195,15 +1236,36 @@ export function CreateReviewDrawer({
     const selectedTradeoffs = aiTradeoffs
       .map((t) => t.description.trim())
       .filter(Boolean);
+    const selectedSources = relatedSources
+      .map((id) => availableSources.find((source) => source.id === id))
+      .filter((source): source is NonNullable<typeof source> => Boolean(source))
+      .map((source) => {
+        const label =
+          source.label?.trim() || source.file_name?.trim() || "Untitled";
+        const sourceType =
+          source.storage_path != null &&
+          String(source.storage_path).trim() !== ""
+            ? "file"
+            : "link";
+        const url =
+          sourceType === "link" && source.url?.trim()
+            ? source.url.trim()
+            : undefined;
+        return url
+          ? { label, sourceType, url }
+          : { label, sourceType };
+      });
     setReviewFocusGenerating(true);
     setReviewFocusGeneratingAction(action);
     const result = await generateReviewFocus({
       artifactDescriptions: descriptions,
       artifactContext,
-      reviewType: reviewTypeForAi(reviewTypeRef.current),
+      reviewType: reviewTypeRef.current,
       projectName: selectedProjectName.trim() || undefined,
+      reviewTitle: reviewTitleRef.current.trim() || undefined,
       selectedProblems: selectedProblems.length > 0 ? selectedProblems : undefined,
       selectedTradeoffs: selectedTradeoffs.length > 0 ? selectedTradeoffs : undefined,
+      selectedSources: selectedSources.length > 0 ? selectedSources : undefined,
       existingContent: action === "optimise" ? existing || undefined : undefined,
     });
     setReviewFocusGenerating(false);
@@ -1272,7 +1334,7 @@ export function CreateReviewDrawer({
   }
 
   async function handleCreateReview() {
-    if (!step3CreateActive || submitting) {
+    if (currentStep !== 3 || !createArmedRef.current || !step3CreateActive || submitting) {
       return;
     }
     setToastMessage(null);
@@ -1314,6 +1376,7 @@ export function CreateReviewDrawer({
       sendNotification: sendNotification,
       reviewFocus: reviewFocus.trim() || null,
       relatedProblemIds: relatedProblems,
+      relatedSourceIds: relatedSources,
       reviewSpecificProblems,
       reviewerContributorIds: reviewers.map((r) => r.id),
       requireDecisionMaker: requireDecisionMakerForDb(reviewType),
@@ -1400,6 +1463,7 @@ export function CreateReviewDrawer({
                   >
                     {step1NextActive ? (
                       <Button
+                        key="create-review-step-1-next"
                         type="button"
                         variant="primary"
                         label="Next"
@@ -1415,6 +1479,7 @@ export function CreateReviewDrawer({
                       <Tooltip label={step1TooltipLabel} position="top">
                         <span style={{ display: "inline-flex" }}>
                           <Button
+                            key="create-review-step-1-next-disabled"
                             type="button"
                             variant="primary"
                             label="Next"
@@ -1448,6 +1513,7 @@ export function CreateReviewDrawer({
                   >
                     {step2NextActive ? (
                       <Button
+                        key="create-review-step-2-next"
                         type="button"
                         variant="primary"
                         label="Next"
@@ -1463,6 +1529,7 @@ export function CreateReviewDrawer({
                       <Tooltip label={step2TooltipLabel} position="top">
                         <span style={{ display: "inline-flex" }}>
                           <Button
+                            key="create-review-step-2-next-disabled"
                             type="button"
                             variant="primary"
                             label="Next"
@@ -1495,6 +1562,7 @@ export function CreateReviewDrawer({
                   <div style={{ display: "inline-flex" }}>
                     {step3CreateActive && !submitting ? (
                       <Button
+                        key="create-review-step-3-create"
                         type="button"
                         variant="accent"
                         label="Create Review"
@@ -1510,6 +1578,7 @@ export function CreateReviewDrawer({
                       >
                         <span style={{ display: "inline-flex" }}>
                           <Button
+                            key="create-review-step-3-create-disabled"
                             type="button"
                             variant="accent"
                             label={submitting ? "Saving…" : "Create Review"}
@@ -2041,6 +2110,149 @@ export function CreateReviewDrawer({
           ) : (
             <div className="flex min-w-0 w-full flex-col" style={{ gap: 24 }}>
               <div className="flex flex-col" style={{ gap: 6 }}>
+                <div className="relative w-full" ref={sourcesSelectRef}>
+                  <SelectField
+                    label="Related sources"
+                    type="single"
+                    size="sm"
+                    placeholder="Select relevant project sources"
+                    selectedLabel={undefined}
+                    isOpen={sourcesSelectOpen}
+                    onOpen={() => setSourcesSelectOpen((prev) => !prev)}
+                    fieldId={sourcesFieldId}
+                  />
+                  <Menu
+                    open={sourcesSelectOpen}
+                    onClose={() => {
+                      setSourcesSelectOpen(false);
+                    }}
+                    type="multi-select"
+                    anchorRef={sourcesSelectRef}
+                    align="left"
+                    aria-label="Source options"
+                    footerAction={{
+                      type: "button",
+                      label: "Done",
+                      onClick: () => {
+                        setSourcesSelectOpen(false);
+                      },
+                      additionalLinkLabel: "Add a new source",
+                      showAdditionalLink: true,
+                      onAdditionalLink: () => {
+                        sourceFileInputRef.current?.click();
+                      },
+                    }}
+                  >
+                    {availableSources.map((source) => {
+                      const label =
+                        source.label?.trim() ||
+                        source.file_name ||
+                        "Untitled";
+                      return (
+                        <MenuItem
+                          key={source.id}
+                          label={label}
+                          checkbox
+                          active={relatedSources.includes(source.id)}
+                          onClick={() => {
+                            setRelatedSources((prev) =>
+                              prev.includes(source.id)
+                                ? prev.filter((id) => id !== source.id)
+                                : [...prev, source.id]
+                            );
+                          }}
+                        />
+                      );
+                    })}
+                  </Menu>
+                  <input
+                    ref={sourceFileInputRef}
+                    type="file"
+                    className="hidden"
+                    tabIndex={-1}
+                    aria-hidden
+                    onChange={(e) => {
+                      void (async () => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (!file) return;
+                        const projectId = effectiveProjectId.trim();
+                        if (!projectId) return;
+                        try {
+                          const source = await uploadProjectSourceFile(
+                            projectId,
+                            file
+                          );
+                          setAvailableSources((prev) =>
+                            prev.some((row) => row.id === source.id)
+                              ? prev
+                              : [...prev, source]
+                          );
+                          setRelatedSources((prev) =>
+                            prev.includes(source.id)
+                              ? prev
+                              : [...prev, source.id]
+                          );
+                          const sourceLabel =
+                            source.label?.trim() ||
+                            source.file_name ||
+                            "Untitled";
+                          void logTimelineEventClient({
+                            projectId,
+                            eventType: "source_added",
+                            payload: {
+                              source_label: sourceLabel,
+                              source_type:
+                                source.storage_path != null &&
+                                String(source.storage_path).trim() !== ""
+                                  ? "file"
+                                  : "link",
+                            },
+                          });
+                        } catch {
+                          // uploadProjectSourceFile logs storage failures
+                        }
+                      })();
+                    }}
+                  />
+                </div>
+                {relatedSources.length > 0 && (
+                  <div className="mt-1 flex w-full flex-col gap-1">
+                    {relatedSources.map((id) => {
+                      const source = availableSources.find((s) => s.id === id);
+                      if (!source) return null;
+                      const label =
+                        source.label?.trim() ||
+                        source.file_name ||
+                        "Untitled";
+                      const hovered = hoveredSourceRowId === id;
+                      return (
+                        <div
+                          key={id}
+                          className="w-full"
+                          onMouseEnter={() => setHoveredSourceRowId(id)}
+                          onMouseLeave={() => setHoveredSourceRowId(null)}
+                        >
+                          <Tag
+                            label={label}
+                            variant={hovered ? "brand" : "default"}
+                            size="md"
+                            icon={hovered ? "removable" : "none"}
+                            onRemove={() =>
+                              setRelatedSources((prev) =>
+                                prev.filter((x) => x !== id)
+                              )
+                            }
+                            className="w-full"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col" style={{ gap: 6 }}>
                 <div className="relative w-full" ref={problemsSelectRef}>
                   <SelectField
                     label="Related problems"
@@ -2101,70 +2313,31 @@ export function CreateReviewDrawer({
                   </Menu>
                 </div>
                 {relatedProblems.length > 0 && (
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                      marginTop: 4
-                    }}
-                  >
+                  <div className="mt-1 flex w-full flex-col gap-1">
                     {relatedProblems.map((id) => {
                       const problem = availableProblems.find((p) => p.id === id);
                       if (!problem) return null;
                       const text = problem.description ?? id;
+                      const hovered = hoveredProblemRowId === id;
                       return (
                         <div
                           key={id}
-                          style={{
-                            display: "flex",
-                            flexDirection: "row",
-                            alignItems: "flex-start",
-                            gap: 8,
-                            minHeight: 32,
-                            height: "auto",
-                            paddingTop: 6,
-                            paddingBottom: 6,
-                            paddingLeft: 8,
-                            paddingRight: 8,
-                            borderRadius: 4,
-                            border: "1px solid #e4ddd3",
-                            backgroundColor: "#f3efe9"
-                          }}
+                          className="w-full"
+                          onMouseEnter={() => setHoveredProblemRowId(id)}
+                          onMouseLeave={() => setHoveredProblemRowId(null)}
                         >
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <Step3ClampText
-                              text={text}
-                              textStyle={{
-                                fontSize: 13,
-                                fontWeight: 500,
-                                color: "#2e1c1c",
-                                letterSpacing: "0.13px",
-                                lineHeight: 1.5,
-                              }}
-                            />
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setRelatedProblems((prev) => prev.filter((x) => x !== id))
+                          <Tag
+                            label={text}
+                            variant={hovered ? "brand" : "default"}
+                            size="md"
+                            icon={hovered ? "removable" : "none"}
+                            onRemove={() =>
+                              setRelatedProblems((prev) =>
+                                prev.filter((x) => x !== id)
+                              )
                             }
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              background: "none",
-                              border: "none",
-                              padding: 0,
-                              cursor: "pointer",
-                              color: "#998c82",
-                              flexShrink: 0,
-                              alignSelf: "flex-start",
-                            }}
-                            aria-label="Remove problem"
-                          >
-                            <Icon name="close" size={14} />
-                          </button>
+                            className="w-full"
+                          />
                         </div>
                       );
                     })}

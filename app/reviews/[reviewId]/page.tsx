@@ -269,11 +269,64 @@ export default async function ReviewDetailPage({
 
   let artifacts = mapArtifacts(extractArtifactArray(row.artifacts));
 
-  const { data: versionRows } = await supabase
-    .from('artifact_versions')
-    .select('artifact_id, version_number, label, created_at, artifacts ( name )')
-    .eq('review_id', row.id)
-    .order('created_at', { ascending: true });
+  const [{ data: versionRows }, { data: reviewSourcesData }] = await Promise.all([
+    supabase
+      .from('artifact_versions')
+      .select('artifact_id, version_number, label, created_at, artifacts ( name )')
+      .eq('review_id', row.id)
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('review_sources')
+      .select(
+        'source_id, sources ( id, label, file_name, url, storage_path, file_type, created_at )',
+      )
+      .eq('review_id', row.id),
+  ]);
+
+  const citedSources: Array<{
+    id: string;
+    label: string;
+    file_name: string | null;
+    url: string | null;
+    storage_path: string | null;
+    file_type: string | null;
+  }> = [];
+  if (Array.isArray(reviewSourcesData)) {
+    for (const raw of reviewSourcesData) {
+      const link = raw as Record<string, unknown>;
+      const rel = link.sources as
+        | Record<string, unknown>
+        | Record<string, unknown>[]
+        | null
+        | undefined;
+      const source = Array.isArray(rel) ? rel[0] : rel;
+      if (!source) continue;
+      const id = String(source.id ?? link.source_id ?? '').trim();
+      if (!id) continue;
+      const labelRaw = String(source.label ?? '').trim();
+      const fileName =
+        source.file_name == null || String(source.file_name).trim() === ''
+          ? null
+          : String(source.file_name);
+      citedSources.push({
+        id,
+        label: labelRaw || fileName || 'Untitled',
+        file_name: fileName,
+        url:
+          source.url == null || String(source.url).trim() === ''
+            ? null
+            : String(source.url),
+        storage_path:
+          source.storage_path == null || String(source.storage_path).trim() === ''
+            ? null
+            : String(source.storage_path),
+        file_type:
+          source.file_type == null || String(source.file_type).trim() === ''
+            ? null
+            : String(source.file_type),
+      });
+    }
+  }
 
   if (versionRows && versionRows.length > 0) {
     const enriched = versionRows.map((r: unknown) => {
@@ -934,6 +987,7 @@ export default async function ReviewDetailPage({
       activeTabIndex={0}
       tradeoffs={tradeoffs}
       decisionSnapshots={decisionSnapshots}
+      citedSources={citedSources}
     />
   );
 }

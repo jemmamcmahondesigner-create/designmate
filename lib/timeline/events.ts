@@ -27,7 +27,9 @@ export type TimelineEventType =
   | "artifact_description_edited"
   | "project_updated"
   | "access_requested"
-  | "access_granted";
+  | "access_granted"
+  | "source_added"
+  | "source_deleted";
 
 export type TimelineEventRow = {
   id: string;

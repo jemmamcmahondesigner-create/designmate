@@ -55,13 +55,14 @@ export function Tag({
 
   return (
     <span className={rootClass}>
-      {icon === 'leading' && (
-        <span className={styles.iconWrap} aria-hidden="true">
-          <Icon name={leadingIcon} size={14} />
-        </span>
-      )}
-
-      <span className={styles.label}>{label}</span>
+      <span className={styles.content}>
+        {icon === 'leading' && (
+          <span className={styles.iconWrap} aria-hidden="true">
+            <Icon name={leadingIcon} size={14} />
+          </span>
+        )}
+        <span className={styles.label}>{label}</span>
+      </span>
 
       {icon === 'removable' && (
         <button

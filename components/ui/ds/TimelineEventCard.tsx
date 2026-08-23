@@ -400,6 +400,8 @@ const EVENT_SENTIMENT: Record<TimelineEventType, keyof typeof SENTIMENT> = {
   project_updated: "meta",
   access_requested: "meta",
   access_granted: "meta",
+  source_added: "meta",
+  source_deleted: "delete",
 };
 
 function ReviewLink({
@@ -1765,6 +1767,44 @@ export function TimelineEventCard({
                 </span>
               </>
             ) : null}
+          </EventRow>
+        ) : normalizedEventType === "source_added" ? (
+          <EventRow
+            leading={actorLeading}
+            timeLabel={t}
+            timeTooltipLabel={timeTooltipLabel || undefined}
+          >
+            <span className="min-w-0 truncate" style={textPrimary}>
+              {actor}
+            </span>
+            <span className="shrink-0 whitespace-nowrap" style={textSecondary}>
+              added source
+            </span>
+            <span
+              className="min-w-0 truncate"
+              style={{ color: "#6b1e2e", fontSize: 13, fontWeight: 500 }}
+            >
+              &ldquo;{String(payload.source_label ?? "Untitled")}&rdquo;
+            </span>
+          </EventRow>
+        ) : normalizedEventType === "source_deleted" ? (
+          <EventRow
+            leading={actorLeading}
+            timeLabel={t}
+            timeTooltipLabel={timeTooltipLabel || undefined}
+          >
+            <span className="min-w-0 truncate" style={textPrimary}>
+              {actor}
+            </span>
+            <span className="shrink-0 whitespace-nowrap" style={textSecondary}>
+              removed source
+            </span>
+            <span
+              className="min-w-0 truncate"
+              style={{ color: "#6b1e2e", fontSize: 13, fontWeight: 500 }}
+            >
+              &ldquo;{String(payload.source_label ?? "Untitled")}&rdquo;
+            </span>
           </EventRow>
         ) : normalizedEventType === "artifact_description_edited" ? (
           (() => {

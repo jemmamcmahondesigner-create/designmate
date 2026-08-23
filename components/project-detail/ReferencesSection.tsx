@@ -2,28 +2,23 @@
 
 import {
   useCallback,
-  useEffect,
   useRef,
   useState,
   type ChangeEvent
 } from "react";
-import { createPortal } from "react-dom";
 import { Button, Icon } from "@/components/ui/ds";
-import { SourceFileViewer } from "@/components/project-detail/SourceFileViewer";
+import { useToast } from "@/components/Toast";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { uploadProjectSourceFile } from "@/lib/sources/uploadProjectSourceFile";
+import {
+  classifySourcePreview,
+  useSourcePreview,
+} from "@/lib/sources/useSourcePreview";
+import { logTimelineEventClient } from "@/lib/timeline/logEventClient";
 import type { ProjectReference } from "@/types/project";
 
 const REFERENCE_SELECT =
   "id, project_id, label, url, file_name, storage_path, file_type, created_at";
-
-function deriveFileType(filename: string): string {
-  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  if (["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext)) return "image";
-  if (ext === "pdf") return "pdf";
-  if (["xlsx", "xls", "csv"].includes(ext)) return "spreadsheet";
-  if (["doc", "docx", "txt"].includes(ext)) return "document";
-  return "other";
-}
 
 function sourceTypeForStoragePath(
   storagePath: string | null | undefined
@@ -59,82 +54,6 @@ const sectionHeadingClass =
 
 const sectionHeadingStyle = { letterSpacing: "-0.3px" as const };
 
-function UndoToastPortal({
-  message,
-  onUndo,
-  onDone
-}: {
-  message: string;
-  onUndo: () => void | Promise<void>;
-  onDone: () => void;
-}) {
-  const [opacity, setOpacity] = useState(0);
-  const [transition, setTransition] = useState("opacity 200ms ease");
-  const [mounted, setMounted] = useState(false);
-  const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    let innerRaf = 0;
-    const outerRaf = requestAnimationFrame(() => {
-      innerRaf = requestAnimationFrame(() => setOpacity(1));
-    });
-    const startFadeOut = window.setTimeout(() => {
-      setTransition("opacity 500ms ease");
-      setOpacity(0);
-    }, 3500);
-    const remove = window.setTimeout(() => {
-      onDoneRef.current();
-    }, 4000);
-    return () => {
-      cancelAnimationFrame(outerRaf);
-      cancelAnimationFrame(innerRaf);
-      window.clearTimeout(startFadeOut);
-      window.clearTimeout(remove);
-    };
-  }, []);
-
-  if (!mounted || typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className="fixed z-50 flex flex-wrap items-center"
-      style={{
-        bottom: 24,
-        left: 24,
-        backgroundColor: "#ebf6ee",
-        border: "1px solid #7dc98f",
-        borderRadius: 8,
-        padding: "12px 16px",
-        boxShadow: "0px 4px 12px rgba(41,33,28,0.12)",
-        fontSize: 13,
-        fontWeight: 500,
-        color: "#256b38",
-        opacity,
-        transition,
-        maxWidth: 400
-      }}
-      role="status"
-    >
-      <span>{message}</span>
-      <Button
-        type="button"
-        variant="ghost"
-        label="Undo"
-        className="ml-3 !p-0 underline"
-        onClick={() => {
-          void Promise.resolve(onUndo()).then(() => onDone());
-        }}
-      />
-    </div>,
-    document.body
-  );
-}
-
 function referenceTitle(row: ProjectReference): string {
   if (row.label && row.label.trim() !== "") {
     return row.label.trim();
@@ -150,19 +69,14 @@ export function ReferencesSection({
   initialReferences,
   hideAddActions = false,
 }: ReferencesSectionProps) {
+  const { showToast } = useToast();
+  const { openSource, preview } = useSourcePreview();
   const [references, setReferences] =
     useState<ProjectReference[]>(initialReferences);
   const [isSaving, setIsSaving] = useState(false);
-  const [undoToast, setUndoToast] = useState<{ key: number } | null>(null);
-  const [viewingRef, setViewingRef] = useState<ProjectReference | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const undoReferenceSnapshotRef = useRef<ProjectReference | null>(null);
-
-  const dismissUndoToast = useCallback(() => {
-    undoReferenceSnapshotRef.current = null;
-    setUndoToast(null);
-  }, []);
 
   const undoRemoveReference = useCallback(async () => {
     const snap = undoReferenceSnapshotRef.current;
@@ -188,6 +102,16 @@ export function ReferencesSection({
 
     setReferences((prev) => [...prev, data as ProjectReference]);
     undoReferenceSnapshotRef.current = null;
+    void logTimelineEventClient({
+      projectId,
+      eventType: "source_added",
+      payload: {
+        source_label: referenceTitle(data as ProjectReference),
+        source_type: sourceTypeForStoragePath(
+          (data as ProjectReference).storage_path
+        ),
+      },
+    });
   }, [projectId]);
 
   async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
@@ -195,53 +119,35 @@ export function ReferencesSection({
     e.target.value = "";
     if (!file) return;
     setIsSaving(true);
-    const supabase = createSupabaseBrowserClient();
-
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const storagePath = `${projectId}/${crypto.randomUUID()}-${safeName}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from("project-references")
-      .upload(storagePath, file, { upsert: false });
-
-    if (uploadError) {
-      console.error("Upload failed:", uploadError.message);
+    try {
+      const data = await uploadProjectSourceFile(projectId, file);
+      setReferences((prev) => [...prev, data]);
+      void logTimelineEventClient({
+        projectId,
+        eventType: "source_added",
+        payload: {
+          source_label: referenceTitle(data),
+          source_type: sourceTypeForStoragePath(data.storage_path),
+        },
+      });
+    } catch {
+      // uploadProjectSourceFile already logs storage failures; DB failures stay silent
+    } finally {
       setIsSaving(false);
-      return;
-    }
-
-    const { data: urlData } = supabase.storage
-      .from("project-references")
-      .getPublicUrl(storagePath);
-
-    const publicUrl = urlData.publicUrl;
-    const workspaceId = await resolveProjectWorkspaceId(supabase, projectId);
-
-    const { data, error: dbError } = await supabase
-      .from("sources")
-      .insert({
-        project_id: projectId,
-        workspace_id: workspaceId,
-        source_type: sourceTypeForStoragePath(storagePath),
-        label: file.name,
-        url: publicUrl,
-        file_name: file.name,
-        storage_path: storagePath,
-        file_type: deriveFileType(file.name),
-      })
-      .select(REFERENCE_SELECT)
-      .single();
-
-    setIsSaving(false);
-    if (!dbError && data) {
-      setReferences((prev) => [...prev, data as ProjectReference]);
     }
   }
 
   async function removeReference(row: ProjectReference) {
     setReferences((refs) => refs.filter((r) => r.id !== row.id));
     undoReferenceSnapshotRef.current = row;
-    setUndoToast({ key: Date.now() });
+    showToast({
+      message: "Source file removed",
+      sentiment: "success",
+      actionLabel: "Undo",
+      onAction: () => {
+        void undoRemoveReference();
+      },
+    });
 
     const supabase = createSupabaseBrowserClient();
 
@@ -258,14 +164,23 @@ export function ReferencesSection({
 
     if (error) {
       undoReferenceSnapshotRef.current = null;
-      setUndoToast(null);
       setReferences((refs) => {
         if (refs.some((r) => r.id === row.id)) return refs;
         return [...refs, row].sort((a, b) =>
           a.created_at.localeCompare(b.created_at)
         );
       });
+      return;
     }
+
+    void logTimelineEventClient({
+      projectId,
+      eventType: "source_deleted",
+      payload: {
+        source_label: referenceTitle(row),
+        source_type: sourceTypeForStoragePath(row.storage_path),
+      },
+    });
   }
 
   const showEmptyState = references.length === 0;
@@ -316,8 +231,9 @@ export function ReferencesSection({
         <div className="mt-3 flex flex-wrap" style={{ gap: 6 }}>
           {references.map((row) => {
             const title = referenceTitle(row);
-            const isFile = row.storage_path != null;
-            const isUrl = row.url != null && row.storage_path == null;
+            const previewKind = classifySourcePreview(row);
+            const isFile = previewKind === "file";
+            const isUrl = previewKind === "link";
 
             const chipContent = (
               <>
@@ -371,11 +287,11 @@ export function ReferencesSection({
                     gap: 8,
                     cursor: "pointer",
                   }}
-                  onClick={() => setViewingRef(row)}
+                  onClick={() => openSource(row)}
                   onKeyDown={(ev) => {
                     if (ev.key === "Enter" || ev.key === " ") {
                       ev.preventDefault();
-                      setViewingRef(row);
+                      openSource(row);
                     }
                   }}
                 >
@@ -444,21 +360,7 @@ export function ReferencesSection({
         />
       </div>
 
-      {undoToast ? (
-        <UndoToastPortal
-          key={undoToast.key}
-          message="Source file removed"
-          onUndo={undoRemoveReference}
-          onDone={dismissUndoToast}
-        />
-      ) : null}
-
-      {viewingRef ? (
-        <SourceFileViewer
-          reference={viewingRef}
-          onClose={() => setViewingRef(null)}
-        />
-      ) : null}
+      {preview}
     </section>
   );
 }
