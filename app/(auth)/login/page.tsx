@@ -13,9 +13,10 @@ import { Icon, Input } from "@/components/ui/ds";
 import inputStyles from "@/components/ui/ds/Input.module.css";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
-  getPostAuthPath,
+  getSafeInternalPath,
   getSiteOrigin,
   mapSignInError,
+  resolvePostLoginPath,
   type LoginFieldError,
 } from "@/lib/auth/mapAuthError";
 
@@ -35,7 +36,8 @@ export default function LoginPage() {
         data: { session },
       } = await supabase.auth.getSession();
       if (session) {
-        router.replace(getPostAuthPath(session.user.user_metadata));
+        const next = new URLSearchParams(window.location.search).get("next");
+        router.replace(resolvePostLoginPath(session.user.user_metadata, next));
       }
     };
     void checkSession();
@@ -50,10 +52,15 @@ export default function LoginPage() {
 
   const signInWithGoogle = useCallback(async () => {
     const supabase = createSupabaseBrowserClient();
+    const next = getSafeInternalPath(
+      new URLSearchParams(window.location.search).get("next"),
+    );
+    const callbackUrl = new URL("/auth/callback", getSiteOrigin());
+    if (next) callbackUrl.searchParams.set("next", next);
     await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${getSiteOrigin()}/auth/callback`,
+        redirectTo: callbackUrl.toString(),
       },
     });
   }, []);
@@ -75,7 +82,8 @@ export default function LoginPage() {
     }
 
     if (data.user) {
-      router.push(getPostAuthPath(data.user.user_metadata));
+      const next = new URLSearchParams(window.location.search).get("next");
+      router.push(resolvePostLoginPath(data.user.user_metadata, next));
       router.refresh();
       return;
     }

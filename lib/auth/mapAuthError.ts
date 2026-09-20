@@ -57,6 +57,27 @@ export function getPostAuthPath(
   return "/projects";
 }
 
+/** Same-origin relative path only — rejects protocol-relative and off-site URLs. */
+export function getSafeInternalPath(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const path = raw.trim();
+  if (!path.startsWith("/")) return null;
+  if (path.startsWith("//") || path.startsWith("/\\")) return null;
+  if (path.includes("://")) return null;
+  return path;
+}
+
+export function resolvePostLoginPath(
+  userMetadata: Record<string, unknown> | undefined,
+  next?: string | null,
+): string {
+  return getSafeInternalPath(next) ?? getPostAuthPath(userMetadata);
+}
+
+export function loginUrlForReturnPath(nextPath: string): string {
+  return `/login?next=${encodeURIComponent(nextPath)}`;
+}
+
 export function getSiteOrigin(): string {
   if (typeof window !== "undefined") {
     return window.location.origin;

@@ -10,10 +10,12 @@
  * Mode is derived from the query string: ?mode=view → view-only, else edit.
  */
 
+import { redirect } from 'next/navigation';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/admin';
 import { getEffectiveCurrentContributor } from '@/lib/auth/effectiveContributor';
 import { getDevImpersonatedContributorId } from '@/lib/auth/devImpersonation';
+import { loginUrlForReturnPath } from '@/lib/auth/mapAuthError';
 import { fetchContactDisplayNames } from '@/lib/contacts/fetchContactDisplayNames';
 import { getDecisionMakerReviewerId } from '@/lib/reviews/workflow';
 import { formatVersionLabel } from '@/lib/artifacts/versioning';
@@ -181,6 +183,16 @@ export default async function ReviewDetailPage({
 }) {
   const mode = searchParams.mode === 'view' ? 'view-only' : 'edit';
   const supabase = await createSupabaseServerClient();
+  const {
+    data: { user: sessionUser },
+  } = await supabase.auth.getUser();
+  if (!sessionUser) {
+    const nextPath =
+      searchParams.mode === 'view'
+        ? `/reviews/${params.reviewId}?mode=view`
+        : `/reviews/${params.reviewId}`;
+    redirect(loginUrlForReturnPath(nextPath));
+  }
   if (DEBUG_LOADER) {
     console.info('[review-detail-loader] params', { reviewId: params.reviewId });
   }

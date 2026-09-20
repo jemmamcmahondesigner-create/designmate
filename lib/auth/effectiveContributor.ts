@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getDevImpersonatedContributorId } from "@/lib/auth/devImpersonation";
 import {
+  resolveContributorByEmail,
   resolveEffectiveContributor,
   type ContributorIdentity,
 } from "@/lib/auth/resolveEffectiveContributor";
@@ -55,27 +56,7 @@ async function resolveContributorWithServiceClient(
   const email = user?.email?.trim().toLowerCase();
   if (!email) return null;
 
-  let query = contributorsSupabase
-    .from("contributors")
-    .select("id, name, email, role, permission_level")
-    .ilike("email", email);
-  if (projectId) {
-    query = query.eq("project_id", projectId);
-  }
-
-  const { data: rows } = await query
-    .order("created_at", { ascending: true })
-    .limit(1);
-  const data = rows?.[0] ?? null;
-  if (!data) return null;
-  const row = data as Record<string, unknown>;
-  return {
-    id: String(row.id ?? ""),
-    name: String(row.name ?? "Contributor"),
-    role: row.role == null ? null : String(row.role),
-    permissionLevel:
-      row.permission_level == null ? null : String(row.permission_level),
-  };
+  return resolveContributorByEmail(contributorsSupabase, email, projectId);
 }
 
 export async function getEffectiveCurrentContributor(

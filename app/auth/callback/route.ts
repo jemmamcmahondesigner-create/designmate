@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getPostAuthPath } from "@/lib/auth/mapAuthError";
+import { resolvePostLoginPath } from "@/lib/auth/mapAuthError";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -12,10 +12,7 @@ export async function GET(request: Request) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 
     if (!error && data.user) {
-      const path =
-        next && next.startsWith("/")
-          ? next
-          : getPostAuthPath(data.user.user_metadata);
+      const path = resolvePostLoginPath(data.user.user_metadata, next);
       return NextResponse.redirect(`${origin}${path}`);
     }
   }
