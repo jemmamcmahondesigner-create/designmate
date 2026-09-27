@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Alert,
   Avatar,
   Button,
   IconSquareButton,
@@ -26,11 +27,21 @@ export type RoleMember = {
 export type RoleRow = {
   id: string;
   name: string;
+  workspaceId: string | null;
   memberCount: number;
   members: RoleMember[];
 };
 
-const BUILTIN = new Set(["Designer", "Engineer", "Product Manager", "Stakeholder"]);
+function isBuiltInRole(row: Pick<RoleRow, "workspaceId">): boolean {
+  return row.workspaceId == null;
+}
+
+function roleWriteError(message: string): string {
+  if (/row-level security/i.test(message)) {
+    return "Default roles can't be changed. Create a workspace role instead.";
+  }
+  return message || "Could not save role.";
+}
 
 const overflowChipStyle = {
   width: 24,
@@ -114,7 +125,7 @@ export function RolesSettingsPage({
       label: "State",
       width: 120,
       cellType: "text",
-      render: (row) => (BUILTIN.has(row.name) ? "Default" : ""),
+      render: (row) => (isBuiltInRole(row) ? "Default" : ""),
     },
     ...(readOnly
       ? []
@@ -124,7 +135,8 @@ export function RolesSettingsPage({
             label: "",
             width: 40,
             cellType: "kebab" as const,
-            render: (row: RoleRow) => (
+            render: (row: RoleRow) =>
+              isBuiltInRole(row) ? null : (
               <>
                 <IconSquareButton
                   ref={(el) => {
@@ -152,22 +164,14 @@ export function RolesSettingsPage({
                       setFormError(null);
                     }}
                   />
-                  {BUILTIN.has(row.name) ? (
-                    <Tooltip label="Default roles cannot be removed." position="left" fullWidth>
-                      <span style={{ display: "block" }}>
-                        <MenuItem label="Remove" disabled />
-                      </span>
-                    </Tooltip>
-                  ) : (
-                    <MenuItem
-                      label="Remove"
-                      destructive
-                      onClick={() => {
-                        setOpenMenuId(null);
-                        void removeRole(row);
-                      }}
-                    />
-                  )}
+                  <MenuItem
+                    label="Remove"
+                    destructive
+                    onClick={() => {
+                      setOpenMenuId(null);
+                      void removeRole(row);
+                    }}
+                  />
                 </Menu>
               </>
             ),
@@ -178,11 +182,17 @@ export function RolesSettingsPage({
   const createRole = async () => {
     const name = newName.trim();
     if (!name) return;
+    if (!activeWorkspaceId) {
+      setFormError("Select a workspace before creating a role.");
+      return;
+    }
     setFormError(null);
     const supabase = createSupabaseBrowserClient();
-    const { error } = await supabase.from("contributor_roles").insert({ name });
+    const { error } = await supabase
+      .from("contributor_roles")
+      .insert({ name, workspace_id: activeWorkspaceId });
     if (error) {
-      setFormError(error.message || "Could not create role.");
+      setFormError(roleWriteError(error.message));
       return;
     }
     setAddOpen(false);
@@ -192,6 +202,10 @@ export function RolesSettingsPage({
 
   const saveEdit = async () => {
     if (!editRole) return;
+    if (isBuiltInRole(editRole)) {
+      setFormError("Default roles can't be changed. Create a workspace role instead.");
+      return;
+    }
     const name = editName.trim();
     if (!name) return;
     setFormError(null);
@@ -199,7 +213,7 @@ export function RolesSettingsPage({
     const oldName = editRole.name;
     const { error: uErr } = await supabase.from("contributor_roles").update({ name }).eq("id", editRole.id);
     if (uErr) {
-      setFormError(uErr.message || "Could not update role.");
+      setFormError(roleWriteError(uErr.message));
       return;
     }
     if (oldName !== name && activeWorkspaceId) {
@@ -219,7 +233,10 @@ export function RolesSettingsPage({
   };
 
   const removeRole = async (row: RoleRow) => {
-    if (BUILTIN.has(row.name)) return;
+    if (isBuiltInRole(row)) {
+      setFormError("Default roles can't be changed. Create a workspace role instead.");
+      return;
+    }
     const supabase = createSupabaseBrowserClient();
     if (activeWorkspaceId) {
       await supabase
@@ -235,7 +252,7 @@ export function RolesSettingsPage({
     }
     const { error } = await supabase.from("contributor_roles").delete().eq("id", row.id);
     if (error) {
-      setFormError(error.message || "Could not remove role.");
+      setFormError(roleWriteError(error.message));
       return;
     }
     refresh();
@@ -261,9 +278,9 @@ export function RolesSettingsPage({
         ) : null}
       </div>
       {formError ? (
-        <p role="alert" style={{ margin: "0 0 12px", fontSize: 13, color: "#8b2020" }}>
-          {formError}
-        </p>
+        <div style={{ margin: "0 0 12px" }}>
+          <Alert sentiment="warning" prominence="low" title={formError} dismissible={false} />
+        </div>
       ) : null}
       <div
         className={settingsTableLayoutStyles.tableShell}
@@ -295,9 +312,7 @@ export function RolesSettingsPage({
         }
       >
         {formError ? (
-          <p role="alert" style={{ margin: 0, fontSize: 13, color: "#8b2020" }}>
-            {formError}
-          </p>
+          <Alert sentiment="warning" prominence="low" title={formError} dismissible={false} />
         ) : null}
         <Input label="Name" required value={newName} onChange={(e) => setNewName(e.target.value)} size="sm" />
       </Modal>
@@ -316,9 +331,7 @@ export function RolesSettingsPage({
         }
       >
         {formError ? (
-          <p role="alert" style={{ margin: 0, fontSize: 13, color: "#8b2020" }}>
-            {formError}
-          </p>
+          <Alert sentiment="warning" prominence="low" title={formError} dismissible={false} />
         ) : null}
         <Input label="Name" required value={editName} onChange={(e) => setEditName(e.target.value)} size="sm" />
       </Modal>

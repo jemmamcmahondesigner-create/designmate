@@ -90,8 +90,9 @@ export async function fetchWorkspaceRoleOptions(
 }
 
 /**
- * Ensures a base seed role exists in contributor_roles.
- * Custom roles (e.g. "Product Owner") are workspace-scoped via contributors.role only.
+ * Resolves a typed job title against contributor_roles.
+ * Built-in defaults are looked up, never inserted (they are workspace_id NULL).
+ * Custom roles stay on contributors.role unless created from the Roles screen.
  */
 export async function ensureContributorRole(
   supabase: SupabaseClient,
@@ -104,29 +105,16 @@ export async function ensureContributorRole(
     return { id: name, name };
   }
 
-  const { data, error } = await supabase
+  const { data: existing } = await supabase
     .from("contributor_roles")
-    .insert({ name })
     .select("id, name")
-    .single();
-
-  if (!error && data && typeof data === "object" && "id" in data) {
-    const id = String((data as Record<string, unknown>).id ?? "");
-    const label = String((data as Record<string, unknown>).name ?? name);
-    if (id) return { id: label, name: label };
+    .eq("name", name)
+    .is("workspace_id", null)
+    .maybeSingle();
+  if (existing && typeof existing === "object" && "name" in existing) {
+    const label = String((existing as Record<string, unknown>).name ?? name).trim();
+    if (label) return { id: label, name: label };
   }
 
-  if (error && String((error as { code?: string }).code) === "23505") {
-    const { data: existing } = await supabase
-      .from("contributor_roles")
-      .select("id, name")
-      .eq("name", name)
-      .maybeSingle();
-    if (existing && typeof existing === "object" && "name" in existing) {
-      const label = String((existing as Record<string, unknown>).name ?? name).trim();
-      if (label) return { id: label, name: label };
-    }
-  }
-
-  return null;
+  return { id: name, name };
 }

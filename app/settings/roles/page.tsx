@@ -38,7 +38,7 @@ export default async function SettingsRolesPage() {
 
   const { data: roleRows, error: rolesError } = await supabase
     .from("contributor_roles")
-    .select("id, name")
+    .select("id, name, workspace_id")
     .order("name", { ascending: true });
 
   if (rolesError) {
@@ -61,7 +61,7 @@ export default async function SettingsRolesPage() {
     console.error("Roles contributors fetch error:", contributorsError);
   }
 
-  const roles = (roleRows ?? []) as { id: string; name: string }[];
+  const roles = (roleRows ?? []) as { id: string; name: string; workspace_id?: string | null }[];
   const contributors = (contributorRows ?? []) as ContributorRow[];
 
   const initialRoles: RoleRow[] = roles.map((r) => {
@@ -77,6 +77,7 @@ export default async function SettingsRolesPage() {
     return {
       id: String(r.id ?? ""),
       name: String(r.name ?? ""),
+      workspaceId: r.workspace_id == null ? null : String(r.workspace_id),
       memberCount: members.length,
       members,
     };
