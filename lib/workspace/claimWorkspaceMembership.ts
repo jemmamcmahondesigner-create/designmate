@@ -49,6 +49,12 @@ export type ClaimWorkspaceMembershipInput = {
   jobRole?: string | null;
   /** Used only when no pending invite or pending member exists. */
   fallbackPermissionLevel?: WorkspacePermissionLevel;
+  /**
+   * When true, refuse to insert a new membership unless this user already has
+   * a pending/active member row or a pending email invite for the workspace.
+   * Required for the join API's workspace_id-only path.
+   */
+  requireExistingRelationship?: boolean;
 };
 
 export type ClaimWorkspaceMembershipResult =
@@ -391,6 +397,17 @@ export async function claimOrCreateWorkspaceMembership(
       : fallbackPermissionLevel;
 
   const alreadyMember = memberStatus(member) === "active" && String(member?.user_id ?? "") === userId;
+
+  if (
+    input.requireExistingRelationship &&
+    !member &&
+    !usableInvite
+  ) {
+    return {
+      ok: false,
+      message: "You do not have an invitation to this workspace.",
+    };
+  }
 
   if (member && (memberStatus(member) === "pending" || String(member.user_id ?? "") === userId)) {
     const activateError = await activateMember(service, member, { userId, email: email || null });

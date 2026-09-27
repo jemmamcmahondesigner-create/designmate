@@ -60,10 +60,18 @@ export async function POST(request: Request) {
       invitedName,
     jobRole: jobRole || (user.user_metadata?.role as string | undefined)?.trim() || null,
     fallbackPermissionLevel,
+    // workspace_id alone must not create membership in an unrelated tenant.
+    // invite_code was already validated by resolveJoinTarget above.
+    requireExistingRelationship: !inviteCode,
   });
 
   if (!result.ok) {
-    const status = result.message.includes("already an active member") ? 409 : 400;
+    const forbidden = result.message.includes("do not have an invitation");
+    const status = result.message.includes("already an active member")
+      ? 409
+      : forbidden
+        ? 403
+        : 400;
     return NextResponse.json({ message: result.message }, { status });
   }
 
