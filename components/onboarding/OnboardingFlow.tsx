@@ -30,6 +30,7 @@ import {
 import {
   acceptWorkspaceInvite,
   fetchInviteDetails,
+  fetchOnboardingMembership,
   inviteErrorAlertCopy,
   joinWorkspaceByCode,
   INVITE_CODE_STORAGE_KEY,
@@ -40,6 +41,7 @@ import { DESIGN_WORK_OPTIONS, WORK_ENV_OPTIONS } from "./constants";
 import { DesignTraceName } from "./DesignTraceName";
 import { getRoleHeading } from "./getRoleHeading";
 import { IntroSlides } from "./IntroSlides";
+import { OnboardingAccountBar } from "./OnboardingAccountBar";
 import "./onboarding.css";
 
 type Phase = "intro" | "steps";
@@ -159,6 +161,7 @@ export function OnboardingFlow({
   const [invitePermissionLevel, setInvitePermissionLevel] =
     useState<WorkspacePermissionLevel>("reviewer");
   const [inviteError, setInviteError] = useState<InviteErrorReason | null>(null);
+  const [alreadyMember, setAlreadyMember] = useState(false);
 
   const [phase, setPhase] = useState<Phase>("intro");
   const [step, setStep] = useState(1);
@@ -193,7 +196,7 @@ export function OnboardingFlow({
   const inviteHeadingRef = useRef<HTMLHeadingElement>(null);
   const [inviteDashTop, setInviteDashTop] = useState<number | null>(null);
 
-  const totalSteps = isInvited ? 3 : 4;
+  const totalSteps = alreadyMember ? 2 : isInvited ? 3 : 4;
   const invitedConfirmationStep = isInvited && step === 3;
   const designTypeDisplay = useMemo(() => {
     const opt = DESIGN_WORK_OPTIONS.find((o) => o.value === designType);
@@ -241,7 +244,32 @@ export function OnboardingFlow({
           : null;
       const effectiveInviteCode = urlInviteCode?.trim() || localInviteCode;
 
-      if (effectiveInviteCode) {
+      const membership = await fetchOnboardingMembership();
+      if (membership.member && membership.workspaceId) {
+        let workspaceId = membership.workspaceId;
+        let workspaceName = membership.workspaceName ?? null;
+        let permissionLevel = membership.permissionLevel ?? "reviewer";
+
+        if (membership.needsClaim) {
+          const claimed = await joinWorkspaceByCode({ workspace_id: workspaceId });
+          if (claimed.success && claimed.workspace_id) {
+            workspaceId = claimed.workspace_id;
+            workspaceName = claimed.workspace_name ?? workspaceName;
+            permissionLevel = claimed.permission_level ?? permissionLevel;
+          }
+        }
+
+        setAlreadyMember(true);
+        setIsInvited(false);
+        setInviteError(null);
+        setActiveWorkspaceId(workspaceId);
+        setInviteWorkspaceId(workspaceId);
+        setInvitePermissionLevel(permissionLevel);
+        if (workspaceName) {
+          setInviteWorkspaceName(workspaceName);
+          setCompany(workspaceName);
+        }
+      } else if (effectiveInviteCode) {
         setStoredInviteCode(effectiveInviteCode);
         setIsInvited(true);
         setInviteLink(effectiveInviteCode);
@@ -550,6 +578,27 @@ export function OnboardingFlow({
     }
   };
 
+  const handleFinishExistingMember = async () => {
+    setSubmitting(true);
+    try {
+      await persistProfile({
+        workspaceId: activeWorkspaceId ?? inviteWorkspaceId ?? undefined,
+        permissionLevel: invitePermissionLevel,
+      });
+      window.localStorage.removeItem(INVITE_CODE_STORAGE_KEY);
+      router.push("/projects");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    const supabase = createSupabaseBrowserClient();
+    await supabase.auth.signOut();
+    window.localStorage.removeItem(INVITE_CODE_STORAGE_KEY);
+    router.replace("/login");
+  };
+
   const handleCreateProject = async (skip: boolean) => {
     setSubmitting(true);
     try {
@@ -592,6 +641,8 @@ export function OnboardingFlow({
     return (
       <IntroSlides
         reducedMotion={reducedMotion}
+        accountEmail={email}
+        onSignOut={() => void handleSignOut()}
         onComplete={() => setPhase("steps")}
       />
     );
@@ -612,6 +663,7 @@ export function OnboardingFlow({
         style={{ background: "var(--surface-page, #faf8f6)" }}
       >
         <AuthMark className="absolute left-16 top-16" height={48} />
+        <OnboardingAccountBar email={email} onSignOut={() => void handleSignOut()} />
 
         <div className="w-full min-w-0">
           {step === 1 && (
@@ -814,14 +866,18 @@ export function OnboardingFlow({
                       className="w-full"
                       portaled
                     />
-                    {isInvited ? (
+                    {isInvited || alreadyMember ? (
                       <Input
                         label="Company or Team Name"
                         size="lg"
                         value={company || inviteWorkspaceName}
                         disabled
                         trailingAction={<InputLockIcon />}
-                        helperText={`You're joining this workspace as a ${permissionLevelLabel(invitePermissionLevel).toLowerCase()}.`}
+                        helperText={
+                          alreadyMember
+                            ? `You're already a ${permissionLevelLabel(invitePermissionLevel).toLowerCase()} in this workspace.`
+                            : `You're joining this workspace as a ${permissionLevelLabel(invitePermissionLevel).toLowerCase()}.`
+                        }
                         showHelper
                         onChange={() => {}}
                         className="w-full"
@@ -1032,18 +1088,22 @@ export function OnboardingFlow({
                     size="lg"
                     label="Skip"
                     disabled={submitting}
-                    onClick={() => setStep(3)}
+                    onClick={() =>
+                      alreadyMember ? void handleFinishExistingMember() : setStep(3)
+                    }
                     className="flex-1"
                     style={{ flex: 1 }}
                   />
                   <Button
                     variant="primary"
                     size="lg"
-                    label="Next"
+                    label={alreadyMember ? (submitting ? "Saving..." : "Go to workspace") : "Next"}
                     icon="trailing"
                     iconName="chevron-right"
                     disabled={submitting}
-                    onClick={() => setStep(3)}
+                    onClick={() =>
+                      alreadyMember ? void handleFinishExistingMember() : setStep(3)
+                    }
                     className="flex-1"
                     style={{ flex: 1 }}
                   />

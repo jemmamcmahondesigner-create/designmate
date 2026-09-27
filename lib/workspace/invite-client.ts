@@ -5,6 +5,41 @@ import type {
   InviteDetailsResult,
   InviteErrorReason,
 } from "@/types/invites";
+import type { WorkspacePermissionLevel } from "@/lib/workspace/permissions";
+
+export type OnboardingMembership = {
+  member: boolean;
+  workspaceId?: string;
+  workspaceName?: string | null;
+  permissionLevel?: WorkspacePermissionLevel;
+  needsClaim?: boolean;
+};
+
+export async function fetchOnboardingMembership(): Promise<OnboardingMembership> {
+  const response = await fetch("/api/workspace/onboarding/membership");
+  if (response.status === 401) {
+    return { member: false };
+  }
+  const data = (await response.json().catch(() => null)) as {
+    member?: boolean;
+    workspace_id?: string;
+    workspace_name?: string | null;
+    permission_level?: WorkspacePermissionLevel;
+    needs_claim?: boolean;
+  } | null;
+
+  if (!response.ok || !data?.member || !data.workspace_id) {
+    return { member: false };
+  }
+
+  return {
+    member: true,
+    workspaceId: data.workspace_id,
+    workspaceName: data.workspace_name ?? null,
+    permissionLevel: data.permission_level ?? "reviewer",
+    needsClaim: Boolean(data.needs_claim),
+  };
+}
 
 export type { InviteErrorReason };
 

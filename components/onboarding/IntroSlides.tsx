@@ -11,6 +11,7 @@ import {
 import { AuthMark } from "@/components/auth/AuthMark";
 import { Button } from "@/components/ui/ds";
 import { DesignTraceName } from "./DesignTraceName";
+import { OnboardingAccountBar } from "./OnboardingAccountBar";
 import "./onboarding.css";
 
 // 🖼️ SWAP IMAGES HERE — replace src values when final images are ready. One entry per slide.
@@ -274,6 +275,8 @@ type IntroPhase =
 type IntroSlidesProps = {
   reducedMotion: boolean;
   exiting?: boolean;
+  accountEmail?: string;
+  onSignOut?: () => void;
   onComplete: () => void;
 };
 
@@ -514,7 +517,13 @@ function ImagePanelColumn({
   );
 }
 
-export function IntroSlides({ reducedMotion, exiting = false, onComplete }: IntroSlidesProps) {
+export function IntroSlides({
+  reducedMotion,
+  exiting = false,
+  accountEmail,
+  onSignOut,
+  onComplete,
+}: IntroSlidesProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -903,6 +912,13 @@ export function IntroSlides({ reducedMotion, exiting = false, onComplete }: Intr
         .filter(Boolean)
         .join(" ")}
     >
+      {accountEmail && onSignOut ? (
+        <OnboardingAccountBar
+          email={accountEmail}
+          onSignOut={onSignOut}
+          onDark={buttonsOnDarkPanel}
+        />
+      ) : null}
       <canvas
         ref={canvasRef}
         className="onboarding-cursor-trail-canvas"
