@@ -177,7 +177,7 @@ export async function POST(
 
     const { data: signedData, error: signedError } = await service.storage
       .from("artifact-snapshots")
-      .createSignedUrl(storagePath, 60 * 60 * 24 * 365);
+      .createSignedUrl(storagePath, 60 * 60);
 
     if (signedError || !signedData?.signedUrl) {
       console.error("[artifact-snapshot] signed URL failed:", signedError);
@@ -190,7 +190,7 @@ export async function POST(
     const { error: updateError } = await service
       .from("artifacts")
       .update({
-        snapshot_url: snapshotUrl,
+        snapshot_url: storagePath,
         snapshot_captured_at: capturedAt,
       })
       .eq("id", artifactId);

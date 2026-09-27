@@ -2,6 +2,10 @@ import "server-only";
 
 import { compareVersions, formatVersionLabel } from "@/lib/artifacts/versioning";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  STORAGE_BUCKET,
+  resolveViewableStorageUrl,
+} from "@/lib/storage/signedUrl";
 
 export type ProjectArtifactOverviewRow = {
   artifactId: string;
@@ -351,7 +355,7 @@ export async function loadProjectArtifactsTab(
   for (const aid of artifactIds) {
     const list = historyByArtifactId[aid];
     if (!list) continue;
-    historyByArtifactId[aid] = list.map((entry) => {
+    historyByArtifactId[aid] = await Promise.all(list.map(async (entry) => {
       const rid = entry.reviewId;
       const count = rid ? feedbackCountByReview.get(rid) ?? 0 : 0;
       const ids = rid ? reviewersByReview.get(rid) ?? [] : [];
@@ -365,10 +369,18 @@ export async function loadProjectArtifactsTab(
       });
       return {
         ...entry,
+        fileUrl: await resolveViewableStorageUrl(supabase, {
+          url: entry.fileUrl,
+          bucket: STORAGE_BUCKET.reviewArtifacts,
+        }),
+        snapshot_url: await resolveViewableStorageUrl(supabase, {
+          url: entry.snapshot_url,
+          bucket: STORAGE_BUCKET.artifactSnapshots,
+        }),
         feedbackCount: count,
         reviewerPeople,
       };
-    });
+    }));
   }
 
   const reviewTypeOrder: Record<

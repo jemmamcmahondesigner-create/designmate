@@ -6,6 +6,7 @@ import { loadProjectContributorsForDisplay } from "@/lib/contributors/loadProjec
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
 import { getAssignedReviewerContributorId } from "@/lib/workspace/resolveWorkspaceMembership";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { signProjectReferenceUrls } from "@/lib/storage/signedUrl";
 import type {
   ProjectContributor,
   ProjectProblem,
@@ -196,7 +197,10 @@ export default async function ProjectDetailPage({
       recentProjects={recentProjects}
       initialProblems={mapProblems(problemsRows)}
       initialContributors={initialContributors}
-      initialReferences={mapReferences(referencesRows)}
+      initialReferences={await signProjectReferenceUrls(
+        supabase,
+        mapReferences(referencesRows),
+      )}
       initialReviews={initialReviews}
     />
   );

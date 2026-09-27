@@ -17,13 +17,7 @@ function contributorMatchesRole(
 ): boolean {
   if (contributor.deleted_at != null) return false;
   const roleId = contributor.role_id;
-  if (roleId != null && String(roleId) === String(role.id)) return true;
-  if (roleId == null) {
-    const contributorRole = String(contributor.role ?? "").trim().toLowerCase();
-    const roleName = String(role.name ?? "").trim().toLowerCase();
-    if (contributorRole && roleName && contributorRole === roleName) return true;
-  }
-  return false;
+  return roleId != null && String(roleId) === String(role.id);
 }
 
 export default async function SettingsRolesPage() {
@@ -61,7 +55,14 @@ export default async function SettingsRolesPage() {
     console.error("Roles contributors fetch error:", contributorsError);
   }
 
-  const roles = (roleRows ?? []) as { id: string; name: string; workspace_id?: string | null }[];
+  const roles = ((roleRows ?? []) as { id: string; name: string; workspace_id?: string | null }[])
+    .filter((r) => {
+      const roleWorkspaceId =
+        r.workspace_id == null || String(r.workspace_id).trim() === ""
+          ? null
+          : String(r.workspace_id);
+      return roleWorkspaceId == null || roleWorkspaceId === activeWorkspaceId;
+    });
   const contributors = (contributorRows ?? []) as ContributorRow[];
 
   const initialRoles: RoleRow[] = roles.map((r) => {

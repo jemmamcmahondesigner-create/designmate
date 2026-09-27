@@ -33,7 +33,11 @@ export async function ensureContributorProfile(
   const name = displayName.trim();
   const emailValue = email?.trim() || null;
   const isPaid = isPaidPermissionLevel(permissionLevel);
-  const roleFields = await resolveContributorRoleFields(supabase, role);
+  const roleFields = await resolveContributorRoleFields(
+    supabase,
+    role,
+    activeWorkspaceId,
+  );
 
   const contributorUpdates = {
     user_id: userId,

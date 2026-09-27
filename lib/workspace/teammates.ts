@@ -450,7 +450,11 @@ export async function ensurePendingInviteContributor(
       (!existingRole || existingRole.toLowerCase() === "viewer");
 
     if (shouldUpdateRole && jobRole) {
-      const roleFields = await resolveContributorRoleFields(supabase, jobRole);
+      const roleFields = await resolveContributorRoleFields(
+        supabase,
+        jobRole,
+        workspaceId,
+      );
       const { data: updated, error: updateError } = await supabase
         .from("contributors")
         .update({
@@ -477,7 +481,11 @@ export async function ensurePendingInviteContributor(
       ? invite.job_role.trim()
       : null;
   const permissionLevel = mapInvitePermissionLevel(invite.role);
-  const roleFields = await resolveContributorRoleFields(supabase, jobRole);
+  const roleFields = await resolveContributorRoleFields(
+    supabase,
+    jobRole,
+    workspaceId,
+  );
 
   const { data: inserted, error } = await supabase
     .from("contributors")

@@ -294,7 +294,11 @@ async function claimContributorProfile(
     input.jobRole?.trim() ||
     String(existing?.role ?? "").trim() ||
     null;
-  const roleFields = await resolveContributorRoleFields(service, jobRole);
+  const roleFields = await resolveContributorRoleFields(
+    service,
+    jobRole,
+    input.workspaceId,
+  );
 
   if (existing) {
     await service

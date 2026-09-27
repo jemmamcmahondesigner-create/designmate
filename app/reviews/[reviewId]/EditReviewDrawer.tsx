@@ -25,6 +25,10 @@ import {
 import inputStyles from "@/components/ui/ds/Input.module.css";
 import modalStyles from "@/components/ui/ds/Modal.module.css";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import {
+  STORAGE_BUCKET,
+  persistableStorageValue,
+} from "@/lib/storage/signedUrl";
 import { formatVersionLabel, isValidVersionString } from "@/lib/artifacts/versioning";
 import {
   editReviewStatusOptions,
@@ -557,7 +561,10 @@ export function EditReviewDrawer({
       for (let index = 0; index < artifactsToSave.length; index++) {
         const artifact = artifactsToSave[index];
         if (artifact.kind === "file") {
-          let fileUrl = artifact.fileUrl;
+          let fileUrl = persistableStorageValue(
+            artifact.fileUrl,
+            STORAGE_BUCKET.reviewArtifacts,
+          );
           let originalFileName = artifact.originalFileName;
           let mimeType: string | null = null;
           let sizeBytes: number | null = null;
@@ -572,10 +579,7 @@ export function EditReviewDrawer({
               setError(uploadError.message);
               return;
             }
-            const { data: publicUrl } = supabase.storage
-              .from("review-artifacts")
-              .getPublicUrl(objectPath);
-            fileUrl = publicUrl.publicUrl ?? null;
+            fileUrl = objectPath;
             originalFileName = artifact.file.name;
             mimeType = artifact.file.type || null;
             sizeBytes = artifact.file.size;
@@ -713,7 +717,10 @@ export function EditReviewDrawer({
                   (primaryArtifact?.iterationLabel as string | null | undefined) ?? null,
                 artifact_description:
                   (primaryArtifact?.description as string | null | undefined) ?? null,
-                artifact_file_url: (primaryArtifact?.url as string | null | undefined) ?? null,
+                artifact_file_url: persistableStorageValue(
+                  (primaryArtifact?.url as string | null | undefined) ?? null,
+                  STORAGE_BUCKET.reviewArtifacts,
+                ),
                 artifacts: storedArtifacts,
               }
             : {}),

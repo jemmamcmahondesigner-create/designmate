@@ -1,4 +1,8 @@
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import {
+  STORAGE_BUCKET,
+  createSignedStorageUrl,
+} from "@/lib/storage/signedUrl";
 import type { ProjectReference } from "@/types/project";
 
 /** Inserted `sources` row shape returned to callers (matches ProjectReference select). */
@@ -61,11 +65,6 @@ export async function uploadProjectSourceFile(
     throw uploadError;
   }
 
-  const { data: urlData } = supabase.storage
-    .from("project-references")
-    .getPublicUrl(storagePath);
-
-  const publicUrl = urlData.publicUrl;
   const workspaceId = await resolveProjectWorkspaceId(supabase, projectId);
 
   const { data, error: dbError } = await supabase
@@ -75,7 +74,7 @@ export async function uploadProjectSourceFile(
       workspace_id: workspaceId,
       source_type: sourceTypeForStoragePath(storagePath),
       label: file.name,
-      url: publicUrl,
+      url: null,
       file_name: file.name,
       storage_path: storagePath,
       file_type: deriveFileType(file.name),
@@ -87,5 +86,11 @@ export async function uploadProjectSourceFile(
     throw dbError ?? new Error("Failed to insert source");
   }
 
-  return data as Source;
+  const row = data as Source;
+  row.url = await createSignedStorageUrl(
+    supabase,
+    STORAGE_BUCKET.projectReferences,
+    storagePath,
+  );
+  return row;
 }

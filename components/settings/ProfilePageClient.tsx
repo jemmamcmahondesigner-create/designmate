@@ -702,7 +702,11 @@ export function ProfilePageClient({
       if (nextRole === savedRoleRef.current) return;
 
       setSavingRole(true);
-      const roleFields = await resolveContributorRoleFields(supabase, nextRole);
+      const roleFields = await resolveContributorRoleFields(
+        supabase,
+        nextRole,
+        activeWorkspaceId,
+      );
       const { error } = await supabase
         .from("contributors")
         .update({ role: roleFields.role, role_id: roleFields.role_id })

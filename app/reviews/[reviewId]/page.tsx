@@ -19,6 +19,11 @@ import { loginUrlForReturnPath } from '@/lib/auth/mapAuthError';
 import { fetchContactDisplayNames } from '@/lib/contacts/fetchContactDisplayNames';
 import { getDecisionMakerReviewerId } from '@/lib/reviews/workflow';
 import { formatVersionLabel } from '@/lib/artifacts/versioning';
+import {
+  STORAGE_BUCKET,
+  resolveViewableStorageUrl,
+  signProjectReferenceUrls,
+} from '@/lib/storage/signedUrl';
 import { ReviewDetailView } from './ReviewDetailView';
 import type {
   CardReplyRow,
@@ -410,6 +415,21 @@ export default async function ReviewDetailPage({
       };
     });
   }
+
+  artifacts = await Promise.all(
+    artifacts.map(async (artifact) => ({
+      ...artifact,
+      imageUrl: await resolveViewableStorageUrl(supabase, {
+        url: artifact.imageUrl,
+        bucket: STORAGE_BUCKET.reviewArtifacts,
+      }),
+      snapshotUrl: await resolveViewableStorageUrl(supabase, {
+        url: artifact.snapshotUrl,
+        bucket: STORAGE_BUCKET.artifactSnapshots,
+      }),
+    })),
+  );
+  await signProjectReferenceUrls(supabase, citedSources);
 
   const reviewerIdsEarly = Array.isArray(row.reviewer_contributor_ids)
     ? (row.reviewer_contributor_ids as unknown[]).map((id) => String(id))

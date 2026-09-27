@@ -10,6 +10,7 @@ import { Button, Icon } from "@/components/ui/ds";
 import { useToast } from "@/components/Toast";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { uploadProjectSourceFile } from "@/lib/sources/uploadProjectSourceFile";
+import { signProjectReferenceUrls } from "@/lib/storage/signedUrl";
 import {
   classifySourcePreview,
   useSourcePreview,
@@ -90,7 +91,7 @@ export function ReferencesSection({
         workspace_id: workspaceId,
         source_type: sourceTypeForStoragePath(snap.storage_path),
         label: snap.label,
-        url: snap.url,
+        url: snap.storage_path ? null : snap.url,
         file_name: snap.file_name,
         storage_path: snap.storage_path,
         file_type: snap.file_type,
@@ -100,7 +101,9 @@ export function ReferencesSection({
 
     if (error || !data) return;
 
-    setReferences((prev) => [...prev, data as ProjectReference]);
+    const restored = data as ProjectReference;
+    await signProjectReferenceUrls(supabase, [restored]);
+    setReferences((prev) => [...prev, restored]);
     undoReferenceSnapshotRef.current = null;
     void logTimelineEventClient({
       projectId,

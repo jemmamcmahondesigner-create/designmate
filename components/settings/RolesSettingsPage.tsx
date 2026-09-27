@@ -125,7 +125,7 @@ export function RolesSettingsPage({
       label: "State",
       width: 120,
       cellType: "text",
-      render: (row) => (isBuiltInRole(row) ? "Default" : ""),
+      render: (row) => (isBuiltInRole(row) ? "Default" : "Custom"),
     },
     ...(readOnly
       ? []

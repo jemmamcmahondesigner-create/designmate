@@ -1,7 +1,12 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { createSupabaseBrowserClient } from '@/lib/supabase/client'
+import {
+  STORAGE_BUCKET,
+  resolveViewableStorageUrl,
+} from '@/lib/storage/signedUrl'
 
 type ProjectReference = {
   id: string
@@ -18,6 +23,8 @@ type Props = {
 }
 
 export function SourceFileViewer({ reference, onClose }: Props) {
+  const [url, setUrl] = useState<string | null>(reference.url)
+
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose()
@@ -26,10 +33,24 @@ export function SourceFileViewer({ reference, onClose }: Props) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
+  useEffect(() => {
+    let cancelled = false
+    const supabase = createSupabaseBrowserClient()
+    void resolveViewableStorageUrl(supabase, {
+      url: reference.url,
+      storagePath: reference.storage_path,
+      bucket: STORAGE_BUCKET.projectReferences,
+    }).then((signed) => {
+      if (!cancelled && signed) setUrl(signed)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [reference.url, reference.storage_path])
+
   if (typeof document === 'undefined') return null
 
   const fileType = reference.file_type ?? 'other'
-  const url = reference.url
 
   return createPortal(
     <div

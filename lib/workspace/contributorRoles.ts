@@ -39,8 +39,9 @@ export function parseWorkspaceRoleValue(value: string): string | null {
 }
 
 /**
- * Base contributor_roles plus distinct contributors.role values for the workspace.
- * Custom workspace roles are not read from other workspaces.
+ * Built-in defaults (workspace_id null) plus custom roles for this workspace.
+ * RLS may return roles from every workspace the user belongs to; this filter
+ * keeps pickers aligned with the Roles page for the active workspace.
  */
 export async function fetchWorkspaceRoleOptions(
   supabase: SupabaseClient,
@@ -48,7 +49,7 @@ export async function fetchWorkspaceRoleOptions(
 ): Promise<RoleOption[]> {
   const { data: globalRows, error: globalError } = await supabase
     .from("contributor_roles")
-    .select("id, name")
+    .select("id, name, workspace_id")
     .order("name", { ascending: true });
 
   if (globalError) {
@@ -61,29 +62,12 @@ export async function fetchWorkspaceRoleOptions(
     const o = row as Record<string, unknown>;
     const name = String(o.name ?? "").trim();
     if (!name) continue;
+    const roleWorkspaceId =
+      o.workspace_id == null || String(o.workspace_id).trim() === ""
+        ? null
+        : String(o.workspace_id);
+    if (roleWorkspaceId != null && roleWorkspaceId !== workspaceId) continue;
     byKey.set(name.toLowerCase(), { id: name, name });
-  }
-
-  if (workspaceId) {
-    const { data: contributorRows, error: contribError } = await supabase
-      .from("contributors")
-      .select("role")
-      .eq("workspace_id", workspaceId)
-      .not("role", "is", null)
-      .neq("role", "");
-
-    if (contribError) {
-      console.error("contributors role fetch error:", contribError);
-    } else {
-      for (const row of contributorRows ?? []) {
-        const role = String((row as Record<string, unknown>).role ?? "").trim();
-        if (!role) continue;
-        const key = role.toLowerCase();
-        if (!byKey.has(key)) {
-          byKey.set(key, { id: role, name: role });
-        }
-      }
-    }
   }
 
   return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));

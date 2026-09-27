@@ -755,7 +755,11 @@ export function TeammatesSettingsPage({
       form.roleId,
       roleOptionsRef.current,
     );
-    const roleFields = await resolveContributorRoleFields(supabase, roleText);
+    const roleFields = await resolveContributorRoleFields(
+      supabase,
+      roleText,
+      activeWorkspaceId,
+    );
     if (!form.isAdmin && editingLastAdmin) {
       setAdminAccessError(LAST_ADMIN_ERROR);
       return;

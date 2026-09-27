@@ -1,5 +1,5 @@
 const DESIGN_TRACE_WORDMARK_LOGO_URL =
-  "https://gushydvliscbciehvwbl.supabase.co/storage/v1/object/public/project-references/brand/DesignTrace_Wordmark_Logo.png";
+  "https://gushydvliscbciehvwbl.supabase.co/storage/v1/object/public/public-assets/brand/DesignTrace_Wordmark_Logo.png";
 
 /** Inline logo header block for transactional email templates (Outlook-safe). */
 export function getDesignTraceWordmarkHtml(): string {

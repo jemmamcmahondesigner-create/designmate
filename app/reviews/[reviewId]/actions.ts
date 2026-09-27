@@ -620,7 +620,11 @@ export async function createTeammateFromReviewAction(input: {
   }
 
   const jobRole = input.role?.trim() || null;
-  const roleFields = await resolveContributorRoleFields(supabase, jobRole);
+  const roleFields = await resolveContributorRoleFields(
+    supabase,
+    jobRole,
+    workspaceId,
+  );
 
   let contributorId: string | null = null;
 

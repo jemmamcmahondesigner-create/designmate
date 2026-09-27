@@ -13,6 +13,7 @@ import {
   buildArtifactUploadedPayloadFields,
   resolveCrossReviewRelatedArtifact,
 } from "@/lib/timeline/artifactUploadedPayload";
+import { persistableStorageValue, STORAGE_BUCKET } from "@/lib/storage/signedUrl";
 
 /** Tradeoff row shape stored on `reviews.tradeoffs` jsonb (same as AI generate payload). */
 export type TradeoffItem = Tradeoff;
@@ -245,20 +246,12 @@ export async function submitReviewClient(
           upsert: false
         });
 
-      let publicUrl: string | null = null;
-      if (!upErr) {
-        const { data: pub } = supabase.storage
-          .from("review-artifacts")
-          .getPublicUrl(objectPath);
-        publicUrl = pub.publicUrl ?? null;
-      }
-
       stored.push({
         kind: "file",
         title: a.title.trim(),
         iterationLabel: formatVersionLabel(a.versionNumber),
         description: a.description.trim(),
-        url: publicUrl,
+        url: upErr ? null : objectPath,
         originalFileName: a.file.name,
         mimeType: a.file.type || null,
         sizeBytes: a.file.size
@@ -288,7 +281,10 @@ export async function submitReviewClient(
   const artifactName = primaryArtifact?.title ?? null;
   const artifactIteration = primaryArtifact?.iterationLabel ?? null;
   const artifactDescription = primaryArtifact?.description ?? null;
-  const artifactFileUrl = primaryArtifact?.url ?? null;
+  const artifactFileUrl = persistableStorageValue(
+    primaryArtifact?.url ?? null,
+    STORAGE_BUCKET.reviewArtifacts,
+  );
 
   // TODO: migrate existing artifact storage to artifact_versions once
   // artifact_versions is the primary source of truth (retire reviews.artifacts jsonb).

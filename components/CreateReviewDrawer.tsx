@@ -45,6 +45,7 @@ import {
   TradeoffCard,
 } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { signProjectReferenceUrls } from "@/lib/storage/signedUrl";
 import {
   formatVersionLabel,
   isValidVersionString,
@@ -916,38 +917,39 @@ export function CreateReviewDrawer({
       if (!Array.isArray(sourceData)) {
         setAvailableSources([]);
       } else {
-        setAvailableSources(
-          sourceData.map((row) => {
-            const item = row as Record<string, unknown>;
-            const url = item.url;
-            const fileName = item.file_name;
-            const storagePath = item.storage_path;
-            const fileType = item.file_type;
-            const createdAt = item.created_at;
-            return {
-              id: String(item.id ?? ""),
-              project_id: String(item.project_id ?? ""),
-              label: String(item.label ?? ""),
-              url: url == null || String(url).trim() === "" ? null : String(url),
-              file_name:
-                fileName == null || String(fileName).trim() === ""
-                  ? null
-                  : String(fileName),
-              storage_path:
-                storagePath == null || String(storagePath).trim() === ""
-                  ? null
-                  : String(storagePath),
-              file_type:
-                fileType == null || String(fileType).trim() === ""
-                  ? null
-                  : String(fileType),
-              created_at:
-                createdAt == null || String(createdAt).trim() === ""
-                  ? new Date(0).toISOString()
-                  : String(createdAt),
-            } satisfies Source;
-          })
-        );
+        const nextSources = sourceData.map((row) => {
+          const item = row as Record<string, unknown>;
+          const url = item.url;
+          const fileName = item.file_name;
+          const storagePath = item.storage_path;
+          const fileType = item.file_type;
+          const createdAt = item.created_at;
+          return {
+            id: String(item.id ?? ""),
+            project_id: String(item.project_id ?? ""),
+            label: String(item.label ?? ""),
+            url: url == null || String(url).trim() === "" ? null : String(url),
+            file_name:
+              fileName == null || String(fileName).trim() === ""
+                ? null
+                : String(fileName),
+            storage_path:
+              storagePath == null || String(storagePath).trim() === ""
+                ? null
+                : String(storagePath),
+            file_type:
+              fileType == null || String(fileType).trim() === ""
+                ? null
+                : String(fileType),
+            created_at:
+              createdAt == null || String(createdAt).trim() === ""
+                ? new Date(0).toISOString()
+                : String(createdAt),
+          } satisfies Source;
+        });
+        await signProjectReferenceUrls(supabase, nextSources);
+        if (cancelled) return;
+        setAvailableSources(nextSources);
       }
     })();
     return () => {
