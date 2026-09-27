@@ -1,4 +1,55 @@
-import type { InviteApiResponse, InviteDetails } from "@/types/invites";
+import type {
+  InviteApiResponse,
+  InviteDetails,
+  InviteDetailsError,
+  InviteDetailsResult,
+  InviteErrorReason,
+} from "@/types/invites";
+
+export type { InviteErrorReason };
+
+const FALLBACK_WORKSPACE_LABEL = "your team";
+
+function knownWorkspaceName(raw: string | null | undefined): string | null {
+  const name = String(raw ?? "").trim();
+  if (!name || name.toLowerCase() === FALLBACK_WORKSPACE_LABEL) return null;
+  return name;
+}
+
+export function inviteErrorAlertCopy(
+  reason: InviteErrorReason,
+  workspaceName: string | null,
+): { title: string; body: string; linkText?: string } {
+  const workspace = knownWorkspaceName(workspaceName);
+
+  if (reason === "expired") {
+    return {
+      title: workspace
+        ? `This invite to ${workspace} has expired.`
+        : "This invite has expired.",
+      body: workspace
+        ? `Ask the ${workspace} workspace admin to send a new invite.`
+        : "Ask your workspace admin to send a new invite.",
+    };
+  }
+
+  if (reason === "accepted") {
+    return {
+      title: workspace
+        ? `This invite to ${workspace} has already been used.`
+        : "This invite has already been used.",
+      body: "Sign in to continue.",
+      linkText: "Sign in",
+    };
+  }
+
+  return {
+    title: "This invite link isn't valid.",
+    body: workspace
+      ? `Ask the ${workspace} workspace admin to re-send it.`
+      : "Ask your workspace admin to re-send it.",
+  };
+}
 
 export async function sendWorkspaceInvite(payload: {
   workspace_id: string;
@@ -20,12 +71,36 @@ export async function sendWorkspaceInvite(payload: {
   return data;
 }
 
-export async function fetchInviteDetails(inviteCode: string): Promise<InviteDetails | null> {
+export async function fetchInviteDetails(
+  inviteCode: string,
+): Promise<InviteDetailsResult> {
+  const trimmed = inviteCode.trim();
+  if (!trimmed) {
+    return { ok: false, reason: "not_found", workspaceName: null };
+  }
+
   const response = await fetch(
-    `/api/workspace/invite/details?invite_code=${encodeURIComponent(inviteCode)}`,
+    `/api/workspace/invite/details?invite_code=${encodeURIComponent(trimmed)}`,
   );
-  if (!response.ok) return null;
-  return (await response.json()) as InviteDetails;
+  const data = (await response.json().catch(() => null)) as
+    | InviteDetails
+    | InviteDetailsError
+    | null;
+
+  if (response.ok && data && "workspace_name" in data && !("error" in data)) {
+    return { ok: true, details: data as InviteDetails };
+  }
+
+  const error = data && "error" in data ? data.error : "not_found";
+  const reason: InviteErrorReason =
+    error === "expired" || error === "accepted" || error === "not_found"
+      ? error
+      : "not_found";
+  const workspaceName =
+    data && "workspace_name" in data
+      ? String(data.workspace_name ?? "").trim() || null
+      : null;
+  return { ok: false, reason, workspaceName };
 }
 
 export async function joinWorkspaceByCode(input: {
@@ -72,6 +147,8 @@ export async function acceptWorkspaceInvite(inviteCode: string): Promise<{
   success: boolean;
   workspace_id?: string;
   message?: string;
+  error?: InviteErrorReason;
+  workspaceName?: string | null;
 }> {
   const response = await fetch("/api/workspace/invite/accept", {
     method: "POST",
@@ -83,10 +160,21 @@ export async function acceptWorkspaceInvite(inviteCode: string): Promise<{
     success?: boolean;
     workspace_id?: string;
     message?: string;
+    error?: InviteErrorReason;
+    workspace_name?: string | null;
   };
 
   if (!response.ok) {
-    return { success: false, message: data.message ?? "Could not accept invite." };
+    const error: InviteErrorReason =
+      data.error === "expired" || data.error === "accepted" || data.error === "not_found"
+        ? data.error
+        : "not_found";
+    return {
+      success: false,
+      message: data.message ?? "Could not accept invite.",
+      error,
+      workspaceName: data.workspace_name ?? null,
+    };
   }
 
   return {

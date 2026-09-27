@@ -11,7 +11,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { AuthMark } from "@/components/auth/AuthMark";
-import { Button, Input, Select, Textarea } from "@/components/ui/ds";
+import { Alert, Button, Input, Select, Textarea } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { resolveProjectClientFields } from "@/lib/projects/resolveProjectClientFields";
 import { generateInviteCode } from "@/lib/workspace/utils";
@@ -30,8 +30,10 @@ import {
 import {
   acceptWorkspaceInvite,
   fetchInviteDetails,
+  inviteErrorAlertCopy,
   joinWorkspaceByCode,
   INVITE_CODE_STORAGE_KEY,
+  type InviteErrorReason,
 } from "@/lib/workspace/invite-client";
 import { InputLockIcon } from "@/components/auth/InputLockIcon";
 import { DESIGN_WORK_OPTIONS, WORK_ENV_OPTIONS } from "./constants";
@@ -156,7 +158,7 @@ export function OnboardingFlow({
   const [inviteWorkspaceName, setInviteWorkspaceName] = useState("your team");
   const [invitePermissionLevel, setInvitePermissionLevel] =
     useState<WorkspacePermissionLevel>("reviewer");
-  const [invitedJoinError, setInvitedJoinError] = useState(false);
+  const [inviteError, setInviteError] = useState<InviteErrorReason | null>(null);
 
   const [phase, setPhase] = useState<Phase>("intro");
   const [step, setStep] = useState(1);
@@ -203,6 +205,10 @@ export function OnboardingFlow({
   const roleHeading = useMemo(() => getRoleHeading(role), [role]);
 
   const firstName = useMemo(() => firstNameFrom(name), [name]);
+  const inviteAlert = useMemo(
+    () => (inviteError ? inviteErrorAlertCopy(inviteError, inviteWorkspaceName) : null),
+    [inviteError, inviteWorkspaceName],
+  );
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
@@ -240,8 +246,9 @@ export function OnboardingFlow({
         setIsInvited(true);
         setInviteLink(effectiveInviteCode);
 
-        const details = await fetchInviteDetails(effectiveInviteCode);
-        if (details) {
+        const detailsResult = await fetchInviteDetails(effectiveInviteCode);
+        if (detailsResult.ok) {
+          const details = detailsResult.details;
           if (details.workspace_name) {
             setInviteWorkspaceName(details.workspace_name);
             setCompany(details.workspace_name);
@@ -255,6 +262,13 @@ export function OnboardingFlow({
           if (prefilledRole) {
             setRole(prefilledRole);
           }
+          setInviteError(null);
+        } else {
+          if (detailsResult.workspaceName) {
+            setInviteWorkspaceName(detailsResult.workspaceName);
+            setCompany(detailsResult.workspaceName);
+          }
+          setInviteError(detailsResult.reason);
         }
       } else {
         const invitedId = user.user_metadata?.invite_workspace_id as string | undefined;
@@ -499,7 +513,7 @@ export function OnboardingFlow({
 
   const handleInvitedJoin = async () => {
     setSubmitting(true);
-    setInvitedJoinError(false);
+    setInviteError(null);
 
     const inviteCode =
       storedInviteCode?.trim() ||
@@ -509,7 +523,7 @@ export function OnboardingFlow({
         : null);
 
     if (!inviteCode) {
-      setInvitedJoinError(true);
+      setInviteError("not_found");
       setSubmitting(false);
       return;
     }
@@ -517,7 +531,10 @@ export function OnboardingFlow({
     try {
       const result = await acceptWorkspaceInvite(inviteCode);
       if (!result.success || !result.workspace_id) {
-        setInvitedJoinError(true);
+        if (result.workspaceName) {
+          setInviteWorkspaceName(result.workspaceName);
+        }
+        setInviteError(result.error ?? "not_found");
         return;
       }
 
@@ -698,24 +715,31 @@ export function OnboardingFlow({
                 Your team is already building a shared design memory. Join the workspace to access
                 projects, reviews, feedback and decisions.
               </LeftSub>
-              <div className="mt-10 flex flex-col items-start gap-3">
-                {invitedJoinError ? (
-                  <p
-                    className="m-0 text-[12px] leading-[1.5]"
-                    style={{ color: "var(--text-error, #b91c1c)" }}
-                  >
-                    This invite link is not valid or has expired.
-                  </p>
+              <div className="mt-10 flex w-full max-w-[420px] flex-col items-start gap-3">
+                {inviteAlert ? (
+                  <Alert
+                    sentiment="danger"
+                    prominence="low"
+                    title={inviteAlert.title}
+                    body={inviteAlert.body}
+                    linkText={inviteAlert.linkText}
+                    onLinkClick={
+                      inviteError === "accepted" ? () => router.push("/login") : undefined
+                    }
+                    dismissible={false}
+                  />
                 ) : null}
-                <Button
-                  variant="accent"
-                  size="lg"
-                  label={submitting ? "Joining..." : "Let's Go!"}
-                  disabled={submitting}
-                  onClick={() => void handleInvitedJoin()}
-                  className="w-fit"
-                  style={{ width: "fit-content" }}
-                />
+                {inviteError ? null : (
+                  <Button
+                    variant="accent"
+                    size="lg"
+                    label={submitting ? "Joining..." : "Let's Go!"}
+                    disabled={submitting}
+                    onClick={() => void handleInvitedJoin()}
+                    className="w-fit"
+                    style={{ width: "fit-content" }}
+                  />
+                )}
               </div>
             </>
           )}

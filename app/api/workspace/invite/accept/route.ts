@@ -29,21 +29,41 @@ export async function POST(request: Request) {
   const service = createServiceClient();
   const { data: invite, error: inviteError } = await service
     .from("workspace_invites")
-    .select("id, workspace_id, role, status, expires_at, email, job_role, invited_name")
+    .select(
+      "id, workspace_id, role, status, expires_at, email, job_role, invited_name, workspaces(name)",
+    )
     .eq("invite_code", inviteCode)
     .maybeSingle();
 
+  const workspaceRel = (invite as { workspaces?: { name?: string } | { name?: string }[] | null } | null)
+    ?.workspaces;
+  const workspaceRow = Array.isArray(workspaceRel) ? workspaceRel[0] : workspaceRel;
+  const workspaceName = String(workspaceRow?.name ?? "").trim() || null;
+
   if (inviteError || !invite) {
-    return NextResponse.json({ message: "Invite not found." }, { status: 404 });
+    return NextResponse.json(
+      { error: "not_found", workspace_name: null, message: "Invite not found." },
+      { status: 404 },
+    );
   }
 
-  if (invite.status !== "pending") {
-    return NextResponse.json({ message: "Invite is no longer valid." }, { status: 404 });
+  const inviteStatus = String(invite.status ?? "").trim().toLowerCase();
+  if (inviteStatus === "accepted") {
+    return NextResponse.json(
+      { error: "accepted", workspace_name: workspaceName, message: "Invite already accepted." },
+      { status: 409 },
+    );
   }
 
-  if (new Date(invite.expires_at).getTime() < Date.now()) {
-    await service.from("workspace_invites").update({ status: "expired" }).eq("id", invite.id);
-    return NextResponse.json({ message: "Invite has expired." }, { status: 404 });
+  const expiredByDate = new Date(invite.expires_at).getTime() < Date.now();
+  if (inviteStatus === "expired" || expiredByDate) {
+    if (inviteStatus !== "expired") {
+      await service.from("workspace_invites").update({ status: "expired" }).eq("id", invite.id);
+    }
+    return NextResponse.json(
+      { error: "expired", workspace_name: workspaceName, message: "Invite has expired." },
+      { status: 410 },
+    );
   }
 
   const inviteEmail = normalizeInviteEmail(String(invite.email ?? user.email ?? ""));

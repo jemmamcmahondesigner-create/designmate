@@ -2,13 +2,33 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { normalizeInviteEmail } from "@/lib/workspace/invite-server";
 import { mapInvitePermissionLevel } from "@/lib/workspace/permissions";
+import type { InviteErrorReason } from "@/types/invites";
+
+function pickWorkspaceName(workspaces: unknown): string | null {
+  const rel = workspaces as
+    | { name?: string | null }
+    | { name?: string | null }[]
+    | null
+    | undefined;
+  const row = Array.isArray(rel) ? rel[0] : rel;
+  const name = String(row?.name ?? "").trim();
+  return name || null;
+}
+
+function inviteErrorResponse(
+  error: InviteErrorReason,
+  workspaceName: string | null,
+  status: number,
+) {
+  return NextResponse.json({ error, workspace_name: workspaceName }, { status });
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const inviteCode = searchParams.get("invite_code")?.trim();
 
   if (!inviteCode) {
-    return NextResponse.json({ message: "invite_code is required." }, { status: 400 });
+    return inviteErrorResponse("not_found", null, 404);
   }
 
   const service = createServiceClient();
@@ -21,22 +41,27 @@ export async function GET(request: Request) {
     .maybeSingle();
 
   if (error || !invite) {
-    return NextResponse.json({ message: "Invite not found." }, { status: 404 });
+    return inviteErrorResponse("not_found", null, 404);
   }
 
-  if (invite.status !== "pending") {
-    return NextResponse.json({ message: "Invite is no longer valid." }, { status: 404 });
+  const workspaceName = pickWorkspaceName(invite.workspaces);
+  const status = String(invite.status ?? "").trim().toLowerCase();
+
+  if (status === "accepted") {
+    return inviteErrorResponse("accepted", workspaceName, 409);
   }
 
-  if (new Date(invite.expires_at).getTime() < Date.now()) {
-    await service
-      .from("workspace_invites")
-      .update({ status: "expired" })
-      .eq("invite_code", inviteCode);
-    return NextResponse.json({ message: "Invite has expired." }, { status: 404 });
+  const expiredByDate = new Date(String(invite.expires_at)).getTime() < Date.now();
+  if (status === "expired" || expiredByDate) {
+    if (status !== "expired") {
+      await service
+        .from("workspace_invites")
+        .update({ status: "expired" })
+        .eq("invite_code", inviteCode);
+    }
+    return inviteErrorResponse("expired", workspaceName, 410);
   }
 
-  const workspaceJoin = invite.workspaces as { name?: string } | null;
   let inviterName = "Your team";
 
   if (invite.invited_by) {
@@ -73,7 +98,7 @@ export async function GET(request: Request) {
   const permissionLevel = mapInvitePermissionLevel(invite.role);
 
   return NextResponse.json({
-    workspace_name: String(workspaceJoin?.name ?? "Workspace"),
+    workspace_name: workspaceName ?? "Workspace",
     inviter_name: inviterName,
     role: permissionLevel,
     expires_at: String(invite.expires_at),

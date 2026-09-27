@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { AuthMark } from "@/components/auth/AuthMark";
@@ -18,7 +18,12 @@ import {
   getSiteOrigin,
   validateSignUpPassword,
 } from "@/lib/auth/mapAuthError";
-import { INVITE_CODE_STORAGE_KEY } from "@/lib/workspace/invite-client";
+import {
+  fetchInviteDetails,
+  inviteErrorAlertCopy,
+  INVITE_CODE_STORAGE_KEY,
+  type InviteErrorReason,
+} from "@/lib/workspace/invite-client";
 
 type NewAccountStatus = "idle" | "loading" | "email-sent";
 
@@ -31,6 +36,8 @@ function NewAccountPageContent() {
   const [emailExistsError, setEmailExistsError] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [inviteWorkspaceName, setInviteWorkspaceName] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<InviteErrorReason | null>(null);
   const { cooldown, startCooldown, canResend } = useResendCooldown(60);
 
   useEffect(() => {
@@ -41,11 +48,32 @@ function NewAccountPageContent() {
       setEmail(inviteEmail);
     }
 
-    if (code) {
-      setInviteCode(code);
-      window.localStorage.setItem(INVITE_CODE_STORAGE_KEY, code);
+    if (!code) {
+      setInviteCode(null);
+      setInviteError(null);
+      setInviteWorkspaceName(null);
+      return;
     }
+
+    setInviteCode(code);
+    window.localStorage.setItem(INVITE_CODE_STORAGE_KEY, code);
+
+    void (async () => {
+      const result = await fetchInviteDetails(code);
+      if (result.ok) {
+        setInviteError(null);
+        setInviteWorkspaceName(result.details.workspace_name);
+        return;
+      }
+      setInviteError(result.reason);
+      setInviteWorkspaceName(result.workspaceName);
+    })();
   }, [searchParams]);
+
+  const inviteAlert = useMemo(
+    () => (inviteError ? inviteErrorAlertCopy(inviteError, inviteWorkspaceName) : null),
+    [inviteError, inviteWorkspaceName],
+  );
 
   const signInWithGoogle = useCallback(async () => {
     const supabase = createSupabaseBrowserClient();
@@ -194,12 +222,30 @@ function NewAccountPageContent() {
           Let&apos;s create you a new account!
         </p>
 
-        {inviteCode ? (
+        {inviteAlert ? (
+          <div className="w-full">
+            <Alert
+              sentiment="danger"
+              prominence="low"
+              title={inviteAlert.title}
+              body={inviteAlert.body}
+              linkText={inviteAlert.linkText}
+              onLinkClick={
+                inviteError === "accepted" ? () => router.push("/login") : undefined
+              }
+              dismissible={false}
+            />
+          </div>
+        ) : inviteCode ? (
           <div className="w-full">
             <Alert
               sentiment="success"
               prominence="low"
-              title="You've been invited to join a workspace. Create your account to accept."
+              title={
+                inviteWorkspaceName
+                  ? `You've been invited to join ${inviteWorkspaceName}. Create your account to accept.`
+                  : "You've been invited to join a workspace. Create your account to accept."
+              }
               dismissible={false}
             />
           </div>

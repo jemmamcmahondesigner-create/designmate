@@ -26,3 +26,14 @@ export type InviteDetails = {
   invited_name?: string | null;
   job_role?: string | null;
 };
+
+export type InviteErrorReason = "expired" | "accepted" | "not_found";
+
+export type InviteDetailsError = {
+  error: InviteErrorReason;
+  workspace_name: string | null;
+};
+
+export type InviteDetailsResult =
+  | { ok: true; details: InviteDetails }
+  | { ok: false; reason: InviteErrorReason; workspaceName: string | null };
