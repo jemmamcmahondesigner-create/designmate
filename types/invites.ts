@@ -27,7 +27,7 @@ export type InviteDetails = {
   job_role?: string | null;
 };
 
-export type InviteErrorReason = "expired" | "accepted" | "not_found";
+export type InviteErrorReason = "expired" | "accepted" | "not_found" | "email_mismatch";
 
 export type InviteDetailsError = {
   error: InviteErrorReason;

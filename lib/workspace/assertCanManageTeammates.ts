@@ -1,37 +1,40 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { normalizeWorkspacePermission } from "@/lib/workspace/permissions";
+import { createServiceClient } from "@/lib/supabase/admin";
+import { permissionFromWorkspaceMember } from "@/lib/workspace/parseWorkspaceMember";
+import type { WorkspacePermissionLevel } from "@/lib/workspace/permissions";
 
+export type ManageTeammatesAccess =
+  | { allowed: true; permissionLevel: WorkspacePermissionLevel }
+  | { allowed: false; message: string };
+
+/**
+ * Editor-or-Admin gate for teammate invite/cancel.
+ * Reads workspace_members for the session user (active only), not contributors or user_metadata.
+ */
 export async function assertCanManageTeammates(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   userId: string,
   workspaceId: string,
-): Promise<{ allowed: boolean; message?: string }> {
-  const { data: contributor } = await supabase
-    .from("contributors")
-    .select("permission_level")
+): Promise<ManageTeammatesAccess> {
+  const service = createServiceClient();
+  const { data: member } = await service
+    .from("workspace_members")
+    .select("permission_level, role")
     .eq("workspace_id", workspaceId)
     .eq("user_id", userId)
+    .eq("status", "active")
     .maybeSingle();
 
-  const level = contributor?.permission_level
-    ? normalizeWorkspacePermission(
-        (contributor as { permission_level?: string }).permission_level,
-      )
-    : null;
-
-  if (level === "admin" || level === "editor") {
-    return { allowed: true };
+  if (!member) {
+    return {
+      allowed: false,
+      message: "Only editors and admins can add new teammates.",
+    };
   }
 
-  const { data: member } = await supabase
-    .from("workspace_members")
-    .select("role")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (String((member as { role?: string } | null)?.role ?? "") === "admin") {
-    return { allowed: true };
+  const permissionLevel = permissionFromWorkspaceMember(member);
+  if (permissionLevel === "admin" || permissionLevel === "editor") {
+    return { allowed: true, permissionLevel };
   }
 
   return {

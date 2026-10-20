@@ -66,7 +66,19 @@ export async function POST(request: Request) {
     );
   }
 
-  const inviteEmail = normalizeInviteEmail(String(invite.email ?? user.email ?? ""));
+  const inviteEmail = normalizeInviteEmail(String(invite.email ?? ""));
+  const sessionEmail = normalizeInviteEmail(user.email ?? "");
+  if (!inviteEmail || !sessionEmail || sessionEmail !== inviteEmail) {
+    return NextResponse.json(
+      {
+        error: "email_mismatch",
+        workspace_name: workspaceName,
+        invited_email: inviteEmail || null,
+        message: "This invite was sent to a different email address.",
+      },
+      { status: 403 },
+    );
+  }
   const displayName =
     (typeof invite.invited_name === "string" ? invite.invited_name.trim() : "") ||
     (user.user_metadata?.display_name as string | undefined)?.trim() ||

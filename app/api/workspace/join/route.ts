@@ -4,6 +4,7 @@ import {
   claimOrCreateWorkspaceMembership,
   resolveJoinTarget,
 } from "@/lib/workspace/claimWorkspaceMembership";
+import { normalizeInviteEmail } from "@/lib/workspace/invite-server";
 
 export async function POST(request: Request) {
   let body: { invite_code?: string; workspace_id?: string };
@@ -34,13 +35,24 @@ export async function POST(request: Request) {
     if ("error" in target) {
       return NextResponse.json({ message: target.error }, { status: 404 });
     }
+    const sessionEmail = normalizeInviteEmail(user.email ?? "");
+    const invitedEmail = target.inviteEmail ? normalizeInviteEmail(target.inviteEmail) : "";
+    if (!invitedEmail || !sessionEmail || sessionEmail !== invitedEmail) {
+      return NextResponse.json(
+        {
+          error: "email_mismatch",
+          workspace_name: null,
+          invited_email: invitedEmail || null,
+          message: "This invite was sent to a different email address.",
+        },
+        { status: 403 },
+      );
+    }
     workspaceId = target.workspaceId;
     fallbackPermissionLevel = target.permissionLevel;
     invitedName = target.invitedName;
     jobRole = target.jobRole;
-    if (target.inviteEmail) {
-      inviteEmail = target.inviteEmail;
-    }
+    inviteEmail = invitedEmail;
   }
 
   if (!workspaceId) {

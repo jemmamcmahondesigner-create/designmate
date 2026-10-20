@@ -51,11 +51,43 @@ function knownWorkspaceName(raw: string | null | undefined): string | null {
   return name;
 }
 
+export function maskInviteEmail(email: string): string {
+  const trimmed = email.trim();
+  const at = trimmed.lastIndexOf("@");
+  if (at <= 0 || at === trimmed.length - 1) {
+    const first = trimmed.charAt(0);
+    return first ? `${first}•••` : "•••";
+  }
+  return `${trimmed.charAt(0)}•••@${trimmed.slice(at + 1)}`;
+}
+
+export function parseInviteErrorReason(value: unknown): InviteErrorReason {
+  if (
+    value === "expired" ||
+    value === "accepted" ||
+    value === "not_found" ||
+    value === "email_mismatch"
+  ) {
+    return value;
+  }
+  return "not_found";
+}
+
 export function inviteErrorAlertCopy(
   reason: InviteErrorReason,
   workspaceName: string | null,
+  invitedEmail?: string | null,
 ): { title: string; body: string; linkText?: string } {
   const workspace = knownWorkspaceName(workspaceName);
+
+  if (reason === "email_mismatch") {
+    const masked = invitedEmail?.trim() ? maskInviteEmail(invitedEmail) : "the invited address";
+    return {
+      title: "This invite was sent to a different email address.",
+      body: `Sign in as ${masked}, or ask your workspace admin to send a new invite.`,
+      linkText: "Sign in",
+    };
+  }
 
   if (reason === "expired") {
     return {
@@ -127,10 +159,7 @@ export async function fetchInviteDetails(
   }
 
   const error = data && "error" in data ? data.error : "not_found";
-  const reason: InviteErrorReason =
-    error === "expired" || error === "accepted" || error === "not_found"
-      ? error
-      : "not_found";
+  const reason = parseInviteErrorReason(error === "email_mismatch" ? "not_found" : error);
   const workspaceName =
     data && "workspace_name" in data
       ? String(data.workspace_name ?? "").trim() || null
@@ -148,6 +177,8 @@ export async function joinWorkspaceByCode(input: {
   permission_level?: "admin" | "editor" | "reviewer";
   already_member?: boolean;
   message?: string;
+  error?: InviteErrorReason;
+  invitedEmail?: string | null;
 }> {
   const response = await fetch("/api/workspace/join", {
     method: "POST",
@@ -162,10 +193,20 @@ export async function joinWorkspaceByCode(input: {
     permission_level?: "admin" | "editor" | "reviewer";
     already_member?: boolean;
     message?: string;
+    error?: InviteErrorReason;
+    invited_email?: string | null;
   };
 
   if (!response.ok) {
-    return { success: false, message: data.message ?? "Could not join workspace." };
+    const error =
+      data.error === "email_mismatch" ? "email_mismatch" : undefined;
+    return {
+      success: false,
+      message: data.message ?? "Could not join workspace.",
+      error,
+      invitedEmail: data.invited_email ?? null,
+      workspace_name: data.workspace_name,
+    };
   }
 
   return {
@@ -184,6 +225,7 @@ export async function acceptWorkspaceInvite(inviteCode: string): Promise<{
   message?: string;
   error?: InviteErrorReason;
   workspaceName?: string | null;
+  invitedEmail?: string | null;
 }> {
   const response = await fetch("/api/workspace/invite/accept", {
     method: "POST",
@@ -197,18 +239,17 @@ export async function acceptWorkspaceInvite(inviteCode: string): Promise<{
     message?: string;
     error?: InviteErrorReason;
     workspace_name?: string | null;
+    invited_email?: string | null;
   };
 
   if (!response.ok) {
-    const error: InviteErrorReason =
-      data.error === "expired" || data.error === "accepted" || data.error === "not_found"
-        ? data.error
-        : "not_found";
+    const error = parseInviteErrorReason(data.error);
     return {
       success: false,
       message: data.message ?? "Could not accept invite.",
       error,
       workspaceName: data.workspace_name ?? null,
+      invitedEmail: data.invited_email ?? null,
     };
   }
 

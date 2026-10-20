@@ -161,6 +161,7 @@ export function OnboardingFlow({
   const [invitePermissionLevel, setInvitePermissionLevel] =
     useState<WorkspacePermissionLevel>("reviewer");
   const [inviteError, setInviteError] = useState<InviteErrorReason | null>(null);
+  const [inviteInvitedEmail, setInviteInvitedEmail] = useState<string | null>(null);
   const [alreadyMember, setAlreadyMember] = useState(false);
 
   const [phase, setPhase] = useState<Phase>("intro");
@@ -209,8 +210,11 @@ export function OnboardingFlow({
 
   const firstName = useMemo(() => firstNameFrom(name), [name]);
   const inviteAlert = useMemo(
-    () => (inviteError ? inviteErrorAlertCopy(inviteError, inviteWorkspaceName) : null),
-    [inviteError, inviteWorkspaceName],
+    () =>
+      inviteError
+        ? inviteErrorAlertCopy(inviteError, inviteWorkspaceName, inviteInvitedEmail)
+        : null,
+    [inviteError, inviteWorkspaceName, inviteInvitedEmail],
   );
 
   useEffect(() => {
@@ -282,6 +286,9 @@ export function OnboardingFlow({
             setCompany(details.workspace_name);
           }
           setInvitePermissionLevel(mapInvitePermissionLevel(details.role));
+          if (details.email) {
+            setInviteInvitedEmail(details.email);
+          }
           const prefilledName = details.invited_name?.trim();
           if (prefilledName) {
             setName(prefilledName);
@@ -437,7 +444,12 @@ export function OnboardingFlow({
   const joinWorkspace = useCallback(async (inviteCode: string) => {
     const result = await joinWorkspaceByCode({ invite_code: inviteCode.trim() });
     if (!result.success || !result.workspace_id) {
-      return { ok: false as const };
+      return {
+        ok: false as const,
+        error: result.error,
+        invitedEmail: result.invitedEmail ?? null,
+        workspaceName: result.workspace_name ?? null,
+      };
     }
 
     setActiveWorkspaceId(result.workspace_id);
@@ -523,7 +535,15 @@ export function OnboardingFlow({
 
     const result = await joinWorkspace(inviteLink);
     if (!result.ok) {
-      setInviteLinkError(true);
+      if (result.error === "email_mismatch") {
+        setInviteError("email_mismatch");
+        setInviteInvitedEmail(result.invitedEmail);
+        if (result.workspaceName) {
+          setInviteWorkspaceName(result.workspaceName);
+        }
+      } else {
+        setInviteLinkError(true);
+      }
       setSubmitting(false);
       return;
     }
@@ -561,6 +581,9 @@ export function OnboardingFlow({
       if (!result.success || !result.workspace_id) {
         if (result.workspaceName) {
           setInviteWorkspaceName(result.workspaceName);
+        }
+        if (result.invitedEmail) {
+          setInviteInvitedEmail(result.invitedEmail);
         }
         setInviteError(result.error ?? "not_found");
         return;
@@ -776,7 +799,11 @@ export function OnboardingFlow({
                     body={inviteAlert.body}
                     linkText={inviteAlert.linkText}
                     onLinkClick={
-                      inviteError === "accepted" ? () => router.push("/login") : undefined
+                      inviteError === "accepted"
+                        ? () => router.push("/login")
+                        : inviteError === "email_mismatch"
+                          ? () => void handleSignOut()
+                          : undefined
                     }
                     dismissible={false}
                   />
@@ -1010,16 +1037,33 @@ export function OnboardingFlow({
                         Connect to a team or organisation already using <DesignTraceName />.
                       </p>
                       <div className="mt-4" onClick={(e) => e.stopPropagation()}>
+                        {inviteError === "email_mismatch" && inviteAlert ? (
+                          <div className="mb-4">
+                            <Alert
+                              sentiment="danger"
+                              prominence="low"
+                              title={inviteAlert.title}
+                              body={inviteAlert.body}
+                              linkText={inviteAlert.linkText}
+                              onLinkClick={() => void handleSignOut()}
+                              dismissible={false}
+                            />
+                          </div>
+                        ) : null}
                         <Input
                           label="Workspace invite link"
                           size="sm"
-                          placeholder="i.e. Acme-Design-Team 123"
+                          placeholder="Paste the invite code from your email"
                           value={inviteLink}
                           error={inviteLinkError}
                           errorMessage="This invite link is not valid or has expired."
                           onChange={(e) => {
                             setInviteLink(e.target.value);
                             setInviteLinkError(false);
+                            if (inviteError === "email_mismatch") {
+                              setInviteError(null);
+                              setInviteInvitedEmail(null);
+                            }
                           }}
                           className="w-full"
                         />

@@ -3,6 +3,26 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createWorkspaceInvite } from "@/lib/workspace/invite-server";
 import { assertCanManageTeammates } from "@/lib/workspace/assertCanManageTeammates";
 import type { InviteApiResponse } from "@/types/invites";
+import type { WorkspacePermissionLevel } from "@/lib/workspace/permissions";
+
+const INVITE_PERMISSION_LEVELS = new Set<WorkspacePermissionLevel>([
+  "reviewer",
+  "editor",
+  "admin",
+]);
+
+function parseInvitePermissionLevel(
+  value: unknown,
+): { ok: true; value: WorkspacePermissionLevel } | { ok: false } {
+  if (value == null || String(value).trim() === "") {
+    return { ok: true, value: "reviewer" };
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === "reviewer" || normalized === "editor" || normalized === "admin") {
+    return { ok: true, value: normalized };
+  }
+  return { ok: false };
+}
 
 export async function POST(request: Request) {
   let body: {
@@ -29,6 +49,27 @@ export async function POST(request: Request) {
     );
   }
 
+  const parsedPermission = parseInvitePermissionLevel(body.permission_level);
+  if (!parsedPermission.ok) {
+    return NextResponse.json(
+      {
+        status: "error",
+        message: "permission_level must be reviewer, editor, or admin.",
+      },
+      { status: 400 },
+    );
+  }
+  const permissionLevel = parsedPermission.value;
+  if (!INVITE_PERMISSION_LEVELS.has(permissionLevel)) {
+    return NextResponse.json(
+      {
+        status: "error",
+        message: "permission_level must be reviewer, editor, or admin.",
+      },
+      { status: 400 },
+    );
+  }
+
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -46,6 +87,16 @@ export async function POST(request: Request) {
     );
   }
 
+  if (permissionLevel === "admin" && access.permissionLevel !== "admin") {
+    return NextResponse.json(
+      {
+        status: "error",
+        message: "Only workspace admins can invite teammates as Admin.",
+      },
+      { status: 403 },
+    );
+  }
+
   const inviterName =
     (user.user_metadata?.display_name as string | undefined)?.trim() ||
     user.email?.split("@")[0] ||
@@ -56,7 +107,7 @@ export async function POST(request: Request) {
     email,
     name: body.name,
     role: body.role,
-    permissionLevel: body.permission_level,
+    permissionLevel,
     invitedByUserId: user.id,
     inviterName,
   });

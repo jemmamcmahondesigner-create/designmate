@@ -494,22 +494,5 @@ export async function resolveJoinTarget(inviteCode: string): Promise<
     };
   }
 
-  const { data: workspace } = await service
-    .from("workspaces")
-    .select("id")
-    .eq("invite_code", code)
-    .maybeSingle();
-
-  if (!workspace?.id) {
-    return { error: "Invite not found." };
-  }
-
-  return {
-    workspaceId: String(workspace.id),
-    personalInvite: false,
-    inviteEmail: null,
-    invitedName: null,
-    jobRole: null,
-    permissionLevel: "reviewer",
-  };
+  return { error: "Invite not found." };
 }

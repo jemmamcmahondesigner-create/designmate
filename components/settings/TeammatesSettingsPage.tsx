@@ -723,7 +723,10 @@ export function TeammatesSettingsPage({
         email: form.email.trim(),
         name: form.name.trim(),
         role: roleName ?? undefined,
-        permission_level: toStoredPermissionLevel(form.permissionLevel, form.isAdmin),
+        permission_level: toStoredPermissionLevel(
+          form.permissionLevel,
+          canEditPermission && form.isAdmin,
+        ),
       });
 
       if (result.status === "error") {
@@ -1004,15 +1007,17 @@ export function TeammatesSettingsPage({
           size="sm"
           portaled
         />
-        <AdminAccessField
-          checked={form.isAdmin}
-          disabled={false}
-          error={null}
-          onChange={(checked) => {
-            setFormError(null);
-            handleAdminAccessChange(checked);
-          }}
-        />
+        {canEditPermission ? (
+          <AdminAccessField
+            checked={form.isAdmin}
+            disabled={false}
+            error={null}
+            onChange={(checked) => {
+              setFormError(null);
+              handleAdminAccessChange(checked);
+            }}
+          />
+        ) : null}
       </Modal>
 
       <Modal

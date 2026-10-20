@@ -66,6 +66,8 @@ type ProfilePageClientProps = {
 };
 
 const WORKSPACE_INVITE_BASE_URL = "https://app.designtrace.ai/join";
+/** Workspace-code join is not a product feature. Keep the menu item in source, hidden. */
+const SHOW_WORKSPACE_JOIN_CODE_MENU_ITEM = false;
 
 const pageStyle: CSSProperties = {
   maxWidth: 800,
@@ -476,11 +478,13 @@ function WorkspaceCard({
             type="context-menu"
             aria-label={`${workspace.name} options`}
           >
-            <MenuItem
-              label="Copy invite link"
-              icon="link"
-              onClick={() => void copyInviteLink()}
-            />
+            {SHOW_WORKSPACE_JOIN_CODE_MENU_ITEM ? (
+              <MenuItem
+                label="Copy invite link"
+                icon="link"
+                onClick={() => void copyInviteLink()}
+              />
+            ) : null}
             <MenuItem
               label="Rename workspace"
               icon="edit"
