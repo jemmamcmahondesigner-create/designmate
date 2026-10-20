@@ -1,20 +1,49 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { getClientIp, rateLimit, rateLimitedResponse } from "@/lib/security/rateLimit";
+
+const MAX_EMAIL_CHARS = 320;
 
 export async function POST(request: Request) {
-  let body: { email?: string };
+  let body: unknown;
   try {
-    body = (await request.json()) as { email?: string };
+    body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const email = body.email?.trim();
-  if (!email) {
-    return NextResponse.json({ error: "email is required." }, { status: 400 });
-  }
-
   try {
+    const ipAllowed = await rateLimit(
+      `check-email:ip:${getClientIp(request)}`,
+      10,
+      10 * 60,
+    );
+    if (!ipAllowed) {
+      return rateLimitedResponse();
+    }
+
+    const emailRaw =
+      body && typeof body === "object" && !Array.isArray(body)
+        ? (body as { email?: unknown }).email
+        : undefined;
+    if (
+      typeof emailRaw !== "string" ||
+      !emailRaw.trim() ||
+      emailRaw.length > MAX_EMAIL_CHARS
+    ) {
+      return NextResponse.json({ error: "email is required." }, { status: 400 });
+    }
+
+    const email = emailRaw.trim();
+    const emailAllowed = await rateLimit(
+      `check-email:email:${email.toLowerCase()}`,
+      5,
+      10 * 60,
+    );
+    if (!emailAllowed) {
+      return rateLimitedResponse();
+    }
+
     const supabase = createServiceClient();
     const normalized = email.toLowerCase();
     let page = 1;

@@ -5,6 +5,7 @@ import {
   resolveJoinTarget,
 } from "@/lib/workspace/claimWorkspaceMembership";
 import { normalizeInviteEmail } from "@/lib/workspace/invite-server";
+import { rateLimit, rateLimitedResponse } from "@/lib/security/rateLimit";
 
 export async function POST(request: Request) {
   let body: { invite_code?: string; workspace_id?: string };
@@ -21,6 +22,11 @@ export async function POST(request: Request) {
 
   if (!user) {
     return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+  }
+
+  const allowed = await rateLimit(`workspace-join:user:${user.id}`, 10, 60);
+  if (!allowed) {
+    return rateLimitedResponse();
   }
 
   const inviteCode = body.invite_code?.trim();

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { normalizeInviteEmail } from "@/lib/workspace/invite-server";
 import { mapInvitePermissionLevel } from "@/lib/workspace/permissions";
+import { getClientIp, rateLimit, rateLimitedResponse } from "@/lib/security/rateLimit";
 import type { InviteErrorReason } from "@/types/invites";
 
 function pickWorkspaceName(workspaces: unknown): string | null {
@@ -24,6 +25,15 @@ function inviteErrorResponse(
 }
 
 export async function GET(request: Request) {
+  const allowed = await rateLimit(
+    `invite-details:ip:${getClientIp(request)}`,
+    30,
+    60,
+  );
+  if (!allowed) {
+    return rateLimitedResponse();
+  }
+
   const { searchParams } = new URL(request.url);
   const inviteCode = searchParams.get("invite_code")?.trim();
 
@@ -35,7 +45,7 @@ export async function GET(request: Request) {
   const { data: invite, error } = await service
     .from("workspace_invites")
     .select(
-      "workspace_id, email, role, status, expires_at, invited_by, invited_name, job_role, workspaces(name)",
+      "workspace_id, email, role, status, expires_at, invited_name, job_role, workspaces(name)",
     )
     .eq("invite_code", inviteCode)
     .maybeSingle();
@@ -62,14 +72,8 @@ export async function GET(request: Request) {
     return inviteErrorResponse("expired", workspaceName, 410);
   }
 
-  let inviterName = "Your team";
-
-  if (invite.invited_by) {
-    const { data: inviter } = await service.auth.admin.getUserById(String(invite.invited_by));
-    inviterName =
-      (inviter.user?.user_metadata?.display_name as string | undefined)?.trim() ||
-      inviter.user?.email?.split("@")[0] ||
-      inviterName;
+  if (status !== "pending") {
+    return inviteErrorResponse("not_found", null, 404);
   }
 
   const normalizedEmail = normalizeInviteEmail(String(invite.email ?? ""));
@@ -99,9 +103,7 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     workspace_name: workspaceName ?? "Workspace",
-    inviter_name: inviterName,
     role: permissionLevel,
-    expires_at: String(invite.expires_at),
     email: normalizedEmail,
     invited_name: invitedName || null,
     job_role: jobRole || null,

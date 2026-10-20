@@ -34,6 +34,7 @@ import {
 } from "@/lib/reviews/reviewStatusDisplay";
 import { canDeleteReview } from "@/lib/reviews/reviewDeleteEligibility";
 import { canEditReviewDetails } from "@/lib/reviews/workflow";
+import { assertReviewWorkspaceEditor } from "@/lib/reviews/assertReviewWorkspaceAccess";
 import { resolveNextChangeRequestNumbers, resolveBatchStartForNewSubmission, formatChangeRequestDisplayLabel } from "@/lib/reviews/changeRequestNumbering";
 import { EDIT_REVIEW_DENIED_MESSAGE, normalizeWorkspacePermission } from "@/lib/workspace/permissions";
 import type { PostgrestError } from "@supabase/supabase-js";
@@ -43,6 +44,22 @@ export async function triggerFigmaSnapshotsForReviewAction(
   reviewId: string,
   newStatus: string,
 ): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return;
+  }
+
+  const access = await assertReviewWorkspaceEditor({
+    userId: user.id,
+    reviewId: String(reviewId ?? "").trim(),
+  });
+  if (!access.ok) {
+    return;
+  }
+
   await triggerFigmaSnapshotsForReview(reviewId, newStatus);
 }
 

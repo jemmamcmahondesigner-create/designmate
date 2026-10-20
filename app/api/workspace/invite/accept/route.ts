@@ -3,6 +3,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { claimOrCreateWorkspaceMembership } from "@/lib/workspace/claimWorkspaceMembership";
 import { normalizeInviteEmail } from "@/lib/workspace/invite-server";
+import { maskInviteEmail } from "@/lib/workspace/invite-client";
+import { rateLimit, rateLimitedResponse } from "@/lib/security/rateLimit";
 
 export async function POST(request: Request) {
   let body: { invite_code?: string };
@@ -24,6 +26,11 @@ export async function POST(request: Request) {
 
   if (!user) {
     return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+  }
+
+  const allowed = await rateLimit(`invite-accept:user:${user.id}`, 10, 60);
+  if (!allowed) {
+    return rateLimitedResponse();
   }
 
   const service = createServiceClient();
@@ -66,6 +73,13 @@ export async function POST(request: Request) {
     );
   }
 
+  if (inviteStatus !== "pending") {
+    return NextResponse.json(
+      { error: "not_found", workspace_name: null, message: "Invite not found." },
+      { status: 404 },
+    );
+  }
+
   const inviteEmail = normalizeInviteEmail(String(invite.email ?? ""));
   const sessionEmail = normalizeInviteEmail(user.email ?? "");
   if (!inviteEmail || !sessionEmail || sessionEmail !== inviteEmail) {
@@ -73,7 +87,7 @@ export async function POST(request: Request) {
       {
         error: "email_mismatch",
         workspace_name: workspaceName,
-        invited_email: inviteEmail || null,
+        invited_email: inviteEmail ? maskInviteEmail(inviteEmail) : null,
         message: "This invite was sent to a different email address.",
       },
       { status: 403 },
