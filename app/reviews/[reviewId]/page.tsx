@@ -17,6 +17,7 @@ import { getEffectiveCurrentContributor } from '@/lib/auth/effectiveContributor'
 import { getDevImpersonatedContributorId } from '@/lib/auth/devImpersonation';
 import { loginUrlForReturnPath } from '@/lib/auth/mapAuthError';
 import { fetchContactDisplayNames } from '@/lib/contacts/fetchContactDisplayNames';
+import { resolveAssignedReviewerIdFromRows } from '@/lib/reviews/resolveAssignedReviewerId';
 import { getDecisionMakerReviewerId } from '@/lib/reviews/workflow';
 import { formatVersionLabel } from '@/lib/artifacts/versioning';
 import {
@@ -457,6 +458,7 @@ export default async function ReviewDetailPage({
   let allFeedbackRows: ReviewerFeedbackEntry[] = [];
   let changeRequests: ReviewChangeRequestEntry[] = [];
   let cardReplies: CardReplyRow[] = [];
+  let assignedReviewerId: string | null = null;
   let currentContributorId: string | null = null;
   let currentContributorRole: string | null = null;
   let currentContributorPermissionLevel: string | null = null;
@@ -620,12 +622,14 @@ export default async function ReviewDetailPage({
       role: string;
       email: string;
       userId: string | null;
+      projectId: string | null;
+      workspaceId: string | null;
     }> = [];
 
     if (reviewerIds.length > 0) {
       const { data: reviewerData } = await supabase
         .from('contributors')
-        .select('id, name, role, email, user_id')
+        .select('id, name, role, email, user_id, project_id, workspace_id')
         .in('id', reviewerIds);
       reviewerContributors = (reviewerData ?? []).map((c) => {
         const item = c as Record<string, unknown>;
@@ -636,6 +640,10 @@ export default async function ReviewDetailPage({
           email: String(item.email ?? ''),
           userId:
             item.user_id == null ? null : String(item.user_id),
+          projectId:
+            item.project_id == null ? null : String(item.project_id),
+          workspaceId:
+            item.workspace_id == null ? null : String(item.workspace_id),
         };
       });
     }
@@ -658,9 +666,29 @@ export default async function ReviewDetailPage({
           email: contributor.email,
           isDecisionMaker: hasDecisionMakerFlow && index === 0,
           userId: contributor.userId,
+          projectId: contributor.projectId,
+          workspaceId: contributor.workspaceId,
         };
       })
       .filter((item): item is ReviewerAssignment => item != null);
+
+    assignedReviewerId = resolveAssignedReviewerIdFromRows({
+      assignedIds: reviewerIds,
+      assignedRows: reviewerContributors.map((contributor) => ({
+        id: contributor.id,
+        user_id: contributor.userId,
+        email: contributor.email,
+        project_id: contributor.projectId,
+        workspace_id: contributor.workspaceId,
+      })),
+      person: {
+        contributorId: currentContributorId,
+        authUserId: currentAuthUserId,
+        email: authUser?.email ?? null,
+      },
+      workspaceId: projectWorkspaceId,
+      projectId: row.project_id,
+    });
 
     const serviceSupabase = createServiceClient();
     const { data: feedbackRows, error: feedbackError } = await serviceSupabase
@@ -992,6 +1020,7 @@ export default async function ReviewDetailPage({
       changeRequests={changeRequests}
       cardReplies={cardReplies}
       currentContributorId={currentContributorId}
+      assignedReviewerId={assignedReviewerId}
       currentContributorRole={currentContributorRole}
       currentContributorPermissionLevel={currentContributorPermissionLevel}
       workspacePermissionLevel={workspacePermissionLevel}

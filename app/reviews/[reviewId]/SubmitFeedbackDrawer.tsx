@@ -58,6 +58,7 @@ type SubmitFeedbackDrawerProps = {
   deferRevalidate?: boolean;
   onChangeRequestCreated?: () => void;
   currentContributorId: string | null;
+  assignedReviewerId?: string | null;
   isReviewCreator?: boolean;
   defaultOnBehalfOf?: string | null;
   assignedReviewers?: DrawerAssignedReviewer[];
@@ -121,6 +122,7 @@ export function SubmitFeedbackDrawer({
   deferRevalidate = false,
   onChangeRequestCreated,
   currentContributorId,
+  assignedReviewerId = null,
   isReviewCreator = false,
   defaultOnBehalfOf = null,
   assignedReviewers = [],
@@ -183,12 +185,14 @@ export function SubmitFeedbackDrawer({
       ),
     [assignedReviewers],
   );
-  const isAssignedReviewer = dedupedAssignedReviewers.some(
-    (reviewer) => reviewer.id === String(currentContributorId ?? "").trim(),
-  );
+  const isAssignedReviewer =
+    Boolean(assignedReviewerId) ||
+    dedupedAssignedReviewers.some(
+      (reviewer) => reviewer.id === String(currentContributorId ?? "").trim(),
+    );
   const effectiveReviewerId = isReviewCreator && !isAssignedReviewer
     ? selectedReviewerId.trim()
-    : String(currentContributorId ?? "").trim();
+    : String(assignedReviewerId ?? currentContributorId ?? "").trim();
   const shouldShowOnBehalfSelect = isReviewCreator && !isAssignedReviewer;
 
   useEffect(() => {

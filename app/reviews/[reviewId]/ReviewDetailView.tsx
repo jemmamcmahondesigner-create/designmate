@@ -85,6 +85,10 @@ import {
   hasAllReviewerFeedbackSubmitted,
 } from '@/lib/reviews/workflow';
 import {
+  isDecisionMakerFromRows,
+  resolveAssignedReviewerIdFromRows,
+} from '@/lib/reviews/resolveAssignedReviewerId';
+import {
   archiveReviewStubAction,
   assignReviewersAction,
   createTeammateFromReviewAction,
@@ -216,6 +220,8 @@ export interface ReviewerAssignment {
   email?: string | null;
   isDecisionMaker: boolean;
   userId?: string | null;
+  projectId?: string | null;
+  workspaceId?: string | null;
 }
 interface ContributorOption {
   id: string;
@@ -357,6 +363,8 @@ export interface ReviewDetailViewProps {
   changeRequests: ReviewChangeRequestEntry[];
   cardReplies: CardReplyRow[];
   currentContributorId: string | null;
+  /** Assigned `reviewer_contributor_ids` entry that belongs to the current person. */
+  assignedReviewerId?: string | null;
   currentContributorRole: string | null;
   /** From `contributors.permission_level` for the effective viewer (e.g. editor, admin, reviewer). */
   currentContributorPermissionLevel?: string | null;
@@ -1413,6 +1421,7 @@ export function ReviewDetailView({
   changeRequests,
   cardReplies: cardRepliesProp = [],
   currentContributorId,
+  assignedReviewerId: assignedReviewerIdProp = null,
   currentContributorRole,
   currentContributorPermissionLevel = null,
   workspacePermissionLevel = null,
@@ -1490,11 +1499,38 @@ export function ReviewDetailView({
     () => assignedReviewers.map((reviewer) => reviewer.id),
     [assignedReviewers],
   );
+  const assignedReviewerId = useMemo(() => {
+    if (assignedReviewerIdProp) return assignedReviewerIdProp;
+    return resolveAssignedReviewerIdFromRows({
+      assignedIds: reviewerContributorIds,
+      assignedRows: assignedReviewers.map((reviewer) => ({
+        id: reviewer.id,
+        user_id: reviewer.userId,
+        email: reviewer.email,
+        project_id: reviewer.projectId,
+        workspace_id: reviewer.workspaceId,
+      })),
+      person: {
+        contributorId: currentContributorId,
+        authUserId: currentAuthUserId,
+      },
+      workspaceId: assignedReviewers.find((reviewer) => reviewer.workspaceId)?.workspaceId ?? '',
+      projectId,
+    });
+  }, [
+    assignedReviewerIdProp,
+    assignedReviewers,
+    currentAuthUserId,
+    currentContributorId,
+    projectId,
+    reviewerContributorIds,
+  ]);
+  const isAssignedReviewer = assignedReviewerId != null;
   const canEditReview = useMemo(
     () =>
       normalizeWorkspacePermission(workspacePermissionLevel ?? null) !== 'reviewer' ||
-      reviewerContributorIds.includes(currentContributorId ?? ''),
-    [currentContributorId, reviewerContributorIds, workspacePermissionLevel],
+      isAssignedReviewer,
+    [isAssignedReviewer, workspacePermissionLevel],
   );
   const rawReviewType = reviewType.trim().toLowerCase();
   const normalizedReviewType =
@@ -1666,11 +1702,7 @@ export function ReviewDetailView({
       return false;
     }
     if (reviewerType !== 'open') return false;
-    const reviewerContributorIds = assignedReviewers.map((reviewer) => reviewer.id);
-    const isAssignedToThisReview =
-      currentContributorId != null &&
-      reviewerContributorIds.includes(currentContributorId);
-    if (isAssignedToThisReview) return false;
+    if (isAssignedReviewer) return false;
     const normalizedReviewStatus = normalizeReviewStatusKey(rawStatus);
     if (!REQUEST_TO_REVIEW_VISIBLE_STATUSES.has(normalizedReviewStatus)) {
       return false;
@@ -1678,6 +1710,7 @@ export function ReviewDetailView({
     if (
       assignedReviewers.some(
         (reviewer) =>
+          reviewer.id === assignedReviewerId ||
           reviewer.id === currentContributorId ||
           reviewer.id === reviewRequesterContributorId,
       )
@@ -1686,8 +1719,10 @@ export function ReviewDetailView({
     }
     return true;
   }, [
+    assignedReviewerId,
     assignedReviewers,
     currentContributorId,
+    isAssignedReviewer,
     mode,
     rawStatus,
     reviewRequesterContributorId,
@@ -1861,8 +1896,7 @@ export function ReviewDetailView({
         reviewCreatorAuthUserId &&
           currentAuthUserId &&
           reviewCreatorAuthUserId === currentAuthUserId &&
-          (!currentContributorId ||
-            !assignedReviewers.some((reviewer) => reviewer.id === currentContributorId)),
+          !isAssignedReviewer,
       );
       if (options?.prefill && options.feedbackEntryId) {
         const entry = feedbackRowsForLookup.find(
@@ -1923,6 +1957,7 @@ export function ReviewDetailView({
       reviewCreatorAuthUserId,
       currentAuthUserId,
       currentContributorId,
+      isAssignedReviewer,
       assignedReviewers,
       changeRequests,
       rawStatus,
@@ -2530,18 +2565,26 @@ export function ReviewDetailView({
       ),
     [contactDisplayById, decisionData.ownerId, decisionMakerReviewerId],
   );
-  const isDecisionMaker =
-    normalizedReviewType === 'compare'
-      ? Boolean(
-          currentContributorId &&
-            decisionMakerReviewerId &&
-            currentContributorId === decisionMakerReviewerId,
-        )
-      : Boolean(
-          currentContributorId &&
-            assignedDecisionOwnerId &&
-            currentContributorId === assignedDecisionOwnerId,
-        );
+  const isDecisionMaker = isDecisionMakerFromRows({
+    assignedIds: reviewerIds,
+    assignedRows: assignedReviewers.map((reviewer) => ({
+      id: reviewer.id,
+      user_id: reviewer.userId,
+      email: reviewer.email,
+      project_id: reviewer.projectId,
+      workspace_id: reviewer.workspaceId,
+    })),
+    person: {
+      contributorId: currentContributorId,
+      authUserId: currentAuthUserId,
+    },
+    workspaceId: assignedReviewers.find((reviewer) => reviewer.workspaceId)?.workspaceId ?? '',
+    projectId,
+    decisionOwnerId:
+      normalizedReviewType === 'compare'
+        ? decisionMakerReviewerId
+        : assignedDecisionOwnerId,
+  });
   const decisionMade =
     Boolean(decisionData.madeAt) ||
     Boolean(decisionData.text) ||
@@ -2701,7 +2744,7 @@ export function ReviewDetailView({
     !isReviewPaused;
   const showDecisionLogRemindButton = showReminderBell;
   const reviewerCanSubmitFeedback = canSubmitFeedbackByRole({
-    currentContributorId,
+    currentContributorId: assignedReviewerId,
     reviewerIds,
     feedbackByReviewerId: new Map(
       resolvedFeedbackEntries.map((entry) => [entry.reviewerId, { status: entry.status }]),
@@ -3126,7 +3169,7 @@ export function ReviewDetailView({
   const canCurrentUserMakeDecision =
     normalizedReviewType !== 'approve' &&
     canMakeDecision({
-      currentContributorId,
+      currentContributorId: assignedReviewerId,
       decisionMakerReviewerId:
         normalizedReviewType === 'compare'
           ? decisionMakerReviewerId
@@ -3136,7 +3179,7 @@ export function ReviewDetailView({
     }) &&
     (normalizedReviewType !== 'compare' || isDecisionMaker);
   const currentUserHasSubmitted = feedbackEntries.some(
-    (entry) => entry.reviewerId === currentContributorId && entry.status === 'submitted',
+    (entry) => entry.reviewerId === assignedReviewerId && entry.status === 'submitted',
   );
   const primaryFeedbackCta = getPrimaryFeedbackCta({
     canSubmitReviewerFeedback:
@@ -3147,14 +3190,14 @@ export function ReviewDetailView({
   const currentUserHasNotSubmitted = !currentUserHasSubmitted;
   const currentUserFeedbackDraft = useMemo(() => {
     const row = feedbackEntries.find(
-      (e) => e.reviewerId === currentContributorId && e.status === 'submitted',
+      (e) => e.reviewerId === assignedReviewerId && e.status === 'submitted',
     );
     if (!row) return null;
     return {
       feedbackText: row.feedbackText ?? '',
       selectedOption: row.selectedOption,
     };
-  }, [feedbackEntries, currentContributorId]);
+  }, [assignedReviewerId, feedbackEntries]);
   const reviewersById = new Map(assignedReviewers.map((reviewer) => [reviewer.id, reviewer]));
   const submittedReviewerIds = useMemo(
     () =>
@@ -3831,6 +3874,7 @@ export function ReviewDetailView({
               reminderLastSentAt={lastReminderSentAt}
               canCurrentUserMakeDecision={canCurrentUserMakeDecision}
               currentContributorId={currentContributorId}
+              assignedReviewerId={assignedReviewerId}
               canSubmitFeedback={canSubmitFeedback}
               isDecisionMaker={isDecisionMaker}
               showReminderBell={showReminderBell}
@@ -3910,7 +3954,7 @@ export function ReviewDetailView({
                 const canManageFinalDecisionCrs = finalDecisionCrRecords.some((cr) =>
                   canManageChangeRequestEntry(
                     cr,
-                    currentContributorId,
+                    assignedReviewerId,
                     isReviewCreator,
                     canEditCoreDetails,
                   ),
@@ -3997,7 +4041,7 @@ export function ReviewDetailView({
                         !isSuperseded &&
                         canManageChangeRequestEntry(
                           cr,
-                          currentContributorId,
+                          assignedReviewerId,
                           isReviewCreator,
                           canEditCoreDetails,
                         );
@@ -4139,7 +4183,7 @@ export function ReviewDetailView({
                                 : true;
                               const isOwnPreference = Boolean(
                                 currentContributorId &&
-                                  entry.reviewerId === currentContributorId,
+                                  entry.reviewerId === assignedReviewerId,
                               );
                               const canUpdatePreference =
                                 isActivePreference &&
@@ -4249,7 +4293,7 @@ export function ReviewDetailView({
                                 submissionChangeRequests.some((cr) =>
                                   canManageChangeRequestEntry(
                                     cr,
-                                    currentContributorId,
+                                    assignedReviewerId,
                                     isReviewCreator,
                                     canEditCoreDetails,
                                   ),
@@ -4304,7 +4348,7 @@ export function ReviewDetailView({
                                 const showUpdateFeedbackKebab =
                                   !isChangesNeededCard &&
                                   !isReviewPaused &&
-                                  (entry.reviewerId === currentContributorId ||
+                                  (entry.reviewerId === assignedReviewerId ||
                                     isReviewCreator);
                                 const showChangeRequestKebab =
                                   isChangesNeededCard && canManageSubmissionChangeRequests;
@@ -4391,7 +4435,7 @@ export function ReviewDetailView({
                               const changeRequestAllCompleted = Boolean(cr.completed_at);
                               const canManageCr = canManageChangeRequestEntry(
                                 cr,
-                                currentContributorId,
+                                assignedReviewerId,
                                 isReviewCreator,
                                 canEditCoreDetails,
                               );
@@ -5241,6 +5285,7 @@ export function ReviewDetailView({
             reminderLastSentAt={lastReminderSentAt}
             canCurrentUserMakeDecision={canCurrentUserMakeDecision}
             currentContributorId={currentContributorId}
+            assignedReviewerId={assignedReviewerId}
             canSubmitFeedback={canSubmitFeedback}
             isDecisionMaker={isDecisionMaker}
             showReminderBell={showReminderBell}
@@ -5321,6 +5366,7 @@ export function ReviewDetailView({
           deferRevalidate
           onChangeRequestCreated={handleChangeRequestCreatedWhileDrawer}
           currentContributorId={currentContributorId}
+          assignedReviewerId={assignedReviewerId}
           isReviewCreator={isReviewCreator}
           defaultOnBehalfOf={feedbackDrawerTargetReviewerId}
           assignedReviewers={assignedReviewers.map((reviewer) => ({
@@ -6685,6 +6731,7 @@ function FeedbackThreadCommentCard({
   cardCategory,
   reviewType,
   currentContributorId,
+  assignedReviewerId = null,
   canCurrentUserMakeDecision,
   contributorsById,
   contactDisplayById,
@@ -6700,6 +6747,7 @@ function FeedbackThreadCommentCard({
   cardCategory: 'feedback' | 'notification';
   reviewType: string;
   currentContributorId: string | null;
+  assignedReviewerId?: string | null;
   canCurrentUserMakeDecision: boolean;
   contributorsById: Map<string, ContributorOption>;
   contactDisplayById: Record<string, string>;
@@ -6760,9 +6808,9 @@ function FeedbackThreadCommentCard({
       type={type}
       cardCategory={cardCategory}
       isStakeholder={
-        Boolean(currentContributorId) &&
+        Boolean(assignedReviewerId) &&
         canCurrentUserMakeDecision &&
-        thread.reviewerId === currentContributorId
+        thread.reviewerId === assignedReviewerId
       }
       authorName={thread.author}
       authorContributorId={thread.reviewerId}
@@ -6815,6 +6863,7 @@ function RightColumn({
   reminderLastSentAt,
   canCurrentUserMakeDecision,
   currentContributorId,
+  assignedReviewerId = null,
   canSubmitFeedback,
   isDecisionMaker,
   showReminderBell,
@@ -6908,6 +6957,7 @@ function RightColumn({
   reminderLastSentAt: string | null;
   canCurrentUserMakeDecision: boolean;
   currentContributorId: string | null;
+  assignedReviewerId?: string | null;
   canSubmitFeedback: boolean;
   isDecisionMaker: boolean;
   showReminderBell: boolean;
@@ -7083,17 +7133,17 @@ function RightColumn({
       : 'Submit Feedback';
   const currentUserHasSubmittedApproveFeedback = feedback.some(
     (thread) =>
-      thread.reviewerId === currentContributorId && thread.status === 'submitted',
+      thread.reviewerId === assignedReviewerId && thread.status === 'submitted',
   );
   const approvedKeysForCurrentUser = useMemo(() => {
     const thread = feedback.find(
-      (item) => item.reviewerId === currentContributorId && item.status === 'submitted',
+      (item) => item.reviewerId === assignedReviewerId && item.status === 'submitted',
     );
     return String(thread?.optionTag ?? '')
       .split(',')
       .map((value) => value.trim())
       .filter(Boolean);
-  }, [feedback, currentContributorId]);
+  }, [assignedReviewerId, feedback]);
   const allArtifactsApprovedByCurrentUser =
     artifacts.length > 0 &&
     artifacts.every((artifact) =>
@@ -7101,17 +7151,17 @@ function RightColumn({
     );
   const compareCurrentUserSubmitted =
     normalizedReviewType === 'compare' &&
-    Boolean(currentContributorId) &&
+    Boolean(assignedReviewerId) &&
     feedback.some(
       (thread) =>
-        thread.reviewerId === currentContributorId && thread.status === 'submitted',
+        thread.reviewerId === assignedReviewerId && thread.status === 'submitted',
     );
   const alignCurrentUserSubmitted =
     normalizedReviewType === 'align' &&
-    Boolean(currentContributorId) &&
+    Boolean(assignedReviewerId) &&
     feedback.some(
       (thread) =>
-        thread.reviewerId === currentContributorId && thread.status === 'submitted',
+        thread.reviewerId === assignedReviewerId && thread.status === 'submitted',
     );
   const hideRhcAddFeedbackBtn =
     (normalizedReviewType === 'approve' && (stage === 1 || stage === 2 || stage >= 3)) ||
@@ -7334,7 +7384,7 @@ function RightColumn({
                           onClick={() => {
                             const entry = feedback.find(
                               (thread) =>
-                                thread.reviewerId === currentContributorId &&
+                                thread.reviewerId === assignedReviewerId &&
                                 thread.status === 'submitted',
                             );
                             if (!entry) return;
@@ -8299,6 +8349,7 @@ function RightColumn({
                         card.cardType === 'notification' ? 'notification' : 'feedback'
                       }
                       currentContributorId={currentContributorId}
+                      assignedReviewerId={assignedReviewerId}
                       canCurrentUserMakeDecision={canCurrentUserMakeDecision}
                       contributorsById={contributorsById}
                       contactDisplayById={contactDisplayById}

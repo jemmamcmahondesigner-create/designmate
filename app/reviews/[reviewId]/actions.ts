@@ -36,6 +36,10 @@ import { canDeleteReview } from "@/lib/reviews/reviewDeleteEligibility";
 import { canEditReviewDetails } from "@/lib/reviews/workflow";
 import { assertCanEditThisReview, canEditReview } from "@/lib/reviews/canEditReview";
 import {
+  isSelfReviewerWrite,
+  resolveAssignedReviewerIdForReview,
+} from "@/lib/reviews/resolveAssignedReviewerId";
+import {
   assertReviewWorkspaceEditor,
   assertReviewWorkspaceMember,
 } from "@/lib/reviews/assertReviewWorkspaceAccess";
@@ -999,8 +1003,24 @@ export async function submitReviewerFeedbackAction(input: {
   const {
     data: { user: authUser },
   } = await supabase.auth.getUser();
-  const targetReviewerId = String(input.reviewerId ?? currentContributor.id).trim();
-  const isOnBehalfSubmission = targetReviewerId !== currentContributor.id;
+  const assignedReviewerId = await resolveAssignedReviewerIdForReview(supabase, {
+    assignedIds: reviewerIds,
+    projectId,
+    person: {
+      contributorId: currentContributor.id,
+      authUserId: authUser?.id ?? null,
+      email: authUser?.email ?? null,
+    },
+  });
+  const requestedReviewerId = String(input.reviewerId ?? currentContributor.id).trim();
+  const isOnBehalfSubmission = !isSelfReviewerWrite({
+    requestedReviewerId,
+    currentContributorId: currentContributor.id,
+    assignedReviewerId,
+  });
+  const targetReviewerId = isOnBehalfSubmission
+    ? requestedReviewerId
+    : assignedReviewerId ?? requestedReviewerId;
   const allowedToEdit = canEditReview({
     reviewCreatorId: (review as Record<string, unknown>).creator_id,
     authUserId: authUser?.id,
@@ -1017,7 +1037,7 @@ export async function submitReviewerFeedbackAction(input: {
     if (!reviewerIds.includes(targetReviewerId)) {
       return { error: "Choose an assigned reviewer to submit on behalf of." };
     }
-  } else if (!reviewerIds.includes(currentContributor.id)) {
+  } else if (!assignedReviewerId) {
     return { error: "Only assigned reviewers can submit feedback." };
   }
 
@@ -1674,11 +1694,27 @@ export async function createChangeRequestAction(input: {
   const {
     data: { user: authUser },
   } = await supabase.auth.getUser();
-  const targetReviewerId = input.reviewerId.trim();
+  const requestedReviewerId = input.reviewerId.trim();
   const reviewerIds = Array.isArray(reviewRow.reviewer_contributor_ids)
     ? (reviewRow.reviewer_contributor_ids as unknown[]).map((id) => String(id))
     : [];
-  const isOnBehalfSubmission = targetReviewerId !== currentContributor.id;
+  const assignedReviewerId = await resolveAssignedReviewerIdForReview(supabase, {
+    assignedIds: reviewerIds,
+    projectId,
+    person: {
+      contributorId: currentContributor.id,
+      authUserId: authUser?.id ?? null,
+      email: authUser?.email ?? null,
+    },
+  });
+  const isOnBehalfSubmission = !isSelfReviewerWrite({
+    requestedReviewerId,
+    currentContributorId: currentContributor.id,
+    assignedReviewerId,
+  });
+  const targetReviewerId = isOnBehalfSubmission
+    ? requestedReviewerId
+    : assignedReviewerId ?? requestedReviewerId;
   const allowedToEdit = canEditReview({
     reviewCreatorId: reviewRow.creator_id,
     authUserId: authUser?.id,
@@ -1691,7 +1727,7 @@ export async function createChangeRequestAction(input: {
     if (!reviewerIds.includes(targetReviewerId)) {
       return { error: "Choose an assigned reviewer to submit on behalf of." };
     }
-  } else if (!reviewerIds.includes(currentContributor.id)) {
+  } else if (!assignedReviewerId) {
     return { error: "Only assigned reviewers can request changes." };
   }
   const { data: targetReviewerRow } =
@@ -1861,21 +1897,16 @@ export async function submitReplyAction(input: {
   const reviewerIds = Array.isArray(reviewRow.reviewer_contributor_ids)
     ? (reviewRow.reviewer_contributor_ids as unknown[]).map((id) => String(id))
     : [];
-  let isAssignedReviewer = reviewerIds.includes(contributor.id);
-  if (!isAssignedReviewer && reviewerIds.length > 0) {
-    const { data: assignedRows } = await supabase
-      .from("contributors")
-      .select("id, user_id, email")
-      .in("id", reviewerIds);
-    const authEmail = String(user.email ?? "").trim().toLowerCase();
-    isAssignedReviewer = (assignedRows ?? []).some((row) => {
-      const assigned = row as { id?: string; user_id?: string | null; email?: string | null };
-      if (String(assigned.id ?? "") === contributor.id) return true;
-      if (assigned.user_id && String(assigned.user_id) === user.id) return true;
-      const email = String(assigned.email ?? "").trim().toLowerCase();
-      return Boolean(authEmail && email && email === authEmail);
-    });
-  }
+  const assignedReviewerId = await resolveAssignedReviewerIdForReview(supabase, {
+    assignedIds: reviewerIds,
+    projectId: String(reviewRow.project_id ?? ""),
+    person: {
+      contributorId: contributor.id,
+      authUserId: user.id,
+      email: user.email ?? null,
+    },
+  });
+  const isAssignedReviewer = assignedReviewerId != null;
   const allowed =
     canEditReview({
       reviewCreatorId: reviewRow.creator_id,

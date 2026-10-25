@@ -10,6 +10,7 @@ import {
   resolveReviewCardCreator,
   resolveReviewCardCreatorId,
 } from "@/lib/reviews/fetchProjectReviews";
+import { listSamePersonContributorIdsInWorkspace } from "@/lib/reviews/resolveAssignedReviewerId";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -132,10 +133,20 @@ export default async function AllReviewsPage() {
   }
 
   if (assignedReviewerScope && contributor?.id) {
+    const personIds = await listSamePersonContributorIdsInWorkspace(
+      supabase,
+      {
+        contributorId: contributor.id,
+        authUserId: user?.id ?? null,
+        email: user?.email ?? null,
+      },
+      activeWorkspaceId,
+    );
+    const scopedIds = personIds.length > 0 ? personIds : [contributor.id];
     const { data: reviewerRows } = await supabase
       .from("reviews")
       .select(reviewSelect)
-      .contains("reviewer_contributor_ids", [contributor.id])
+      .or(scopedIds.map((id) => `reviewer_contributor_ids.cs.{${id}}`).join(","))
       .eq("projects.workspace_id", activeWorkspaceId)
       .eq("projects.status", "active");
     for (const row of reviewerRows ?? []) {

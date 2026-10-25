@@ -3,6 +3,7 @@ import {
   resolveCanonicalContributorIds,
   type ResolvedContributor,
 } from "@/lib/contributors/resolveCanonicalContributorIds";
+import { listSamePersonContributorIdsInWorkspace } from "@/lib/reviews/resolveAssignedReviewerId";
 import { parseReviewDbStatus, sortReviewCardsForProjectSidebar } from "@/lib/reviews/reviewStatusDisplay";
 import type {
   ReviewArtifactStored,
@@ -271,16 +272,37 @@ export async function fetchProjectReviewsForCards(
   if (error || !data) return [];
 
   const assignedReviewerContributorId = options?.assignedReviewerContributorId?.trim();
+  let assignedPersonIds = assignedReviewerContributorId
+    ? [assignedReviewerContributorId]
+    : [];
+  if (assignedReviewerContributorId && options?.workspaceId) {
+    const { data: personRow } = await supabase
+      .from("contributors")
+      .select("id, user_id, email")
+      .eq("id", assignedReviewerContributorId)
+      .maybeSingle();
+    assignedPersonIds = await listSamePersonContributorIdsInWorkspace(
+      supabase,
+      {
+        contributorId: assignedReviewerContributorId,
+        authUserId:
+          (personRow as { user_id?: string | null } | null)?.user_id ?? null,
+        email: (personRow as { email?: string | null } | null)?.email ?? null,
+      },
+      options.workspaceId,
+    );
+  }
+  const assignedPersonIdSet = new Set(assignedPersonIds);
   const rows =
-    assignedReviewerContributorId
+    assignedPersonIdSet.size > 0
       ? data.filter((row) => {
           const ids = (row as Record<string, unknown>).reviewer_contributor_ids;
           if (!Array.isArray(ids)) return false;
-          return ids.some(
-            (id) => String(id ?? "").trim() === assignedReviewerContributorId,
-          );
+          return ids.some((id) => assignedPersonIdSet.has(String(id ?? "").trim()));
         })
-      : data;
+      : assignedReviewerContributorId
+        ? []
+        : data;
 
   const reviewIds = rows
     .map((row) => String((row as Record<string, unknown>).id ?? ""))

@@ -10,6 +10,7 @@ import {
 import { resolveBatchStartForNewSubmission } from '@/lib/reviews/changeRequestNumbering';
 import { notifyCreatorDecisionRecorded } from '@/lib/reviews/notify-review-creator';
 import { triggerFigmaSnapshotsForReview } from '@/lib/figma/triggerFigmaSnapshotsForReview';
+import { resolveAssignedReviewerIdForReview } from '@/lib/reviews/resolveAssignedReviewerId';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { logTimelineEventServer } from '@/lib/timeline/logEventServer';
 
@@ -155,10 +156,32 @@ export async function submitDecisionAction(input: SubmitDecisionInput) {
     projectId || undefined,
   );
   if (!contributor) throw new Error('No active contributor identity available.');
+  const {
+    data: { user: decisionAuthUser },
+  } = await supabase.auth.getUser();
+  const decisionPerson = {
+    contributorId: contributor.id,
+    authUserId: decisionAuthUser?.id ?? null,
+    email: decisionAuthUser?.email ?? null,
+  };
+  const assignedReviewerId = await resolveAssignedReviewerIdForReview(supabase, {
+    assignedIds: reviewerIds,
+    projectId,
+    person: decisionPerson,
+  });
+  const callerIsDecisionMaker = assignedReviewerId != null && (
+    assignedReviewerId === decisionMakerId ||
+    (await resolveAssignedReviewerIdForReview(supabase, {
+      assignedIds: [decisionMakerId],
+      projectId,
+      person: decisionPerson,
+    })) != null
+  );
 
-  if (normalizedType === 'compare' && contributor.id !== decisionMakerId) {
+  if (normalizedType === 'compare' && !callerIsDecisionMaker) {
     throw new Error('Only the decision maker can submit the final decision.');
   }
+  const writeDecisionOwnerId = assignedReviewerId ?? contributor.id;
 
   const selectedIds = Array.isArray(input.selectedArtifactIds)
     ? input.selectedArtifactIds.map((id) => String(id).trim()).filter(Boolean)
@@ -245,7 +268,7 @@ export async function submitDecisionAction(input: SubmitDecisionInput) {
     .update({
       decision_status: finalDecisionStatus,
       decision_made_at: completedAt,
-      decision_owner_id: contributor.id,
+      decision_owner_id: writeDecisionOwnerId,
       decision_comments: comments,
       decision_selected_artifact_ids: selectedIds.length > 0 ? selectedIds : null,
       decision_trade_off_note: tradeOffNote || null,
@@ -297,7 +320,7 @@ export async function submitDecisionAction(input: SubmitDecisionInput) {
       decision_status: 'changes-needed',
       decision_comments: crSummary,
       decision_selected_artifact_ids: selectedIds.length > 0 ? selectedIds : null,
-      decision_owner_id: contributor.id,
+      decision_owner_id: writeDecisionOwnerId,
       decision_made_at: completedAt,
       entry_role: 'change_request',
     });
@@ -308,7 +331,7 @@ export async function submitDecisionAction(input: SubmitDecisionInput) {
     decision_status: finalDecisionStatus === 'changes-needed' ? 'approved' : finalDecisionStatus,
     decision_comments: comments,
     decision_selected_artifact_ids: selectedIds.length > 0 ? selectedIds : null,
-    decision_owner_id: contributor.id,
+    decision_owner_id: writeDecisionOwnerId,
     decision_made_at: completedAt,
     entry_role: 'approval',
   });
@@ -407,7 +430,7 @@ export async function submitDecisionAction(input: SubmitDecisionInput) {
     decisionStatus: finalDecisionStatus,
     decisionText: comments,
     tradeOffNote: tradeOffNote || null,
-    decisionOwnerId: contributor.id,
+    decisionOwnerId: writeDecisionOwnerId,
   });
 
   revalidatePath(`/reviews/${reviewId}`);
