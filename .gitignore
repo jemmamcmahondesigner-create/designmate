@@ -16,3 +16,6 @@ pnpm-debug.log*
 tsconfig.tsbuildinfo
 supabase/.temp/
 
+# Local scratch scripts — never commit (may contain test credentials)
+_tmp-*
+
