@@ -34,7 +34,11 @@ import {
 } from "@/lib/reviews/reviewStatusDisplay";
 import { canDeleteReview } from "@/lib/reviews/reviewDeleteEligibility";
 import { canEditReviewDetails } from "@/lib/reviews/workflow";
-import { assertReviewWorkspaceEditor } from "@/lib/reviews/assertReviewWorkspaceAccess";
+import {
+  assertReviewWorkspaceEditor,
+  assertReviewWorkspaceMember,
+} from "@/lib/reviews/assertReviewWorkspaceAccess";
+import { rateLimit } from "@/lib/security/rateLimit";
 import { resolveNextChangeRequestNumbers, resolveBatchStartForNewSubmission, formatChangeRequestDisplayLabel } from "@/lib/reviews/changeRequestNumbering";
 import { EDIT_REVIEW_DENIED_MESSAGE, normalizeWorkspacePermission } from "@/lib/workspace/permissions";
 import type { PostgrestError } from "@supabase/supabase-js";
@@ -618,6 +622,40 @@ export async function createTeammateFromReviewAction(input: {
   reopenReview?: boolean;
 }): Promise<{ error: string | null; reviewersNotified?: boolean }> {
   const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: "Unauthorized." };
+  }
+
+  const allowed = await rateLimit(
+    `create-teammate-from-review:user:${user.id}`,
+    20,
+    60 * 60,
+  );
+  if (!allowed) {
+    return { error: "Too many requests." };
+  }
+
+  const reviewId = String(input.reviewId ?? "").trim();
+  const access = await assertReviewWorkspaceMember({
+    userId: user.id,
+    reviewId,
+  });
+  if (!access.ok) {
+    return { error: "Review not found." };
+  }
+
+  // Same gate as Add Reviewers UI (canEditReviewDetails) plus review creator,
+  // matching the spec: Admin, Editor, or the person who created the review.
+  const canAddReviewers =
+    canEditReviewDetails(access.permissionLevel) ||
+    (access.creatorId != null && access.creatorId === user.id);
+  if (!canAddReviewers) {
+    return { error: EDIT_REVIEW_DENIED_MESSAGE };
+  }
+
   const name = input.name.trim();
   if (!name) {
     return { error: "Name is required." };
@@ -632,7 +670,7 @@ export async function createTeammateFromReviewAction(input: {
     supabase,
     input.projectId,
   );
-  if (!workspaceId) {
+  if (!workspaceId || workspaceId !== access.workspaceId) {
     return { error: "No active workspace." };
   }
 
@@ -686,15 +724,11 @@ export async function createTeammateFromReviewAction(input: {
       .eq("workspace_id", workspaceId);
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
   await ensurePendingWorkspaceMemberForReviewReviewer({
     workspaceId,
     contributorId: contributorId!,
     email: input.email?.trim() || null,
-    invitedByUserId: user?.id ?? null,
+    invitedByUserId: user.id,
   });
 
   await approvePendingAccessRequestsServer(supabase, {

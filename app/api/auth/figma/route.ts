@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getActiveWorkspaceIdFromUser } from "@/lib/workspace/activeWorkspace";
+import { resolveWorkspaceMembership } from "@/lib/workspace/resolveWorkspaceMembership";
+import {
+  applyFigmaOAuthCookie,
+  createFigmaOAuthNonce,
+  encodeFigmaOAuthState,
+} from "@/lib/figma/oauthStateCookie";
 
 function getRedirectUri(): string {
   const origin = (
@@ -27,6 +33,11 @@ export async function GET() {
     );
   }
 
+  const membership = await resolveWorkspaceMembership(supabase, workspaceId);
+  if (membership.workspacePermissionLevel !== "admin") {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
   const clientId = process.env.FIGMA_CLIENT_ID?.trim();
   if (!clientId) {
     return NextResponse.json(
@@ -35,13 +46,23 @@ export async function GET() {
     );
   }
 
+  const nonce = createFigmaOAuthNonce();
   const redirectUri = getRedirectUri();
   const authorizeUrl = new URL("https://www.figma.com/oauth");
   authorizeUrl.searchParams.set("client_id", clientId);
   authorizeUrl.searchParams.set("redirect_uri", redirectUri);
   authorizeUrl.searchParams.set("scope", "file_content:read file_metadata:read file_versions:read");
-  authorizeUrl.searchParams.set("state", workspaceId);
+  authorizeUrl.searchParams.set("state", nonce);
   authorizeUrl.searchParams.set("response_type", "code");
 
-  return NextResponse.redirect(authorizeUrl.toString());
+  const response = NextResponse.redirect(authorizeUrl.toString());
+  applyFigmaOAuthCookie(
+    response,
+    encodeFigmaOAuthState({
+      nonce,
+      workspaceId,
+      userId: user.id,
+    }),
+  );
+  return response;
 }

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getValidFigmaToken } from "@/lib/figma/getValidFigmaToken";
+import { assertWorkspaceActiveMember } from "@/lib/reviews/assertReviewWorkspaceAccess";
+import { rateLimit, rateLimitedResponse } from "@/lib/security/rateLimit";
 
 function extractFigmaFileKey(linkUrl: string): string | null {
   try {
@@ -43,6 +45,11 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     }
 
+    const allowed = await rateLimit(`artifact-snapshot:user:${user.id}`, 30, 60 * 60);
+    if (!allowed) {
+      return rateLimitedResponse();
+    }
+
     const service = createServiceClient();
 
     const { data: artifact, error: artifactError } = await service
@@ -61,6 +68,32 @@ export async function POST(
     const artifactName = String(
       (artifact as { name?: string | null }).name ?? "",
     ).trim();
+
+    if (!projectId) {
+      return NextResponse.json({ error: "Not found." }, { status: 404 });
+    }
+
+    const { data: project, error: projectError } = await service
+      .from("projects")
+      .select("workspace_id")
+      .eq("id", projectId)
+      .maybeSingle();
+
+    const workspaceId = String(
+      (project as { workspace_id?: string | null } | null)?.workspace_id ?? "",
+    ).trim();
+
+    if (projectError || !project || !workspaceId) {
+      return NextResponse.json({ error: "Not found." }, { status: 404 });
+    }
+
+    const membership = await assertWorkspaceActiveMember({
+      userId: user.id,
+      workspaceId,
+    });
+    if (!membership.ok) {
+      return NextResponse.json({ error: "Not found." }, { status: 404 });
+    }
 
     const { data: versionRows, error: versionError } = await service
       .from("artifact_versions")
@@ -99,28 +132,6 @@ export async function POST(
 
     if (!fileKey) {
       return NextResponse.json({ error: "not_figma_artifact" }, { status: 400 });
-    }
-
-    if (!projectId) {
-      return NextResponse.json({ error: "internal_error" }, { status: 500 });
-    }
-
-    const { data: project, error: projectError } = await service
-      .from("projects")
-      .select("workspace_id")
-      .eq("id", projectId)
-      .maybeSingle();
-
-    if (projectError || !project) {
-      return NextResponse.json({ error: "internal_error" }, { status: 500 });
-    }
-
-    const workspaceId = String(
-      (project as { workspace_id?: string | null }).workspace_id ?? "",
-    ).trim();
-
-    if (!workspaceId) {
-      return NextResponse.json({ error: "internal_error" }, { status: 500 });
     }
 
     const accessToken = await getValidFigmaToken(workspaceId);

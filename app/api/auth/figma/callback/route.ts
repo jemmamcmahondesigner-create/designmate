@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { resolveWorkspaceMembership } from "@/lib/workspace/resolveWorkspaceMembership";
+import {
+  clearFigmaOAuthCookie,
+  parseFigmaOAuthState,
+  readFigmaOAuthCookie,
+  timingSafeEqualText,
+} from "@/lib/figma/oauthStateCookie";
 
 function getAppOrigin(): string {
   return (
@@ -13,7 +20,9 @@ function getRedirectUri(): string {
 }
 
 function settingsRedirect(status: "connected" | "error") {
-  return NextResponse.redirect(`${getAppOrigin()}/settings?figma=${status}`);
+  const response = NextResponse.redirect(`${getAppOrigin()}/settings?figma=${status}`);
+  clearFigmaOAuthCookie(response);
+  return response;
 }
 
 function figmaBasicAuthHeader(clientId: string, clientSecret: string): string {
@@ -23,15 +32,17 @@ function figmaBasicAuthHeader(clientId: string, clientSecret: string): string {
 
 export async function GET(request: Request) {
   try {
+    const cookiePayload = parseFigmaOAuthState(readFigmaOAuthCookie(request));
     const { searchParams } = new URL(request.url);
     const code = searchParams.get("code")?.trim();
-    const workspaceId = searchParams.get("state")?.trim();
+    const state = searchParams.get("state")?.trim() ?? "";
 
-    if (!code || !workspaceId) {
-      return NextResponse.json(
-        { error: "Missing code or state." },
-        { status: 400 },
-      );
+    if (
+      !cookiePayload ||
+      !state ||
+      !timingSafeEqualText(state, cookiePayload.nonce)
+    ) {
+      return settingsRedirect("error");
     }
 
     const supabase = await createSupabaseServerClient();
@@ -39,7 +50,19 @@ export async function GET(request: Request) {
       data: { user },
     } = await supabase.auth.getUser();
 
-    if (!user) {
+    if (!user || user.id !== cookiePayload.userId) {
+      return settingsRedirect("error");
+    }
+
+    const membership = await resolveWorkspaceMembership(
+      supabase,
+      cookiePayload.workspaceId,
+    );
+    if (membership.workspacePermissionLevel !== "admin") {
+      return settingsRedirect("error");
+    }
+
+    if (!code) {
       return settingsRedirect("error");
     }
 
@@ -96,7 +119,7 @@ export async function GET(request: Request) {
       .from("workspace_figma_tokens")
       .upsert(
         {
-          workspace_id: workspaceId,
+          workspace_id: cookiePayload.workspaceId,
           access_token: tokenJson.access_token,
           refresh_token: tokenJson.refresh_token,
           expires_at: expiresAt,
