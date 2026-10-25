@@ -34,6 +34,7 @@ import {
 } from "@/lib/reviews/reviewStatusDisplay";
 import { canDeleteReview } from "@/lib/reviews/reviewDeleteEligibility";
 import { canEditReviewDetails } from "@/lib/reviews/workflow";
+import { assertCanEditThisReview, canEditReview } from "@/lib/reviews/canEditReview";
 import {
   assertReviewWorkspaceEditor,
   assertReviewWorkspaceMember,
@@ -463,7 +464,7 @@ export async function assignReviewersAction(input: {
   const { data: review } = await supabase
     .from("reviews")
     .select(
-      "id, project_id, title, reviewer_contributor_ids, review_type, decision_owner_id, status, owner_display_name",
+      "id, project_id, creator_id, title, reviewer_contributor_ids, review_type, decision_owner_id, status, owner_display_name",
     )
     .eq("id", input.reviewId)
     .maybeSingle();
@@ -472,6 +473,10 @@ export async function assignReviewersAction(input: {
   }
 
   const reviewRow = review as Record<string, unknown>;
+  const editGate = await assertCanEditThisReview(supabase, reviewRow);
+  if (!editGate.ok) {
+    return { error: editGate.error };
+  }
   const reviewTitle = String(reviewRow.title ?? "Review").trim() || "Review";
   const reviewStatusNorm = String(reviewRow.status ?? "").trim().toLowerCase();
   if (reviewStatusNorm === "complete") {
@@ -775,7 +780,7 @@ export async function removeReviewerAction(input: {
   const supabase = await createSupabaseServerClient();
   const { data: review } = await supabase
     .from("reviews")
-    .select("id, project_id, title, status, reviewer_contributor_ids")
+    .select("id, project_id, creator_id, title, status, reviewer_contributor_ids")
     .eq("id", input.reviewId)
     .maybeSingle();
   if (!review) {
@@ -783,6 +788,10 @@ export async function removeReviewerAction(input: {
   }
 
   const reviewRow = review as Record<string, unknown>;
+  const editGate = await assertCanEditThisReview(supabase, reviewRow);
+  if (!editGate.ok) {
+    return { error: editGate.error };
+  }
   const existingIds = Array.isArray(reviewRow.reviewer_contributor_ids)
     ? (reviewRow.reviewer_contributor_ids as unknown[]).map((id) => String(id))
     : [];
@@ -991,18 +1000,19 @@ export async function submitReviewerFeedbackAction(input: {
     data: { user: authUser },
   } = await supabase.auth.getUser();
   const targetReviewerId = String(input.reviewerId ?? currentContributor.id).trim();
-  const isReviewCreator =
-    String((review as Record<string, unknown>).creator_id ?? "").trim() !== "" &&
-    String((review as Record<string, unknown>).creator_id ?? "").trim() ===
-      String(authUser?.id ?? "").trim();
   const isOnBehalfSubmission = targetReviewerId !== currentContributor.id;
+  const allowedToEdit = canEditReview({
+    reviewCreatorId: (review as Record<string, unknown>).creator_id,
+    authUserId: authUser?.id,
+    contributorPermissionLevel: currentContributor.permissionLevel,
+  });
 
   if (!targetReviewerId) {
     return { error: "Reviewer is required." };
   }
   if (isOnBehalfSubmission) {
-    if (!isReviewCreator) {
-      return { error: "Only the review creator can request changes on behalf of a reviewer." };
+    if (!allowedToEdit) {
+      return { error: EDIT_REVIEW_DENIED_MESSAGE };
     }
     if (!reviewerIds.includes(targetReviewerId)) {
       return { error: "Choose an assigned reviewer to submit on behalf of." };
@@ -1668,13 +1678,15 @@ export async function createChangeRequestAction(input: {
   const reviewerIds = Array.isArray(reviewRow.reviewer_contributor_ids)
     ? (reviewRow.reviewer_contributor_ids as unknown[]).map((id) => String(id))
     : [];
-  const isReviewCreator =
-    String(reviewRow.creator_id ?? "").trim() !== "" &&
-    String(reviewRow.creator_id ?? "").trim() === String(authUser?.id ?? "").trim();
   const isOnBehalfSubmission = targetReviewerId !== currentContributor.id;
+  const allowedToEdit = canEditReview({
+    reviewCreatorId: reviewRow.creator_id,
+    authUserId: authUser?.id,
+    contributorPermissionLevel: currentContributor.permissionLevel,
+  });
   if (isOnBehalfSubmission) {
-    if (!isReviewCreator) {
-      return { error: "Only the review creator can submit feedback on behalf of a reviewer." };
+    if (!allowedToEdit) {
+      return { error: EDIT_REVIEW_DENIED_MESSAGE };
     }
     if (!reviewerIds.includes(targetReviewerId)) {
       return { error: "Choose an assigned reviewer to submit on behalf of." };
@@ -1705,6 +1717,7 @@ export async function createChangeRequestAction(input: {
     .insert({
       review_id: input.reviewId,
       reviewer_id: targetReviewerId,
+      submitted_by_id: currentContributor.id,
       artifact_ids: artifactIdentifiers,
       changes_needed: String(input.changesNeeded ?? "").trim() || null,
       batch_id: numbering.batchId,
@@ -1797,34 +1810,91 @@ export async function submitReplyAction(input: {
   type: "feedback" | "change_request";
   id: string;
   replyText: string;
-  replyById: string;
+  /** Ignored — author is always the session contributor for the review's project. */
+  replyById?: string;
 }): Promise<{ success: boolean; error?: string }> {
   const supabase = await createSupabaseServerClient();
   const table = input.type === "feedback" ? "reviewer_feedback" : "change_requests";
-  const idColumn = "id";
-  const reviewIdColumn = "review_id";
   const trimmedReply = input.replyText.trim();
   if (!trimmedReply) return { success: false, error: "Reply cannot be empty." };
 
   const { data: row, error: rowError } = await supabase
     .from(table)
-    .select(reviewIdColumn)
-    .eq(idColumn, input.id)
+    .select("review_id")
+    .eq("id", input.id)
     .maybeSingle();
   if (rowError || !row) {
     return { success: false, error: rowError?.message ?? "Reply target not found." };
+  }
+
+  const reviewId = String((row as Record<string, unknown>).review_id ?? "").trim();
+  if (!reviewId) {
+    return { success: false, error: "Reply target not found." };
+  }
+
+  const { data: review, error: reviewError } = await supabase
+    .from("reviews")
+    .select("id, project_id, creator_id, reviewer_contributor_ids")
+    .eq("id", reviewId)
+    .maybeSingle();
+  if (reviewError || !review) {
+    return { success: false, error: reviewError?.message ?? "Review not found." };
+  }
+
+  const reviewRow = review as Record<string, unknown>;
+  const projectId = String(reviewRow.project_id ?? "").trim();
+  const contributor = await getEffectiveCurrentContributor(
+    supabase,
+    projectId || undefined,
+  );
+  if (!contributor) {
+    return { success: false, error: "No active contributor identity available." };
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { success: false, error: "Unauthorized." };
+  }
+
+  const reviewerIds = Array.isArray(reviewRow.reviewer_contributor_ids)
+    ? (reviewRow.reviewer_contributor_ids as unknown[]).map((id) => String(id))
+    : [];
+  let isAssignedReviewer = reviewerIds.includes(contributor.id);
+  if (!isAssignedReviewer && reviewerIds.length > 0) {
+    const { data: assignedRows } = await supabase
+      .from("contributors")
+      .select("id, user_id, email")
+      .in("id", reviewerIds);
+    const authEmail = String(user.email ?? "").trim().toLowerCase();
+    isAssignedReviewer = (assignedRows ?? []).some((row) => {
+      const assigned = row as { id?: string; user_id?: string | null; email?: string | null };
+      if (String(assigned.id ?? "") === contributor.id) return true;
+      if (assigned.user_id && String(assigned.user_id) === user.id) return true;
+      const email = String(assigned.email ?? "").trim().toLowerCase();
+      return Boolean(authEmail && email && email === authEmail);
+    });
+  }
+  const allowed =
+    canEditReview({
+      reviewCreatorId: reviewRow.creator_id,
+      authUserId: user.id,
+      contributorPermissionLevel: contributor.permissionLevel,
+    }) || isAssignedReviewer;
+  if (!allowed) {
+    return { success: false, error: EDIT_REVIEW_DENIED_MESSAGE };
   }
 
   const { error } = await supabase.from("card_replies").insert({
     card_type: input.type === "feedback" ? "feedback" : "change_request",
     card_id: input.id,
     reply_text: trimmedReply,
-    reply_by_id: input.replyById,
+    reply_by_id: contributor.id,
   });
   if (error) return { success: false, error: error.message };
 
-  const reviewId = String((row as Record<string, unknown>).review_id ?? "");
-  if (reviewId) revalidatePath(`/reviews/${reviewId}`);
+  revalidatePath(`/reviews/${reviewId}`);
   return { success: true };
 }
 
@@ -1851,6 +1921,19 @@ export async function updateReviewTypeAction(input: {
   }
 
   const supabase = await createSupabaseServerClient();
+  const { data: review } = await supabase
+    .from("reviews")
+    .select("id, project_id, creator_id")
+    .eq("id", reviewId)
+    .maybeSingle();
+  if (!review) {
+    return { success: false, error: "Review not found." };
+  }
+  const editGate = await assertCanEditThisReview(supabase, review);
+  if (!editGate.ok) {
+    return { success: false, error: editGate.error };
+  }
+
   const { data: submittedRows, error: submittedError } = await supabase
     .from("reviewer_feedback")
     .select("id")
@@ -1895,6 +1978,19 @@ export async function saveReviewFocusAction(input: {
   if (!reviewId) return { success: false, error: "Review is required." };
 
   const supabase = await createSupabaseServerClient();
+  const { data: review } = await supabase
+    .from("reviews")
+    .select("id, project_id, creator_id")
+    .eq("id", reviewId)
+    .maybeSingle();
+  if (!review) {
+    return { success: false, error: "Review not found." };
+  }
+  const editGate = await assertCanEditThisReview(supabase, review);
+  if (!editGate.ok) {
+    return { success: false, error: editGate.error };
+  }
+
   const focus = String(input.reviewFocus ?? "").trim();
   const { error } = await supabase
     .from("reviews")
