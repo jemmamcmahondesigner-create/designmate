@@ -36,6 +36,8 @@ button, input, textarea, select {
   --feedback-error-border: #e07070;
   --feedback-error-bg: #fceaea;
   --feedback-error-text: #8b2020;
+  --feedback-success-text: #256b38;
+  --icon-error: var(--feedback-error-text);
   --component-padding-sm: 8px;
   --radius-component-button-sm: 6px;
   --radius-component-button-md: 6px;

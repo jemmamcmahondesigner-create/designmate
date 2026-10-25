@@ -4,9 +4,15 @@ import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { AuthMark } from "@/components/auth/AuthMark";
+import { PasswordRulesField } from "@/components/auth/PasswordRulesField";
 import { AuthSubmitButton } from "@/components/auth/AuthSubmitButton";
-import { Input } from "@/components/ui/ds";
+import { Alert, Input } from "@/components/ui/ds";
 import { resolvePostLoginPath } from "@/lib/auth/mapAuthError";
+import {
+  mapPasswordServerError,
+  passwordMeetsRules,
+  type PasswordRuleId,
+} from "@/lib/auth/passwordRules";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type PagePhase = "exchanging" | "ready" | "submitting";
@@ -21,6 +27,9 @@ function UpdatePasswordContent() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [confirmMismatch, setConfirmMismatch] = useState(false);
+  const [rulesRevealed, setRulesRevealed] = useState(false);
+  const [failedRuleIds, setFailedRuleIds] = useState<PasswordRuleId[]>([]);
+  const [serverAlert, setServerAlert] = useState<string | null>(null);
 
   useEffect(() => {
     if (exchangeStarted.current) return;
@@ -67,18 +76,26 @@ function UpdatePasswordContent() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (password !== confirmPassword) {
-      setConfirmMismatch(true);
-      return;
-    }
+    const mismatch = password !== confirmPassword;
+    const meetsRules = passwordMeetsRules(password);
+    setRulesRevealed(true);
+    setFailedRuleIds([]);
+    setConfirmMismatch(mismatch);
+    setServerAlert(null);
+    if (!meetsRules || mismatch) return;
 
-    setConfirmMismatch(false);
     setPhase("submitting");
 
     const supabase = createSupabaseBrowserClient();
     const { data, error } = await supabase.auth.updateUser({ password });
 
     if (error) {
+      const mapped = mapPasswordServerError(error.message ?? "", password);
+      if (mapped.kind === "rules") {
+        setFailedRuleIds(mapped.ids);
+      } else {
+        setServerAlert(mapped.message);
+      }
       setPhase("ready");
       return;
     }
@@ -119,6 +136,17 @@ function UpdatePasswordContent() {
           Set your new password
         </h2>
 
+        {serverAlert ? (
+          <div className="w-full">
+            <Alert
+              sentiment="danger"
+              prominence="low"
+              title={serverAlert}
+              dismissible={false}
+            />
+          </div>
+        ) : null}
+
         <form
           className="flex w-full flex-col gap-6"
           onSubmit={(e) => void handleSubmit(e)}
@@ -135,21 +163,20 @@ function UpdatePasswordContent() {
             className="w-full"
           />
 
-          <Input
+          <PasswordRulesField
             label="New password"
-            type="password"
-            size="lg"
+            placeholder="New password"
             name="new-password"
-            placeholder="Enter a unique 8 digit password"
             autoComplete="new-password"
             value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
-              if (confirmMismatch) setConfirmMismatch(false);
+            revealed={rulesRevealed}
+            failedRuleIds={failedRuleIds}
+            onReveal={() => setRulesRevealed(true)}
+            onChange={(next) => {
+              setPassword(next);
+              if (failedRuleIds.length > 0) setFailedRuleIds([]);
+              if (serverAlert) setServerAlert(null);
             }}
-            helperText="Must have 1 number and 1 special character."
-            showHelper
-            className="w-full"
           />
 
           <Input
@@ -165,15 +192,11 @@ function UpdatePasswordContent() {
               if (confirmMismatch) setConfirmMismatch(false);
             }}
             error={confirmMismatch}
-            errorMessage="Passwords must match."
+            errorMessage="Passwords don't match"
             className="w-full"
           />
 
-          <AuthSubmitButton
-            label="Update password"
-            loading={isSubmitting}
-            disabled={!password.trim() || !confirmPassword.trim()}
-          />
+          <AuthSubmitButton label="Update password" loading={isSubmitting} />
         </form>
       </div>
     </AuthCard>

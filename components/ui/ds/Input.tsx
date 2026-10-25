@@ -36,7 +36,7 @@ export interface InputProps {
   /** Error message shown below field when error is true */
   errorMessage?: ReactNode
   /** Helper / hint text shown below field (hidden when error is true) */
-  helperText?: string
+  helperText?: ReactNode
   /** Whether to show helper text */
   showHelper?: boolean
   /** Disabled state */
@@ -175,21 +175,28 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
         </div>
 
         {error && errorMessage && (
-          <p
-            id={errorId}
-            className={styles.errorText}
-            role="alert"
-            style={typeof errorMessage === 'string' ? undefined : { whiteSpace: 'normal' }}
-          >
-            {errorMessage}
-          </p>
+          typeof errorMessage === 'string' ? (
+            <p id={errorId} className={styles.errorText} role="alert">
+              {errorMessage}
+            </p>
+          ) : (
+            <div id={errorId} className={`${styles.errorText} ${styles.belowBlock}`} role="alert">
+              {errorMessage}
+            </div>
+          )
         )}
 
-        {!error && showHelper && helperText && (
-          <p id={helperId} className={styles.helperText}>
-            {helperText}
-          </p>
-        )}
+        {!error && showHelper && helperText ? (
+          typeof helperText === 'string' ? (
+            <p id={helperId} className={styles.helperText}>
+              {helperText}
+            </p>
+          ) : (
+            <div id={helperId} className={`${styles.helperText} ${styles.belowBlock}`}>
+              {helperText}
+            </div>
+          )
+        ) : null}
       </div>
     )
   }

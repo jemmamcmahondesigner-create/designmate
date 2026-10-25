@@ -1,3 +1,5 @@
+import { PASSWORD_RULES } from "@/lib/auth/passwordRules";
+
 export type LoginFieldError = "error-password" | "error-email" | null;
 
 export function mapSignInError(message: string): LoginFieldError {
@@ -97,39 +99,22 @@ export function isDuplicateEmailSignUpError(message: string): boolean {
   return m.includes("already registered") || m.includes("user already registered");
 }
 
-const SIGNUP_PASSWORD_REQUIREMENTS_MESSAGE =
-  "Password must meet requirements: min. 8 characters with uppercase, lowercase, number and symbol.";
-
 export function getSignUpPasswordServerErrorMessage(error: {
   status?: number;
+  code?: string;
   message?: string;
 }): string | null {
   const msg = (error.message ?? "").toLowerCase();
-  if (
-    error.status === 400 ||
-    msg.includes("valid password") ||
-    msg.includes("password should be")
-  ) {
-    return SIGNUP_PASSWORD_REQUIREMENTS_MESSAGE;
-  }
-  return null;
+  const isPasswordError =
+    error.code === "weak_password" ||
+    error.status === 422 ||
+    msg.includes("password should") ||
+    msg.includes("valid password");
+  if (!isPasswordError) return null;
+  return "That password doesn't meet the requirements. Try a different one.";
 }
 
 export function validateSignUpPassword(password: string): string | null {
-  if (password.length < 8) {
-    return "Password must be at least 8 characters.";
-  }
-  if (!/[a-z]/.test(password)) {
-    return "Password must include at least one lowercase letter.";
-  }
-  if (!/[A-Z]/.test(password)) {
-    return "Password must include at least one uppercase letter.";
-  }
-  if (!/[0-9]/.test(password)) {
-    return "Password must include at least one number.";
-  }
-  if (!/[^a-zA-Z0-9]/.test(password)) {
-    return "Password must include at least one symbol (e.g. !@#$%).";
-  }
-  return null;
+  const unmet = PASSWORD_RULES.find((rule) => !rule.test(password));
+  return unmet ? unmet.label : null;
 }

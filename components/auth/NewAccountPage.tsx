@@ -11,13 +11,15 @@ import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { InputLockIcon } from "@/components/auth/InputLockIcon";
 import { OrDivider } from "@/components/auth/OrDivider";
 import { useResendCooldown } from "@/components/auth/useResendCooldown";
+import { PasswordRulesField } from "@/components/auth/PasswordRulesField";
 import { Alert, Button, Input } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getSiteOrigin } from "@/lib/auth/mapAuthError";
 import {
-  getSignUpPasswordServerErrorMessage,
-  getSiteOrigin,
-  validateSignUpPassword,
-} from "@/lib/auth/mapAuthError";
+  mapPasswordServerError,
+  passwordMeetsRules,
+  type PasswordRuleId,
+} from "@/lib/auth/passwordRules";
 import {
   fetchInviteDetails,
   inviteErrorAlertCopy,
@@ -34,7 +36,9 @@ function NewAccountPageContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailExistsError, setEmailExistsError] = useState(false);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [rulesRevealed, setRulesRevealed] = useState(false);
+  const [failedRuleIds, setFailedRuleIds] = useState<PasswordRuleId[]>([]);
+  const [serverAlert, setServerAlert] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [inviteWorkspaceName, setInviteWorkspaceName] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<InviteErrorReason | null>(null);
@@ -88,13 +92,11 @@ function NewAccountPageContent() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const passwordValidationError = validateSignUpPassword(password);
-    if (passwordValidationError) {
-      setPasswordError(passwordValidationError);
-      return;
-    }
+    setRulesRevealed(true);
+    setFailedRuleIds([]);
+    setServerAlert(null);
+    if (!passwordMeetsRules(password)) return;
 
-    setPasswordError(null);
     setEmailExistsError(false);
     setStatus("loading");
 
@@ -129,9 +131,18 @@ function NewAccountPageContent() {
     });
 
     if (error) {
-      const passwordServerError = getSignUpPasswordServerErrorMessage(error);
-      if (passwordServerError) {
-        setPasswordError(passwordServerError);
+      const message = error.message ?? "";
+      const looksLikePassword =
+        error.code === "weak_password" ||
+        error.status === 422 ||
+        message.toLowerCase().includes("password");
+      if (looksLikePassword) {
+        const mapped = mapPasswordServerError(message, password);
+        if (mapped.kind === "rules") {
+          setFailedRuleIds(mapped.ids);
+        } else {
+          setServerAlert(mapped.message);
+        }
       }
       setStatus("idle");
       return;
@@ -294,22 +305,29 @@ function NewAccountPageContent() {
               className="w-full"
             />
 
-            <Input
+            {serverAlert ? (
+              <Alert
+                sentiment="danger"
+                prominence="low"
+                title={serverAlert}
+                dismissible={false}
+              />
+            ) : null}
+
+            <PasswordRulesField
               label="Password"
-              type="password"
-              size="lg"
-              placeholder="Enter a unique 8 digit password"
+              placeholder="Create a password"
+              name="new-password"
               autoComplete="new-password"
               value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                if (passwordError) setPasswordError(null);
+              revealed={rulesRevealed}
+              failedRuleIds={failedRuleIds}
+              onReveal={() => setRulesRevealed(true)}
+              onChange={(next) => {
+                setPassword(next);
+                if (failedRuleIds.length > 0) setFailedRuleIds([]);
+                if (serverAlert) setServerAlert(null);
               }}
-              error={Boolean(passwordError)}
-              errorMessage={passwordError ?? undefined}
-              helperText="Min. 8 characters with uppercase, lowercase, number and symbol."
-              showHelper={!passwordError}
-              className="w-full"
             />
           </div>
 

@@ -67,11 +67,11 @@
 }
 
 .fieldError {
-  border-color: #e07070;
+  border-color: var(--feedback-error-border);
 }
 
 .fieldError:focus-within {
-  border-color: #e07070;
+  border-color: var(--feedback-error-border);
   box-shadow: 0 0 0 3px rgba(224, 112, 112, 0.12);
 }
 
@@ -211,8 +211,13 @@
   font-size: 12px;
   line-height: 1.5;
   letter-spacing: 0.24px;
-  color: #6b5e55;
+  color: var(--text-secondary);
   white-space: nowrap;
+}
+
+.belowBlock {
+  white-space: normal;
+  width: 100%;
 }
 
 .errorText {
@@ -221,6 +226,6 @@
   font-size: 12px;
   line-height: 1.5;
   letter-spacing: 0.24px;
-  color: #8b2020;
+  color: var(--feedback-error-text);
   white-space: nowrap;
 }
