@@ -1243,17 +1243,61 @@ export async function submitReviewerFeedbackAction(input: {
     }
     newFeedbackId = existingFeedbackId;
   } else {
-    const { data: insertedFeedback, error } = await supabase
+    const submissionFields = {
+      submitted_by_id: feedbackPayload.submitted_by_id,
+      feedback_status: feedbackPayload.feedback_status,
+      feedback_text: feedbackPayload.feedback_text,
+      selected_option: feedbackPayload.selected_option,
+      feedback_submitted_at: feedbackPayload.feedback_submitted_at,
+      feedback_kind: feedbackPayload.feedback_kind,
+    };
+    const { data: pendingRow, error: pendingLookupError } = await supabase
       .from("reviewer_feedback")
-      .insert(feedbackPayload)
       .select("id")
-      .single();
-    if (error) {
-      const schemaMessage = toSchemaCacheErrorMessage(error);
+      .eq("review_id", input.reviewId)
+      .eq("reviewer_id", targetReviewerId)
+      .eq("feedback_status", "pending")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (pendingLookupError) {
+      const schemaMessage = toSchemaCacheErrorMessage(pendingLookupError);
       if (schemaMessage) return { error: schemaMessage };
-      return { error: error.message };
+      return { error: pendingLookupError.message };
     }
-    newFeedbackId = String((insertedFeedback as { id?: string } | null)?.id ?? "");
+    const pendingId = String((pendingRow as { id?: string } | null)?.id ?? "").trim();
+    if (pendingId) {
+      const { data: updatedRow, error: updateError } = await supabase
+        .from("reviewer_feedback")
+        .update(submissionFields)
+        .eq("id", pendingId)
+        .eq("review_id", input.reviewId)
+        .eq("reviewer_id", targetReviewerId)
+        .eq("feedback_status", "pending")
+        .select("id")
+        .maybeSingle();
+      if (updateError) {
+        const schemaMessage = toSchemaCacheErrorMessage(updateError);
+        if (schemaMessage) return { error: schemaMessage };
+        return { error: updateError.message };
+      }
+      if (updatedRow) {
+        newFeedbackId = pendingId;
+      }
+    }
+    if (!newFeedbackId) {
+      const { data: insertedFeedback, error } = await supabase
+        .from("reviewer_feedback")
+        .insert(feedbackPayload)
+        .select("id")
+        .single();
+      if (error) {
+        const schemaMessage = toSchemaCacheErrorMessage(error);
+        if (schemaMessage) return { error: schemaMessage };
+        return { error: error.message };
+      }
+      newFeedbackId = String((insertedFeedback as { id?: string } | null)?.id ?? "");
+    }
   }
   if (newFeedbackId && changeRequestBatchIds.length > 0) {
     await supabase

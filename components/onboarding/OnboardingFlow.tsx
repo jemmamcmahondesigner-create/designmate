@@ -91,6 +91,10 @@ function permissionLevelLabel(level: WorkspacePermissionLevel): string {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
 
+function permissionLevelArticle(level: WorkspacePermissionLevel): "a" | "an" {
+  return level === "editor" || level === "admin" ? "an" : "a";
+}
+
 function ProgressBar({ step, total }: { step: number; total: number }) {
   return (
     <div className="flex h-2 w-full shrink-0">
@@ -902,8 +906,8 @@ export function OnboardingFlow({
                         trailingAction={<InputLockIcon />}
                         helperText={
                           alreadyMember
-                            ? `You're already a ${permissionLevelLabel(invitePermissionLevel).toLowerCase()} in this workspace.`
-                            : `You're joining this workspace as a ${permissionLevelLabel(invitePermissionLevel).toLowerCase()}.`
+                            ? `You're already ${permissionLevelArticle(invitePermissionLevel)} ${permissionLevelLabel(invitePermissionLevel).toLowerCase()} in this workspace.`
+                            : `You're joining this workspace as ${permissionLevelArticle(invitePermissionLevel)} ${permissionLevelLabel(invitePermissionLevel).toLowerCase()}.`
                         }
                         showHelper
                         onChange={() => {}}
