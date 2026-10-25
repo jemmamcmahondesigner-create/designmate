@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useState } from "react";
+import { FormEvent, Suspense, useCallback, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { AuthMark } from "@/components/auth/AuthMark";
 import { AuthSubmitButton } from "@/components/auth/AuthSubmitButton";
@@ -8,13 +9,15 @@ import { AuthTextLink } from "@/components/auth/AuthTextLink";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { OrDivider } from "@/components/auth/OrDivider";
 import { useResendCooldown } from "@/components/auth/useResendCooldown";
-import { Button, Input } from "@/components/ui/ds";
+import { Alert, Button, Input } from "@/components/ui/ds";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getSiteOrigin, mapResetPasswordError } from "@/lib/auth/mapAuthError";
 
 type ResetStatus = "idle" | "loading" | "email-error" | "email-sent";
 
-export default function ResetPasswordPage() {
+function ResetPasswordContent() {
+  const searchParams = useSearchParams();
+  const linkExpired = searchParams.get("error") === "link-expired";
   const [status, setStatus] = useState<ResetStatus>("idle");
   const [email, setEmail] = useState("");
   const [generalError, setGeneralError] = useState<string | null>(null);
@@ -120,6 +123,18 @@ export default function ResetPasswordPage() {
           Enter your email to reset your password
         </h2>
 
+        {linkExpired ? (
+          <div className="w-full">
+            <Alert
+              sentiment="danger"
+              prominence="low"
+              title="That reset link has expired or was already used."
+              body="Enter your email and we'll send a new one."
+              dismissible={false}
+            />
+          </div>
+        ) : null}
+
         <form
           className="flex w-full flex-col gap-6"
           onSubmit={(e) => void handleSubmit(e)}
@@ -158,5 +173,13 @@ export default function ResetPasswordPage() {
         <GoogleSignInButton onClick={() => void signInWithGoogle()} />
       </div>
     </AuthCard>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={null}>
+      <ResetPasswordContent />
+    </Suspense>
   );
 }

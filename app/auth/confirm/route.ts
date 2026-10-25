@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
+import { getSafeInternalPath } from "@/lib/auth/mapAuthError";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const OTP_TYPES = new Set<string>([
@@ -38,8 +39,14 @@ export async function GET(request: Request) {
   });
 
   if (error) {
+    if (typeParam === "recovery") {
+      return NextResponse.redirect(`${origin}/reset-password?error=link-expired`);
+    }
     return loginWithConfirmationError();
   }
 
-  return NextResponse.redirect(`${origin}/onboarding`);
+  const requestedNext = getSafeInternalPath(searchParams.get("next"));
+  const destination =
+    requestedNext ?? (typeParam === "recovery" ? "/auth/update-password" : "/onboarding");
+  return NextResponse.redirect(`${origin}${destination}`);
 }

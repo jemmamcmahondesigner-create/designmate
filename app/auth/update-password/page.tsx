@@ -24,21 +24,39 @@ function UpdatePasswordContent() {
     if (exchangeStarted.current) return;
     exchangeStarted.current = true;
 
-    const code = searchParams.get("code");
-    if (!code) {
-      router.replace("/reset-password?error=link-expired");
+    const tokenHash = searchParams.get("token_hash");
+    const otpType = searchParams.get("type");
+    if (tokenHash && otpType === "recovery") {
+      const confirmUrl = new URL("/auth/confirm", window.location.origin);
+      confirmUrl.searchParams.set("token_hash", tokenHash);
+      confirmUrl.searchParams.set("type", "recovery");
+      confirmUrl.searchParams.set("next", "/auth/update-password");
+      router.replace(`${confirmUrl.pathname}${confirmUrl.search}`);
       return;
     }
 
+    const code = searchParams.get("code");
     const supabase = createSupabaseBrowserClient();
-    void supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
-      if (error) {
-        router.replace("/reset-password?error=link-expired");
+
+    if (code) {
+      void supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+        if (error) {
+          router.replace("/reset-password?error=link-expired");
+          return;
+        }
+
+        setPhase("ready");
+        router.replace("/auth/update-password", { scroll: false });
+      });
+      return;
+    }
+
+    void supabase.auth.getUser().then(({ data }) => {
+      if (data.user) {
+        setPhase("ready");
         return;
       }
-
-      setPhase("ready");
-      router.replace("/auth/update-password", { scroll: false });
+      router.replace("/reset-password?error=link-expired");
     });
   }, [router, searchParams]);
 
