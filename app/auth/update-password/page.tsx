@@ -6,6 +6,7 @@ import { AuthCard } from "@/components/auth/AuthCard";
 import { AuthMark } from "@/components/auth/AuthMark";
 import { AuthSubmitButton } from "@/components/auth/AuthSubmitButton";
 import { Input } from "@/components/ui/ds";
+import { resolvePostLoginPath } from "@/lib/auth/mapAuthError";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type PagePhase = "exchanging" | "ready" | "submitting";
@@ -16,6 +17,7 @@ function UpdatePasswordContent() {
   const exchangeStarted = useRef(false);
 
   const [phase, setPhase] = useState<PagePhase>("exchanging");
+  const [accountEmail, setAccountEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [confirmMismatch, setConfirmMismatch] = useState(false);
@@ -31,7 +33,7 @@ function UpdatePasswordContent() {
       confirmUrl.searchParams.set("token_hash", tokenHash);
       confirmUrl.searchParams.set("type", "recovery");
       confirmUrl.searchParams.set("next", "/auth/update-password");
-      router.replace(`${confirmUrl.pathname}${confirmUrl.search}`);
+      window.location.replace(`${confirmUrl.pathname}${confirmUrl.search}`);
       return;
     }
 
@@ -39,12 +41,13 @@ function UpdatePasswordContent() {
     const supabase = createSupabaseBrowserClient();
 
     if (code) {
-      void supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+      void supabase.auth.exchangeCodeForSession(code).then(({ data, error }) => {
         if (error) {
           router.replace("/reset-password?error=link-expired");
           return;
         }
 
+        setAccountEmail(data.user?.email ?? data.session?.user.email ?? "");
         setPhase("ready");
         router.replace("/auth/update-password", { scroll: false });
       });
@@ -53,6 +56,7 @@ function UpdatePasswordContent() {
 
     void supabase.auth.getUser().then(({ data }) => {
       if (data.user) {
+        setAccountEmail(data.user.email ?? "");
         setPhase("ready");
         return;
       }
@@ -72,14 +76,14 @@ function UpdatePasswordContent() {
     setPhase("submitting");
 
     const supabase = createSupabaseBrowserClient();
-    const { error } = await supabase.auth.updateUser({ password });
+    const { data, error } = await supabase.auth.updateUser({ password });
 
     if (error) {
       setPhase("ready");
       return;
     }
 
-    router.push("/dashboard");
+    router.push(resolvePostLoginPath(data.user?.user_metadata));
     router.refresh();
   };
 
@@ -121,9 +125,21 @@ function UpdatePasswordContent() {
           noValidate
         >
           <Input
+            label="Email"
+            type="email"
+            size="lg"
+            name="username"
+            autoComplete="username"
+            value={accountEmail}
+            readOnly
+            className="w-full"
+          />
+
+          <Input
             label="New password"
             type="password"
             size="lg"
+            name="new-password"
             placeholder="Enter a unique 8 digit password"
             autoComplete="new-password"
             value={password}
@@ -140,6 +156,7 @@ function UpdatePasswordContent() {
             label="Confirm new password"
             type="password"
             size="lg"
+            name="new-password"
             placeholder="Confirm your password"
             autoComplete="new-password"
             value={confirmPassword}
