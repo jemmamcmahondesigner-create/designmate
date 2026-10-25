@@ -3232,6 +3232,8 @@ export function ReviewDetailView({
         .map((reviewer) => reviewer.id)
         .filter((id) => id !== removeReviewerId);
       if (remainingReviewerIds.length === 0) return false;
+      const type = reviewType.trim().toLowerCase();
+      if (type !== "approve" && type !== "approval") return false;
       const allRemainingSubmitted = remainingReviewerIds.every((id) =>
         submittedReviewerIds.has(id),
       );
@@ -3242,7 +3244,7 @@ export function ReviewDetailView({
       });
       return !remainingHasChangeRequests;
     },
-    [assignedReviewers, changeRequests, submittedReviewerIds],
+    [assignedReviewers, changeRequests, reviewType, submittedReviewerIds],
   );
 
   const removeReviewerNow = useCallback(

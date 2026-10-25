@@ -10,6 +10,7 @@ import {
 import { resolveBatchStartForNewSubmission } from '@/lib/reviews/changeRequestNumbering';
 import { notifyCreatorDecisionRecorded } from '@/lib/reviews/notify-review-creator';
 import { triggerFigmaSnapshotsForReview } from '@/lib/figma/triggerFigmaSnapshotsForReview';
+import { pickLatestFeedbackRow } from '@/lib/reviews/latestFeedbackRow';
 import { resolveAssignedReviewerIdForReview } from '@/lib/reviews/resolveAssignedReviewerId';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { logTimelineEventServer } from '@/lib/timeline/logEventServer';
@@ -132,17 +133,28 @@ export async function submitDecisionAction(input: SubmitDecisionInput) {
 
   const { data: feedbackRows, error: feedbackErr } = await supabase
     .from('reviewer_feedback')
-    .select('reviewer_id, feedback_status')
+    .select('id, reviewer_id, feedback_status, created_at')
     .eq('review_id', reviewId)
     .in('reviewer_id', reviewerIds);
   if (feedbackErr) throw new Error(feedbackErr.message);
 
-  const submittedByReviewer = new Map<string, string>();
+  const rowsByReviewer = new Map<string, Record<string, unknown>[]>();
   for (const fr of feedbackRows ?? []) {
     const r = fr as Record<string, unknown>;
     const rid = String(r.reviewer_id ?? '');
-    const st = String(r.feedback_status ?? '').trim().toLowerCase();
-    if (rid) submittedByReviewer.set(rid, st);
+    if (!rid) continue;
+    const list = rowsByReviewer.get(rid) ?? [];
+    list.push(r);
+    rowsByReviewer.set(rid, list);
+  }
+  const submittedByReviewer = new Map<string, string>();
+  for (const [rid, rows] of rowsByReviewer) {
+    const latest = pickLatestFeedbackRow(rows);
+    if (!latest) continue;
+    submittedByReviewer.set(
+      rid,
+      String(latest.feedback_status ?? '').trim().toLowerCase(),
+    );
   }
   const allFeedbackIn = reviewerIds.every(
     (id) => submittedByReviewer.get(id) === 'submitted',

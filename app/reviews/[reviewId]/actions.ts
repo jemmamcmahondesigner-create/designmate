@@ -28,6 +28,7 @@ import {
   resolveReviewersNotifiedRecipients,
 } from "@/lib/reviews/reviewersNotifiedActivity";
 import { sendReviewerNotificationEmails } from "@/lib/reviews/sendReviewerNotificationEmails";
+import { computeReviewStatusFromFeedback } from "@/lib/reviews/computeReviewStatusFromFeedback";
 import {
   isResolvedReviewStatus,
   reopenReviewStatusForType,
@@ -154,9 +155,22 @@ async function maybeUpdateApproveReviewLifecycleStatus(
     .eq("review_id", reviewId);
   if (changeRequestError) return;
 
-  const nextStatus =
-    changeRequestCount != null && changeRequestCount > 0 ? "needs-changes" : "approved";
-  if (prevNorm === nextStatus) return;
+  const latestByReviewer = latestFeedbackRowPerReviewer(
+    (feedbackRows ?? []) as Record<string, unknown>[],
+  );
+  const nextStatus = computeReviewStatusFromFeedback({
+    reviewType: "approve",
+    requireDecisionMaker: false,
+    currentStatus: previousReviewStatus,
+    assignedReviewerIds: reviewerIds,
+    latestFeedback: reviewerIds.map((reviewerId) => ({
+      reviewerId,
+      feedbackStatus: String(latestByReviewer.get(reviewerId)?.feedback_status ?? ""),
+    })),
+    changeRequestCount: changeRequestCount ?? 0,
+    openChangeRequestCount: 0,
+  });
+  if (!nextStatus) return;
 
   await supabase.from("reviews").update({ status: nextStatus }).eq("id", reviewId);
   await triggerFigmaSnapshotsForReview(reviewId, nextStatus);
@@ -784,7 +798,9 @@ export async function removeReviewerAction(input: {
   const supabase = await createSupabaseServerClient();
   const { data: review } = await supabase
     .from("reviews")
-    .select("id, project_id, creator_id, title, status, reviewer_contributor_ids")
+    .select(
+      "id, project_id, creator_id, title, status, reviewer_contributor_ids, review_type, require_decision_maker, decision_owner_id",
+    )
     .eq("id", input.reviewId)
     .maybeSingle();
   if (!review) {
@@ -867,36 +883,38 @@ export async function removeReviewerAction(input: {
   }
 
   let nextStatus = previousStatus;
-  if (nextIds.length > 0) {
+  if (nextIds.length > 0 && previousStatus !== "complete") {
     const { data: remainingFeedbackRows } = await supabase
       .from("reviewer_feedback")
       .select("reviewer_id, feedback_status, feedback_submitted_at, created_at")
       .eq("review_id", input.reviewId)
       .in("reviewer_id", nextIds);
     const latestByReviewer = latestFeedbackRowPerReviewer(
-      (remainingFeedbackRows ?? []) as Record<string, unknown>[]
+      (remainingFeedbackRows ?? []) as Record<string, unknown>[],
     );
-    const allSubmitted = nextIds.every((reviewerId) => {
-      const row = latestByReviewer.get(reviewerId);
-      if (!row) return false;
-      return String(row.feedback_status ?? "").trim().toLowerCase() === "submitted";
-    });
-
-    const { count: remainingChangeRequestCount, error: remainingChangeRequestError } = await supabase
+    const { count: changeRequestCount, error: changeRequestError } = await supabase
+      .from("change_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("review_id", input.reviewId);
+    const { count: openChangeRequestCount, error: openChangeRequestError } = await supabase
       .from("change_requests")
       .select("id", { count: "exact", head: true })
       .eq("review_id", input.reviewId)
-      .in("reviewer_id", nextIds);
-    const hasRemainingChangeRequests =
-      !remainingChangeRequestError && (remainingChangeRequestCount ?? 0) > 0;
-
-    if (hasRemainingChangeRequests) {
-      nextStatus = "needs-changes";
-    } else if (allSubmitted) {
-      nextStatus = "approved";
-    } else {
-      nextStatus = "in-review";
-    }
+      .is("completed_at", null);
+    const computedStatus = computeReviewStatusFromFeedback({
+      reviewType: String(reviewRow.review_type ?? ""),
+      requireDecisionMaker: reviewRow.require_decision_maker === true,
+      currentStatus: previousStatus,
+      assignedReviewerIds: nextIds,
+      latestFeedback: nextIds.map((reviewerId) => ({
+        reviewerId,
+        feedbackStatus: String(latestByReviewer.get(reviewerId)?.feedback_status ?? ""),
+      })),
+      changeRequestCount: changeRequestError ? 0 : (changeRequestCount ?? 0),
+      openChangeRequestCount: openChangeRequestError ? 0 : (openChangeRequestCount ?? 0),
+      soloCompareStaysPut: false,
+    });
+    if (computedStatus) nextStatus = computedStatus;
   }
 
   const autoApproved = nextStatus === "approved" && previousStatus !== "approved";
@@ -906,6 +924,33 @@ export async function removeReviewerAction(input: {
       .update({ status: nextStatus })
       .eq("id", input.reviewId);
     await triggerFigmaSnapshotsForReview(input.reviewId, nextStatus);
+    if (projectId) {
+      await logTimelineEventServer(supabase, {
+        projectId,
+        reviewId: input.reviewId,
+        actorId: currentContributor?.id ?? null,
+        eventType: "status_changed",
+        payload: {
+          review_title: reviewTitle,
+          review_id: input.reviewId,
+          previous_status: previousStatus,
+          new_status: nextStatus,
+          from_status: previousStatus,
+          to_status: nextStatus,
+          status_transition_trigger: "auto",
+        },
+      });
+    }
+    const removedReviewType = String(reviewRow.review_type ?? "").trim().toLowerCase();
+    if (
+      (removedReviewType === "compare" || removedReviewType === "comparison") &&
+      nextStatus === "feedback-submitted"
+    ) {
+      await notifyDecisionMakerDecisionRequired(supabase, {
+        reviewId: input.reviewId,
+        decisionOwnerId: String(reviewRow.decision_owner_id ?? "").trim() || null,
+      });
+    }
   }
 
   if (autoApproved && projectId) {
@@ -1499,11 +1544,19 @@ export async function submitReviewerFeedbackAction(input: {
         .select("id", { count: "exact", head: true })
         .eq("review_id", input.reviewId)
         .is("completed_at", null);
-      const nextAlignStatus =
-        !alignCrError && (alignOpenChangeRequestCount ?? 0) > 0
-          ? "needs-changes"
-          : "feedback-submitted";
-      if (prevNorm !== nextAlignStatus) {
+      const nextAlignStatus = computeReviewStatusFromFeedback({
+        reviewType: normalizedReviewType,
+        requireDecisionMaker: false,
+        currentStatus: previousReviewStatus,
+        assignedReviewerIds: reviewerIds,
+        latestFeedback: reviewerIds.map((reviewerId) => ({
+          reviewerId,
+          feedbackStatus: "submitted",
+        })),
+        changeRequestCount: 0,
+        openChangeRequestCount: alignCrError ? 0 : (alignOpenChangeRequestCount ?? 0),
+      });
+      if (nextAlignStatus && prevNorm !== nextAlignStatus) {
         await supabase
           .from("reviews")
           .update({ status: nextAlignStatus })
@@ -1541,35 +1594,48 @@ export async function submitReviewerFeedbackAction(input: {
         reviewerIds.length === 1
       )
     ) {
-      const nextAlignOrFeedbackStatus = "feedback-submitted";
-      await supabase
-        .from("reviews")
-        .update({ status: nextAlignOrFeedbackStatus })
-        .eq("id", input.reviewId);
-      await triggerFigmaSnapshotsForReview(
-        input.reviewId,
-        nextAlignOrFeedbackStatus,
-      );
-      await logTimelineEventServer(supabase, {
-        projectId,
-        reviewId: input.reviewId,
-        actorId: currentContributor.id,
-        eventType: "status_changed",
-        payload: {
-          review_title: reviewTitle,
-          review_id: input.reviewId,
-          previous_status: previousReviewStatus,
-          new_status: nextAlignOrFeedbackStatus,
-          from_status: previousReviewStatus,
-          to_status: nextAlignOrFeedbackStatus,
-          status_transition_trigger: "auto",
-        },
+      const nextAlignOrFeedbackStatus = computeReviewStatusFromFeedback({
+        reviewType: normalizedReviewType,
+        requireDecisionMaker: false,
+        currentStatus: previousReviewStatus,
+        assignedReviewerIds: reviewerIds,
+        latestFeedback: reviewerIds.map((reviewerId) => ({
+          reviewerId,
+          feedbackStatus: "submitted",
+        })),
+        changeRequestCount: 0,
+        openChangeRequestCount: 0,
       });
-      if (normalizedReviewType === "compare" || normalizedReviewType === "comparison") {
-        await notifyDecisionMakerDecisionRequired(supabase, {
+      if (nextAlignOrFeedbackStatus) {
+        await supabase
+          .from("reviews")
+          .update({ status: nextAlignOrFeedbackStatus })
+          .eq("id", input.reviewId);
+        await triggerFigmaSnapshotsForReview(
+          input.reviewId,
+          nextAlignOrFeedbackStatus,
+        );
+        await logTimelineEventServer(supabase, {
+          projectId,
           reviewId: input.reviewId,
-          decisionOwnerId: decisionOwnerId || null,
+          actorId: currentContributor.id,
+          eventType: "status_changed",
+          payload: {
+            review_title: reviewTitle,
+            review_id: input.reviewId,
+            previous_status: previousReviewStatus,
+            new_status: nextAlignOrFeedbackStatus,
+            from_status: previousReviewStatus,
+            to_status: nextAlignOrFeedbackStatus,
+            status_transition_trigger: "auto",
+          },
         });
+        if (normalizedReviewType === "compare" || normalizedReviewType === "comparison") {
+          await notifyDecisionMakerDecisionRequired(supabase, {
+            reviewId: input.reviewId,
+            decisionOwnerId: decisionOwnerId || null,
+          });
+        }
       }
     }
   }
